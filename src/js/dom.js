@@ -3,15 +3,36 @@ export function getDom() {
   const overlay = document.getElementById('overlay');
   const startBtn = document.getElementById('startBtn');
   const stopBtn = document.getElementById('stopBtn');
+  const apriltagToggleEl = document.getElementById('apriltagToggle');
   const statusEl = document.getElementById('status');
   const handStatusEl = document.getElementById('handStatus');
   const pinchDistanceEl = document.getElementById('pinchDistance');
   const detectionsEl = document.getElementById('detections');
   const errorEl = document.getElementById('error');
 
-  if (!video || !overlay || !startBtn || !stopBtn || !statusEl || !detectionsEl || !errorEl) {
+  if (
+    !video ||
+    !overlay ||
+    !startBtn ||
+    !stopBtn ||
+    !apriltagToggleEl ||
+    !statusEl ||
+    !detectionsEl ||
+    !errorEl
+  ) {
     throw new Error('Missing required DOM elements. Check index.html ids.');
   }
 
-  return { video, overlay, startBtn, stopBtn, statusEl, handStatusEl, pinchDistanceEl, detectionsEl, errorEl };
+  return {
+    video,
+    overlay,
+    startBtn,
+    stopBtn,
+    apriltagToggleEl,
+    statusEl,
+    handStatusEl,
+    pinchDistanceEl,
+    detectionsEl,
+    errorEl,
+  };
 }

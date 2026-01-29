@@ -17,17 +17,15 @@ export function initApp() {
 
   let currentStream = null;
   let detector = null;
+  let detectorInitPromise = null;
+  let detectorLoadFailed = false;
   let handDetector = null;
   let isProcessing = false;
   let animationId = null;
+  let apriltagEnabled = dom.apriltagToggleEl.checked;
+  let overlayHasApriltag = false;
 
-  setStatus('Detector: Loading...');
-  initDetector({
-    onReady: () => setStatus('Detector: Ready'),
-    onError: () => setStatus('Detector: Failed to load'),
-  }).then((d) => {
-    detector = d;
-  });
+  syncApriltagModeUi();
 
   setHandStatus('Hand Detector: Loading...');
   const videoContainer = document.querySelector('.video-container');
@@ -41,6 +39,79 @@ export function initApp() {
 
   dom.startBtn.addEventListener('click', startCamera);
   dom.stopBtn.addEventListener('click', stopCamera);
+  dom.apriltagToggleEl.addEventListener('change', syncApriltagModeFromDom);
+
+  function syncApriltagModeFromDom() {
+    apriltagEnabled = dom.apriltagToggleEl.checked;
+
+    if (!apriltagEnabled) {
+      if (overlayHasApriltag) {
+        clearOverlay(overlayCtx, dom.overlay);
+        overlayHasApriltag = false;
+      }
+      dom.detectionsEl.textContent = '';
+      setStatus('Detector: Off');
+      return;
+    }
+
+    syncApriltagModeUi();
+
+    if (isProcessing) {
+      void ensureDetector();
+    }
+  }
+
+  function syncApriltagModeUi() {
+    if (!apriltagEnabled) {
+      setStatus('Detector: Off');
+      return;
+    }
+
+    if (detector) {
+      setStatus('Detector: Ready');
+      return;
+    }
+
+    if (detectorInitPromise) {
+      setStatus('Detector: Loading...');
+      return;
+    }
+
+    if (detectorLoadFailed) {
+      setStatus('Detector: Failed to load');
+      return;
+    }
+
+    setStatus('Detector: On');
+  }
+
+  async function ensureDetector() {
+    if (!apriltagEnabled) return null;
+    if (detector) return detector;
+    if (detectorInitPromise) return detectorInitPromise;
+
+    detectorLoadFailed = false;
+    setStatus('Detector: Loading...');
+    detectorInitPromise = initDetector({
+      onReady: () => {
+        if (apriltagEnabled) setStatus('Detector: Ready');
+      },
+      onError: () => {
+        detectorLoadFailed = true;
+        if (apriltagEnabled) setStatus('Detector: Failed to load');
+      },
+    })
+      .then((d) => {
+        detector = d;
+        if (!d) detectorLoadFailed = true;
+        return d;
+      })
+      .finally(() => {
+        detectorInitPromise = null;
+      });
+
+    return detectorInitPromise;
+  }
 
   async function startCamera() {
     try {
@@ -65,6 +136,10 @@ export function initApp() {
       setButtonsRunning(true);
       setError('');
 
+      if (apriltagEnabled) {
+        void ensureDetector();
+      }
+
       startProcessing();
     } catch (err) {
       console.error('Error accessing camera:', err);
@@ -85,6 +160,7 @@ export function initApp() {
 
     dom.video.srcObject = null;
     clearOverlay(overlayCtx, dom.overlay);
+    overlayHasApriltag = false;
     dom.detectionsEl.textContent = '';
 
     setButtonsRunning(false);
@@ -104,16 +180,18 @@ export function initApp() {
     captureCtx.drawImage(dom.video, 0, 0, width, height);
     const imageData = captureCtx.getImageData(0, 0, width, height);
 
-    clearOverlay(overlayCtx, dom.overlay);
-
     // AprilTag detection
-    if (detector) {
+    if (apriltagEnabled && detector) {
       try {
+        clearOverlay(overlayCtx, dom.overlay);
+        overlayHasApriltag = false;
+
         const grayscale = rgbaToGrayscale(imageData);
         const detections = await detector.detect(grayscale, width, height);
 
         if (detections?.length) {
           drawDetections(overlayCtx, detections);
+          overlayHasApriltag = true;
           dom.detectionsEl.textContent = `Detected ${detections.length} tag(s): ${detections
             .map((d) => 'ID ' + d.id)
             .join(', ')}`;
