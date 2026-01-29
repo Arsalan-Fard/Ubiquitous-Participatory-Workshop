@@ -88,6 +88,12 @@ h1 {
     font-size: 14px;
 }
 
+#handStatus {
+    color: #aaa;
+    margin-top: 15px;
+    font-size: 14px;
+}
+
 #detections {
     color: #4CAF50;
     margin-top: 10px;

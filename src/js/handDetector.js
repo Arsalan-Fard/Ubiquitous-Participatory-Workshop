@@ -37,13 +37,16 @@ export async function initHandDetector({ onReady, onError, videoContainer } = {}
               const id = requestId++;
               pendingRequests.set(id, resolveDetect);
 
+              // Create a copy of the buffer to transfer (transfer detaches the original)
+              const buffer = new Uint8ClampedArray(imageData).buffer;
+
               iframe.contentWindow.postMessage({
                 type: 'detect',
-                imageData: Array.from(imageData),
+                imageData: buffer,
                 width,
                 height,
                 requestId: id
-              }, '*');
+              }, '*', [buffer]); // Transfer the ArrayBuffer
             });
           },
           resize(width, height) {

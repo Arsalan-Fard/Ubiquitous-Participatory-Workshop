@@ -110,7 +110,7 @@ async function init() {
         modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
         delegate: "GPU"
       },
-      runningMode: "IMAGE",
+      runningMode: "VIDEO",
       numHands: 2,
       minHandDetectionConfidence: 0.5,
       minHandPresenceConfidence: 0.5,
@@ -142,8 +142,8 @@ function detect(imageData, width, height, requestId) {
   const imgData = new ImageData(new Uint8ClampedArray(imageData), width, height);
   detectCtx.putImageData(imgData, 0, 0);
 
-  // Detect hands
-  const results = handLandmarker.detect(detectCanvas);
+  // Detect hands using VIDEO mode (tracks between frames)
+  const results = handLandmarker.detectForVideo(detectCanvas, performance.now());
 
   if (!results || !results.landmarks || results.landmarks.length === 0) {
     overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
