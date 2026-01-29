@@ -30,5 +30,6 @@ function drawDetection(ctx, det) {
   ctx.fillStyle = '#00ff00';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('ID: ' + det.id, det.center.x, det.center.y);
+  const marginText = det.decision_margin ? ` (${det.decision_margin.toFixed(1)})` : '';
+  ctx.fillText('ID: ' + det.id + marginText, det.center.x, det.center.y);
 }
