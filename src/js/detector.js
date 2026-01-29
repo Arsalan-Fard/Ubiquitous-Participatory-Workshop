@@ -1,25 +1,29 @@
 function getComlink() {
-  const Comlink = globalThis.Comlink;
-  if (!Comlink) {
+  var Comlink = globalThis.Comlink;
+  if (Comlink === undefined || Comlink === null) {
     throw new Error('Comlink is not available. Ensure lib/comlink.min.js is loaded before the app script.');
   }
   return Comlink;
 }
 
-export async function initDetector({ onReady, onError } = {}) {
+export async function initDetector(options) {
+  options = options || {};
+  var onReady = options.onReady;
+  var onError = options.onError;
+
   try {
-    const Comlink = getComlink();
-    const workerUrl = new URL('../../lib/apriltag.js', import.meta.url);
-    const Apriltag = Comlink.wrap(new Worker(workerUrl));
+    var Comlink = getComlink();
+    var workerUrl = new URL('../../lib/apriltag.js', import.meta.url);
+    var Apriltag = Comlink.wrap(new Worker(workerUrl));
 
     return await new Apriltag(
-      Comlink.proxy(() => {
-        onReady?.();
-      }),
+      Comlink.proxy(function () {
+        if (onReady) onReady();
+      })
     );
   } catch (err) {
     console.error('Failed to initialize detector:', err);
-    onError?.(err);
+    if (onError) onError(err);
     return null;
   }
 }

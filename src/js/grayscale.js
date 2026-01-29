@@ -1,11 +1,11 @@
 export function rgbaToGrayscale(imageData) {
-  const pixels = imageData.data;
-  const grayscale = new Uint8Array(imageData.width * imageData.height);
+  var pixels = imageData.data;
+  var grayscale = new Uint8Array(imageData.width * imageData.height);
 
-  for (let pixelIndex = 0, grayIndex = 0; pixelIndex < pixels.length; pixelIndex += 4, grayIndex++) {
-    grayscale[grayIndex] = Math.round(
-      (pixels[pixelIndex] + pixels[pixelIndex + 1] + pixels[pixelIndex + 2]) / 3,
-    );
+  var grayIndex = 0;
+  for (var pixelIndex = 0; pixelIndex < pixels.length; pixelIndex += 4) {
+    grayscale[grayIndex] = Math.round((pixels[pixelIndex] + pixels[pixelIndex + 1] + pixels[pixelIndex + 2]) / 3);
+    grayIndex++;
   }
 
   return grayscale;

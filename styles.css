@@ -51,8 +51,82 @@ h1 {
     z-index: 10;
 }
 
+.loading {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    left: 50%;
+    bottom: 12px;
+    transform: translateX(-50%);
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    font-size: 13px;
+    z-index: 30;
+    pointer-events: none;
+    backdrop-filter: blur(6px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.hidden {
+    display: none !important;
+}
+
 .controls {
     margin-top: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.surface-buttons {
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+.surface-btn {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.06);
+    color: #ddd;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.surface-btn:hover {
+    background: rgba(255, 255, 255, 0.10);
+}
+
+.btn-secondary {
+    background-color: #3b3b3b;
+}
+
+.btn-secondary:hover {
+    background-color: #4a4a4a;
+}
+
+#nextBtn:enabled {
+    background-color: #4CAF50;
+}
+
+#nextBtn:enabled:hover {
+    background-color: #45a049;
+}
+
+.btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
 }
 
 .toggle-inline {

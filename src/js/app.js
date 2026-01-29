@@ -6,114 +6,130 @@ import { rgbaToGrayscale } from './grayscale.js';
 import { clearOverlay, drawDetections } from './render.js';
 
 export function initApp() {
-  const dom = getDom();
+  var dom = getDom();
 
-  const overlayCtx = dom.overlay.getContext('2d');
+  var overlayCtx = dom.overlay.getContext('2d');
   if (!overlayCtx) throw new Error('Failed to get overlay canvas 2D context');
 
-  const captureCanvas = document.createElement('canvas');
-  const captureCtx = captureCanvas.getContext('2d', { willReadFrequently: true });
+  var captureCanvas = document.createElement('canvas');
+  var captureCtx = captureCanvas.getContext('2d', { willReadFrequently: true });
   if (!captureCtx) throw new Error('Failed to get capture canvas 2D context');
 
-  let currentStream = null;
-  let detector = null;
-  let detectorInitPromise = null;
-  let detectorLoadFailed = false;
-  let handDetector = null;
-  let isProcessing = false;
-  let animationId = null;
-  let apriltagEnabled = dom.apriltagToggleEl.checked;
-  let overlayHasApriltag = false;
+  var currentStream = null;
+  var detector = null;
+  var detectorLoading = false;
+  var handDetector = null;
+  var handDetectorReady = false;
+  var cameraReady = false;
+  var cameraStarting = false;
+  var stage = 1;
+  var isProcessing = false;
+  var animationId = null;
+  var apriltagEnabled = dom.apriltagToggleEl.checked;
 
-  syncApriltagModeUi();
-
-  const videoContainer = document.querySelector('.video-container');
-  initHandDetector({
-    onReady: () => {},
-    onError: () => {},
-    videoContainer,
-  }).then((h) => {
+  var videoContainer = document.querySelector('.video-container');
+  initHandDetector({ videoContainer: videoContainer }).then(function (h) {
     handDetector = h;
+    handDetectorReady = true;
+    updateLoadingMessage();
   });
 
   dom.startBtn.addEventListener('click', startCamera);
+  dom.nextBtn.addEventListener('click', goToSurfaceSetup);
   dom.stopBtn.addEventListener('click', stopCamera);
-  dom.apriltagToggleEl.addEventListener('change', syncApriltagModeFromDom);
+  dom.apriltagToggleEl.addEventListener('change', onApriltagToggleChanged);
 
-  function syncApriltagModeFromDom() {
+  setStage(1);
+  setNextEnabled(false);
+
+  function showLoading(message) {
+    if (message) dom.loadingEl.textContent = message;
+    dom.loadingEl.classList.remove('hidden');
+  }
+
+  function hideLoading() {
+    dom.loadingEl.classList.add('hidden');
+  }
+
+  function updateLoadingMessage() {
+    if (cameraStarting) {
+      showLoading('Starting camera...');
+      return;
+    }
+
+    if (cameraReady && !handDetectorReady) {
+      showLoading('Loading hand detection...');
+      return;
+    }
+
+    hideLoading();
+  }
+
+  function setNextEnabled(enabled) {
+    dom.nextBtn.disabled = !enabled;
+  }
+
+  function setStage(newStage) {
+    stage = newStage;
+
+    var titleText = 'Camera Setup Stage 1/4';
+    if (stage === 2) titleText = 'Surface Setup Stage 2/4';
+    if (stage === 3) titleText = 'Stage 3/4';
+    if (stage === 4) titleText = 'Stage 4/4';
+
+    dom.pageTitleEl.textContent = titleText;
+    document.title = titleText;
+
+    if (stage === 2) {
+      dom.surfaceButtonsEl.classList.remove('hidden');
+    } else {
+      dom.surfaceButtonsEl.classList.add('hidden');
+    }
+  }
+
+  function goToSurfaceSetup() {
+    if (!cameraReady) return;
+    setStage(2);
+  }
+
+  function onApriltagToggleChanged() {
     apriltagEnabled = dom.apriltagToggleEl.checked;
 
     if (!apriltagEnabled) {
-      if (overlayHasApriltag) {
-        clearOverlay(overlayCtx, dom.overlay);
-        overlayHasApriltag = false;
-      }
-      setStatus('Detector: Off');
+      clearOverlay(overlayCtx, dom.overlay);
       return;
     }
 
-    syncApriltagModeUi();
-
-    if (isProcessing) {
-      void ensureDetector();
-    }
+    loadDetectorIfNeeded();
   }
 
-  function syncApriltagModeUi() {
-    if (!apriltagEnabled) {
-      setStatus('Detector: Off');
-      return;
-    }
+  function loadDetectorIfNeeded() {
+    if (!apriltagEnabled) return;
+    if (detector) return;
+    if (detectorLoading) return;
 
-    if (detector) {
-      setStatus('Detector: Ready');
-      return;
-    }
-
-    if (detectorInitPromise) {
-      setStatus('Detector: Loading...');
-      return;
-    }
-
-    if (detectorLoadFailed) {
-      setStatus('Detector: Failed to load');
-      return;
-    }
-
-    setStatus('Detector: On');
-  }
-
-  async function ensureDetector() {
-    if (!apriltagEnabled) return null;
-    if (detector) return detector;
-    if (detectorInitPromise) return detectorInitPromise;
-
-    detectorLoadFailed = false;
-    setStatus('Detector: Loading...');
-    detectorInitPromise = initDetector({
-      onReady: () => {
-        if (apriltagEnabled) setStatus('Detector: Ready');
-      },
-      onError: () => {
-        detectorLoadFailed = true;
-        if (apriltagEnabled) setStatus('Detector: Failed to load');
-      },
-    })
-      .then((d) => {
-        detector = d;
-        if (!d) detectorLoadFailed = true;
-        return d;
-      })
-      .finally(() => {
-        detectorInitPromise = null;
-      });
-
-    return detectorInitPromise;
+    detectorLoading = true;
+    initDetector()
+      .then(
+        function (d) {
+          detector = d;
+          detectorLoading = false;
+        },
+        function (err) {
+          console.error('Failed to initialize detector:', err);
+          detectorLoading = false;
+        },
+      );
   }
 
   async function startCamera() {
     try {
-      const stream = await startCameraStream(dom.video, {
+      dom.startBtn.disabled = true;
+      setError('');
+      cameraStarting = true;
+      updateLoadingMessage();
+
+      var stream = await startCameraStream(dom.video, {
         video: {
           facingMode: 'environment',
           width: { ideal: 640 },
@@ -132,14 +148,22 @@ export function initApp() {
       captureCanvas.height = dom.video.videoHeight;
 
       setButtonsRunning(true);
-      setError('');
+      cameraStarting = false;
+      cameraReady = true;
+      updateLoadingMessage();
+      setNextEnabled(true);
 
       if (apriltagEnabled) {
-        void ensureDetector();
+        loadDetectorIfNeeded();
       }
 
       startProcessing();
     } catch (err) {
+      cameraStarting = false;
+      cameraReady = false;
+      updateLoadingMessage();
+      dom.startBtn.disabled = false;
+      setNextEnabled(false);
       console.error('Error accessing camera:', err);
       setError(cameraErrorMessage(err));
     }
@@ -158,7 +182,12 @@ export function initApp() {
 
     dom.video.srcObject = null;
     clearOverlay(overlayCtx, dom.overlay);
-    overlayHasApriltag = false;
+    cameraStarting = false;
+    cameraReady = false;
+    updateLoadingMessage();
+    dom.startBtn.disabled = false;
+    setNextEnabled(false);
+    setStage(1);
 
     setButtonsRunning(false);
   }
@@ -171,24 +200,22 @@ export function initApp() {
   async function processFrame() {
     if (!isProcessing) return;
 
-    const width = captureCanvas.width;
-    const height = captureCanvas.height;
+    var width = captureCanvas.width;
+    var height = captureCanvas.height;
 
     captureCtx.drawImage(dom.video, 0, 0, width, height);
-    const imageData = captureCtx.getImageData(0, 0, width, height);
+    var imageData = captureCtx.getImageData(0, 0, width, height);
 
     // AprilTag detection
     if (apriltagEnabled && detector) {
       try {
         clearOverlay(overlayCtx, dom.overlay);
-        overlayHasApriltag = false;
 
-        const grayscale = rgbaToGrayscale(imageData);
-        const detections = await detector.detect(grayscale, width, height);
+        var grayscale = rgbaToGrayscale(imageData);
+        var detections = await detector.detect(grayscale, width, height);
 
-        if (detections?.length) {
+        if (detections && detections.length > 0) {
           drawDetections(overlayCtx, detections);
-          overlayHasApriltag = true;
         }
       } catch (err) {
         console.error('AprilTag detection error:', err);
@@ -198,10 +225,7 @@ export function initApp() {
     // Hand detection (drawing happens in iframe)
     if (handDetector) {
       try {
-        const hands = await handDetector.detect(imageData.data, width, height);
-
-        if (hands?.length) {
-        }
+        await handDetector.detect(imageData.data, width, height);
       } catch (err) {
         console.error('Hand detection error:', err);
       }
@@ -211,12 +235,13 @@ export function initApp() {
   }
 
   function setButtonsRunning(isRunning) {
-    dom.startBtn.style.display = isRunning ? 'none' : 'inline-block';
-    dom.stopBtn.style.display = isRunning ? 'inline-block' : 'none';
-  }
-
-  function setStatus(text) {
-    void text;
+    if (isRunning) {
+      dom.startBtn.style.display = 'none';
+      dom.stopBtn.style.display = 'inline-block';
+    } else {
+      dom.startBtn.style.display = 'inline-block';
+      dom.stopBtn.style.display = 'none';
+    }
   }
 
   function setError(text) {

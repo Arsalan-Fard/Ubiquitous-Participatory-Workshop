@@ -3,18 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Participatory Workshop Anywhere</title>
+    <title>Camera Setup Stage 1/4</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="container">
-        <h1>Camera Setup</h1>
+        <h1 id="pageTitle">Camera Setup Stage 1/4</h1>
         <div class="video-container">
             <video id="video" autoplay playsinline></video>
             <canvas id="overlay"></canvas>
+            <div id="loading" class="loading hidden" role="status" aria-live="polite">Loading...</div>
+        </div>
+        <div id="surfaceButtons" class="surface-buttons hidden" aria-label="Surface setup tools">
+            <button id="surfaceBtn1" class="surface-btn" type="button">1</button>
+            <button id="surfaceBtn2" class="surface-btn" type="button">2</button>
+            <button id="surfaceBtn3" class="surface-btn" type="button">3</button>
+            <button id="surfaceBtn4" class="surface-btn" type="button">4</button>
         </div>
         <div class="controls">
             <button id="startBtn" class="btn">Start Camera</button>
+            <button id="nextBtn" class="btn btn-secondary" disabled>Next</button>
             <button id="stopBtn" class="btn">Close Camera</button>
         </div>
         <label class="toggle-inline">
