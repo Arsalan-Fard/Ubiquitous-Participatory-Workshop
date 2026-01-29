@@ -1,6 +1,7 @@
 import { getDom } from './dom.js';
 import { startCameraStream, stopCameraStream, waitForVideoMetadata } from './camera.js';
 import { initDetector } from './detector.js';
+import { initHandDetector } from './handDetector.js';
 import { rgbaToGrayscale } from './grayscale.js';
 import { clearOverlay, drawDetections } from './render.js';
 
@@ -16,6 +17,7 @@ export function initApp() {
 
   let currentStream = null;
   let detector = null;
+  let handDetector = null;
   let isProcessing = false;
   let animationId = null;
 
@@ -25,6 +27,16 @@ export function initApp() {
     onError: () => setStatus('Detector: Failed to load'),
   }).then((d) => {
     detector = d;
+  });
+
+  setHandStatus('Hand Detector: Loading...');
+  const videoContainer = document.querySelector('.video-container');
+  initHandDetector({
+    onReady: () => setHandStatus('Hand Detector: Ready'),
+    onError: () => setHandStatus('Hand Detector: Failed to load'),
+    videoContainer,
+  }).then((h) => {
+    handDetector = h;
   });
 
   dom.startBtn.addEventListener('click', startCamera);
@@ -86,33 +98,47 @@ export function initApp() {
   async function processFrame() {
     if (!isProcessing) return;
 
-    if (!detector) {
-      animationId = requestAnimationFrame(processFrame);
-      return;
-    }
-
     const width = captureCanvas.width;
     const height = captureCanvas.height;
 
     captureCtx.drawImage(dom.video, 0, 0, width, height);
     const imageData = captureCtx.getImageData(0, 0, width, height);
-    const grayscale = rgbaToGrayscale(imageData);
 
-    try {
-      const detections = await detector.detect(grayscale, width, height);
+    clearOverlay(overlayCtx, dom.overlay);
 
-      clearOverlay(overlayCtx, dom.overlay);
+    // AprilTag detection
+    if (detector) {
+      try {
+        const grayscale = rgbaToGrayscale(imageData);
+        const detections = await detector.detect(grayscale, width, height);
 
-      if (detections?.length) {
-        drawDetections(overlayCtx, detections);
-        dom.detectionsEl.textContent = `Detected ${detections.length} tag(s): ${detections
-          .map((d) => 'ID ' + d.id)
-          .join(', ')}`;
-      } else {
-        dom.detectionsEl.textContent = 'No tags detected';
+        if (detections?.length) {
+          drawDetections(overlayCtx, detections);
+          dom.detectionsEl.textContent = `Detected ${detections.length} tag(s): ${detections
+            .map((d) => 'ID ' + d.id)
+            .join(', ')}`;
+        } else {
+          dom.detectionsEl.textContent = 'No tags detected';
+        }
+      } catch (err) {
+        console.error('AprilTag detection error:', err);
       }
-    } catch (err) {
-      console.error('Detection error:', err);
+    }
+
+    // Hand detection (drawing happens in iframe)
+    if (handDetector) {
+      try {
+        const hands = await handDetector.detect(imageData.data, width, height);
+
+        if (hands?.length) {
+          const pinchDistances = hands.map((h) => `${h.handedness}: ${h.pinchDistance.toFixed(0)}px`);
+          setPinchDistance(`Pinch: ${pinchDistances.join(', ')}`);
+        } else {
+          setPinchDistance('');
+        }
+      } catch (err) {
+        console.error('Hand detection error:', err);
+      }
     }
 
     animationId = requestAnimationFrame(processFrame);
@@ -125,6 +151,18 @@ export function initApp() {
 
   function setStatus(text) {
     dom.statusEl.textContent = text;
+  }
+
+  function setHandStatus(text) {
+    if (dom.handStatusEl) {
+      dom.handStatusEl.textContent = text;
+    }
+  }
+
+  function setPinchDistance(text) {
+    if (dom.pinchDistanceEl) {
+      dom.pinchDistanceEl.textContent = text;
+    }
   }
 
   function setError(text) {

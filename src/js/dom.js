@@ -4,6 +4,8 @@ export function getDom() {
   const startBtn = document.getElementById('startBtn');
   const stopBtn = document.getElementById('stopBtn');
   const statusEl = document.getElementById('status');
+  const handStatusEl = document.getElementById('handStatus');
+  const pinchDistanceEl = document.getElementById('pinchDistance');
   const detectionsEl = document.getElementById('detections');
   const errorEl = document.getElementById('error');
 
@@ -11,5 +13,5 @@ export function getDom() {
     throw new Error('Missing required DOM elements. Check index.html ids.');
   }
 
-  return { video, overlay, startBtn, stopBtn, statusEl, detectionsEl, errorEl };
+  return { video, overlay, startBtn, stopBtn, statusEl, handStatusEl, pinchDistanceEl, detectionsEl, errorEl };
 }
