@@ -15,7 +15,6 @@ export async function initDetector({ onReady, onError } = {}) {
     return await new Apriltag(
       Comlink.proxy(() => {
         onReady?.();
-        console.log('AprilTag detector initialized');
       }),
     );
   } catch (err) {
