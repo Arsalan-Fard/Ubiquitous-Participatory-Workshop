@@ -4,22 +4,9 @@ export function getDom() {
   const startBtn = document.getElementById('startBtn');
   const stopBtn = document.getElementById('stopBtn');
   const apriltagToggleEl = document.getElementById('apriltagToggle');
-  const statusEl = document.getElementById('status');
-  const handStatusEl = document.getElementById('handStatus');
-  const pinchDistanceEl = document.getElementById('pinchDistance');
-  const detectionsEl = document.getElementById('detections');
   const errorEl = document.getElementById('error');
 
-  if (
-    !video ||
-    !overlay ||
-    !startBtn ||
-    !stopBtn ||
-    !apriltagToggleEl ||
-    !statusEl ||
-    !detectionsEl ||
-    !errorEl
-  ) {
+  if (!video || !overlay || !startBtn || !stopBtn || !apriltagToggleEl || !errorEl) {
     throw new Error('Missing required DOM elements. Check index.html ids.');
   }
 
@@ -29,10 +16,6 @@ export function getDom() {
     startBtn,
     stopBtn,
     apriltagToggleEl,
-    statusEl,
-    handStatusEl,
-    pinchDistanceEl,
-    detectionsEl,
     errorEl,
   };
 }

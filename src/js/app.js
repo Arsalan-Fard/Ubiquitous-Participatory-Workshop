@@ -27,11 +27,10 @@ export function initApp() {
 
   syncApriltagModeUi();
 
-  setHandStatus('Hand Detector: Loading...');
   const videoContainer = document.querySelector('.video-container');
   initHandDetector({
-    onReady: () => setHandStatus('Hand Detector: Ready'),
-    onError: () => setHandStatus('Hand Detector: Failed to load'),
+    onReady: () => {},
+    onError: () => {},
     videoContainer,
   }).then((h) => {
     handDetector = h;
@@ -49,7 +48,6 @@ export function initApp() {
         clearOverlay(overlayCtx, dom.overlay);
         overlayHasApriltag = false;
       }
-      dom.detectionsEl.textContent = '';
       setStatus('Detector: Off');
       return;
     }
@@ -161,7 +159,6 @@ export function initApp() {
     dom.video.srcObject = null;
     clearOverlay(overlayCtx, dom.overlay);
     overlayHasApriltag = false;
-    dom.detectionsEl.textContent = '';
 
     setButtonsRunning(false);
   }
@@ -192,11 +189,6 @@ export function initApp() {
         if (detections?.length) {
           drawDetections(overlayCtx, detections);
           overlayHasApriltag = true;
-          dom.detectionsEl.textContent = `Detected ${detections.length} tag(s): ${detections
-            .map((d) => 'ID ' + d.id)
-            .join(', ')}`;
-        } else {
-          dom.detectionsEl.textContent = 'No tags detected';
         }
       } catch (err) {
         console.error('AprilTag detection error:', err);
@@ -209,10 +201,6 @@ export function initApp() {
         const hands = await handDetector.detect(imageData.data, width, height);
 
         if (hands?.length) {
-          const pinchDistances = hands.map((h) => `${h.handedness}: ${h.pinchDistance.toFixed(0)}px`);
-          setPinchDistance(`Pinch: ${pinchDistances.join(', ')}`);
-        } else {
-          setPinchDistance('');
         }
       } catch (err) {
         console.error('Hand detection error:', err);
@@ -228,19 +216,7 @@ export function initApp() {
   }
 
   function setStatus(text) {
-    dom.statusEl.textContent = text;
-  }
-
-  function setHandStatus(text) {
-    if (dom.handStatusEl) {
-      dom.handStatusEl.textContent = text;
-    }
-  }
-
-  function setPinchDistance(text) {
-    if (dom.pinchDistanceEl) {
-      dom.pinchDistanceEl.textContent = text;
-    }
+    void text;
   }
 
   function setError(text) {

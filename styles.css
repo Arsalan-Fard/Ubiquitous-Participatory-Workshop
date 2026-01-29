@@ -153,25 +153,6 @@ h1 {
     background-color: #d32f2f;
 }
 
-#status {
-    color: #aaa;
-    margin-top: 15px;
-    font-size: 14px;
-}
-
-#handStatus {
-    color: #aaa;
-    margin-top: 15px;
-    font-size: 14px;
-}
-
-#detections {
-    color: #4CAF50;
-    margin-top: 10px;
-    font-size: 14px;
-    min-height: 24px;
-}
-
 #error {
     color: #ff6b6b;
     margin-top: 10px;
