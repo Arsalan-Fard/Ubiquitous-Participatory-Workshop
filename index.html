@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera View</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            text-align: center;
+            width: 100%;
+            max-width: 800px;
+        }
+
+        h1 {
+            color: #fff;
+            margin-bottom: 20px;
+        }
+
+        #video {
+            width: 100%;
+            max-width: 640px;
+            border-radius: 8px;
+            background-color: #000;
+        }
+
+        .btn {
+            margin-top: 20px;
+            padding: 12px 24px;
+            font-size: 16px;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+
+        #startBtn {
+            background-color: #4CAF50;
+        }
+
+        #startBtn:hover {
+            background-color: #45a049;
+        }
+
+        #stopBtn {
+            background-color: #f44336;
+            display: none;
+        }
+
+        #stopBtn:hover {
+            background-color: #d32f2f;
+        }
+
+        #error {
+            color: #ff6b6b;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Camera View</h1>
+        <video id="video" autoplay playsinline></video>
+        <br>
+        <button id="startBtn" class="btn">Start Camera</button>
+        <button id="stopBtn" class="btn">Close Camera</button>
+        <p id="error"></p>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const errorMsg = document.getElementById('error');
+
+        let currentStream = null;
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'environment'
+                    },
+                    audio: false
+                });
+
+                currentStream = stream;
+                video.srcObject = stream;
+                startBtn.style.display = 'none';
+                stopBtn.style.display = 'inline-block';
+                errorMsg.textContent = '';
+            } catch (err) {
+                console.error('Error accessing camera:', err);
+                if (err.name === 'NotAllowedError') {
+                    errorMsg.textContent = 'Camera access denied. Please allow camera permissions.';
+                } else if (err.name === 'NotFoundError') {
+                    errorMsg.textContent = 'No camera found on this device.';
+                } else {
+                    errorMsg.textContent = 'Error accessing camera: ' + err.message;
+                }
+            }
+        }
+
+        function stopCamera() {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+                currentStream = null;
+            }
+            video.srcObject = null;
+            startBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+        }
+
+        startBtn.addEventListener('click', startCamera);
+        stopBtn.addEventListener('click', stopCamera);
+    </script>
+</body>
+</html>
