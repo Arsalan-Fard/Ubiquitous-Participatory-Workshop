@@ -10,6 +10,8 @@ export function getDom() {
   var holdStillThresholdValueEl = document.getElementById('holdStillThresholdValue');
   var dwellTimeSliderEl = document.getElementById('dwellTimeSlider');
   var dwellTimeValueEl = document.getElementById('dwellTimeValue');
+  var pinchHoldTimeSliderEl = document.getElementById('pinchHoldTimeSlider');
+  var pinchHoldTimeValueEl = document.getElementById('pinchHoldTimeValue');
   var surfaceButtonsEl = document.getElementById('surfaceButtons');
   var surfaceBtn1 = document.getElementById('surfaceBtn1');
   var surfaceBtn2 = document.getElementById('surfaceBtn2');
@@ -53,6 +55,8 @@ export function getDom() {
     !holdStillThresholdValueEl ||
     !dwellTimeSliderEl ||
     !dwellTimeValueEl ||
+    !pinchHoldTimeSliderEl ||
+    !pinchHoldTimeValueEl ||
     !surfaceButtonsEl ||
     !surfaceBtn1 ||
     !surfaceBtn2 ||
@@ -99,6 +103,8 @@ export function getDom() {
     holdStillThresholdValueEl: holdStillThresholdValueEl,
     dwellTimeSliderEl: dwellTimeSliderEl,
     dwellTimeValueEl: dwellTimeValueEl,
+    pinchHoldTimeSliderEl: pinchHoldTimeSliderEl,
+    pinchHoldTimeValueEl: pinchHoldTimeValueEl,
     surfaceButtonsEl: surfaceButtonsEl,
     surfaceBtn1: surfaceBtn1,
     surfaceBtn2: surfaceBtn2,

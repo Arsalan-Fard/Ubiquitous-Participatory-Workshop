@@ -49,10 +49,10 @@ export function initApp() {
   var pixelReadBlockedNotified = false;
 
   // Stage 3 gesture controls (map view)
-  var PINCH_DRAG_ARM_MS = 3000;
   var pinchDistanceThresholdPx = loadNumberSetting('pinchDistanceThresholdPx', 45, 10, 120);
   var holdStillThresholdPx = loadNumberSetting('holdStillThresholdPx', 14, 2, 80);
   var dwellClickMs = loadNumberSetting('dwellClickMs', 3000, 250, 8000);
+  var pinchHoldMs = loadNumberSetting('pinchHoldMs', 3000, 250, 8000);
   var PINCH_RATIO_THRESHOLD = 0.35;
 
   var dwellAnchor = null; // {x,y} in viewport coords
@@ -218,6 +218,16 @@ export function initApp() {
     dwellClickMs = clamp(v, 0.25, 8.0) * 1000;
     dom.dwellTimeValueEl.textContent = (dwellClickMs / 1000).toFixed(1);
     saveNumberSetting('dwellClickMs', dwellClickMs);
+  });
+
+  dom.pinchHoldTimeSliderEl.value = String((pinchHoldMs / 1000).toFixed(1));
+  dom.pinchHoldTimeValueEl.textContent = (pinchHoldMs / 1000).toFixed(1);
+  dom.pinchHoldTimeSliderEl.addEventListener('input', function () {
+    var v = parseFloat(dom.pinchHoldTimeSliderEl.value);
+    if (!isFinite(v)) return;
+    pinchHoldMs = clamp(v, 0.25, 8.0) * 1000;
+    dom.pinchHoldTimeValueEl.textContent = (pinchHoldMs / 1000).toFixed(1);
+    saveNumberSetting('pinchHoldMs', pinchHoldMs);
   });
 
   function initMaptasticIfNeeded() {
@@ -1320,10 +1330,10 @@ export function initApp() {
         pinchStartMs = nowMs;
       }
 
-      var pinchProgress = Math.min(1, (nowMs - pinchStartMs) / PINCH_DRAG_ARM_MS);
+      var pinchProgress = Math.min(1, (nowMs - pinchStartMs) / pinchHoldMs);
       setStage3CursorProgress(dragActive ? 1 : pinchProgress, dragActive ? 'drag' : 'pinch');
 
-      if (!dragActive && nowMs - pinchStartMs >= PINCH_DRAG_ARM_MS) {
+      if (!dragActive && nowMs - pinchStartMs >= pinchHoldMs) {
         startDrag(pointer);
       }
 
