@@ -17,6 +17,7 @@ export function getDom() {
   var viewToggleEl = document.getElementById('viewToggle');
   var mapViewEl = document.getElementById('mapView');
   var mapWarpEl = document.getElementById('mapWarp');
+  var mapFingerDotEl = document.getElementById('mapFingerDot');
   var mapHintEl = document.getElementById('mapHint');
   var errorEl = document.getElementById('error');
 
@@ -39,6 +40,7 @@ export function getDom() {
     !viewToggleEl ||
     !mapViewEl ||
     !mapWarpEl ||
+    !mapFingerDotEl ||
     !mapHintEl ||
     !errorEl
   ) {
@@ -64,6 +66,7 @@ export function getDom() {
     viewToggleEl: viewToggleEl,
     mapViewEl: mapViewEl,
     mapWarpEl: mapWarpEl,
+    mapFingerDotEl: mapFingerDotEl,
     mapHintEl: mapHintEl,
     errorEl: errorEl,
   };

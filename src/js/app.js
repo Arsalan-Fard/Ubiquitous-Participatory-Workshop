@@ -34,6 +34,7 @@ export function initApp() {
   var armedCornerCaptureRequested = false;
   var lastIndexTipPoint = null;
   var lastIndexTipTimeMs = 0;
+  var surfaceHomography = null;
 
   var videoContainer = document.querySelector('.video-container');
   initHandDetector({ videoContainer: videoContainer }).then(function (h) {
@@ -156,13 +157,14 @@ export function initApp() {
       dom.mapViewEl.setAttribute('aria-hidden', 'false');
       dom.viewToggleContainerEl.classList.add('toggle-floating');
       initMaptasticIfNeeded();
-      pauseProcessing();
+      // Keep processing running so we can track the index fingertip and project it onto the map.
       return;
     }
 
     dom.mapViewEl.classList.add('hidden');
     dom.mapViewEl.setAttribute('aria-hidden', 'true');
     dom.viewToggleContainerEl.classList.remove('toggle-floating');
+    setMapFingerDotVisible(false);
     resumeProcessingIfReady();
   }
 
@@ -194,8 +196,43 @@ export function initApp() {
 
   function resetSurfaceCorners() {
     surfaceCorners = [null, null, null, null];
+    surfaceHomography = null;
     clearArmedCorner();
     updateSurfaceButtonsUI();
+    setMapFingerDotVisible(false);
+  }
+
+  function setMapFingerDotVisible(visible) {
+    if (visible) {
+      dom.mapFingerDotEl.classList.remove('hidden');
+      dom.mapFingerDotEl.setAttribute('aria-hidden', 'false');
+      return;
+    }
+
+    dom.mapFingerDotEl.classList.add('hidden');
+    dom.mapFingerDotEl.setAttribute('aria-hidden', 'true');
+  }
+
+  function areSurfaceCornersReady() {
+    return !!(surfaceCorners[0] && surfaceCorners[1] && surfaceCorners[2] && surfaceCorners[3]);
+  }
+
+  function recomputeSurfaceHomographyIfReady() {
+    if (!areSurfaceCornersReady()) {
+      surfaceHomography = null;
+      return;
+    }
+
+    surfaceHomography = computeHomography(surfaceCorners, [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ]);
+
+    if (!surfaceHomography) {
+      console.warn('Surface homography could not be computed (degenerate corners).');
+    }
   }
 
   function clearArmedCorner() {
@@ -352,7 +389,10 @@ export function initApp() {
     captureCtx.drawImage(dom.video, 0, 0, width, height);
     var imageData = captureCtx.getImageData(0, 0, width, height);
 
-    clearOverlay(overlayCtx, dom.overlay);
+    var shouldRenderOverlay = viewMode === 'camera';
+    if (shouldRenderOverlay) {
+      clearOverlay(overlayCtx, dom.overlay);
+    }
 
     var hands = [];
 
@@ -396,6 +436,7 @@ export function initApp() {
       flashCornerButton(armedCornerIndex);
       clearArmedCorner();
       updateSurfaceButtonsUI();
+      recomputeSurfaceHomographyIfReady();
     }
 
     if (isSurfaceSetupCameraView) {
@@ -405,8 +446,15 @@ export function initApp() {
       });
     }
 
+    var isSurfaceSetupMapView = stage === 2 && viewMode === 'map';
+    if (isSurfaceSetupMapView && surfaceHomography && usableIndexTipPoint) {
+      updateMapFingerDot(usableIndexTipPoint);
+    } else {
+      setMapFingerDotVisible(false);
+    }
+
     // AprilTag detection
-    if (apriltagEnabled && detector) {
+    if (apriltagEnabled && detector && shouldRenderOverlay) {
       try {
         var grayscale = rgbaToGrayscale(imageData);
         var detections = await detector.detect(grayscale, width, height);
@@ -435,6 +483,127 @@ export function initApp() {
   function setError(text) {
     dom.errorEl.textContent = text;
   }
+
+  function updateMapFingerDot(cameraPoint) {
+    if (!surfaceHomography) {
+      setMapFingerDotVisible(false);
+      return;
+    }
+
+    var uv = applyHomography(surfaceHomography, cameraPoint.x, cameraPoint.y);
+    if (!uv) {
+      setMapFingerDotVisible(false);
+      return;
+    }
+
+    var tolerance = 0.12;
+    if (uv.x < -tolerance || uv.x > 1 + tolerance || uv.y < -tolerance || uv.y > 1 + tolerance) {
+      setMapFingerDotVisible(false);
+      return;
+    }
+
+    var u = clamp01(uv.x);
+    var v = clamp01(uv.y);
+
+    var w = dom.mapWarpEl.offsetWidth;
+    var h = dom.mapWarpEl.offsetHeight;
+    if (!w || !h) {
+      setMapFingerDotVisible(false);
+      return;
+    }
+
+    var x = u * w;
+    var y = v * h;
+
+    // Dot is 14px; center it.
+    dom.mapFingerDotEl.style.transform = 'translate(' + (x - 7) + 'px, ' + (y - 7) + 'px)';
+    setMapFingerDotVisible(true);
+  }
+}
+
+function clamp01(value) {
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
+function applyHomography(H, x, y) {
+  var denom = H[6] * x + H[7] * y + H[8];
+  if (!denom) return null;
+
+  return {
+    x: (H[0] * x + H[1] * y + H[2]) / denom,
+    y: (H[3] * x + H[4] * y + H[5]) / denom,
+  };
+}
+
+function computeHomography(src, dst) {
+  if (!src || !dst || src.length !== 4 || dst.length !== 4) return null;
+
+  var A = [];
+  var b = [];
+
+  for (var i = 0; i < 4; i++) {
+    var x = src[i].x;
+    var y = src[i].y;
+    var u = dst[i].x;
+    var v = dst[i].y;
+
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]);
+    b.push(u);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y]);
+    b.push(v);
+  }
+
+  var h = solveLinearSystem(A, b);
+  if (!h) return null;
+
+  return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];
+}
+
+function solveLinearSystem(A, b) {
+  var n = b.length;
+  var M = [];
+
+  for (var i = 0; i < n; i++) {
+    M[i] = A[i].slice();
+    M[i].push(b[i]);
+  }
+
+  for (var col = 0; col < n; col++) {
+    var pivot = col;
+    for (var row = col + 1; row < n; row++) {
+      if (Math.abs(M[row][col]) > Math.abs(M[pivot][col])) pivot = row;
+    }
+
+    if (Math.abs(M[pivot][col]) < 1e-12) return null;
+
+    if (pivot !== col) {
+      var tmp = M[col];
+      M[col] = M[pivot];
+      M[pivot] = tmp;
+    }
+
+    var div = M[col][col];
+    for (var c = col; c <= n; c++) {
+      M[col][c] = M[col][c] / div;
+    }
+
+    for (var r = 0; r < n; r++) {
+      if (r === col) continue;
+      var factor = M[r][col];
+      if (!factor) continue;
+      for (var c2 = col; c2 <= n; c2++) {
+        M[r][c2] = M[r][c2] - factor * M[col][c2];
+      }
+    }
+  }
+
+  var x = new Array(n);
+  for (var i = 0; i < n; i++) {
+    x[i] = M[i][n];
+  }
+  return x;
 }
 
 function cameraErrorMessage(err) {
