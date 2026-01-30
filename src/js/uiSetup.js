@@ -391,9 +391,7 @@ function makeDraggable(el, options) {
     dragging = false;
     el.classList.remove(draggingClass);
 
-    try {
-      el.releasePointerCapture(e.pointerId);
-    } catch {}
+    if (el.releasePointerCapture) el.releasePointerCapture(e.pointerId);
   }
 
   el.addEventListener('pointerup', stopDrag);
