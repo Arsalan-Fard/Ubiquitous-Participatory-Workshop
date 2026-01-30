@@ -26,6 +26,8 @@ export function initApp() {
   var isProcessing = false;
   var animationId = null;
   var apriltagEnabled = dom.apriltagToggleEl.checked;
+  var viewMode = 'camera';
+  var maptasticInitialized = false;
 
   var videoContainer = document.querySelector('.video-container');
   initHandDetector({ videoContainer: videoContainer }).then(function (h) {
@@ -38,9 +40,31 @@ export function initApp() {
   dom.nextBtn.addEventListener('click', goToSurfaceSetup);
   dom.stopBtn.addEventListener('click', stopCamera);
   dom.apriltagToggleEl.addEventListener('change', onApriltagToggleChanged);
+  dom.viewToggleEl.addEventListener('change', onViewToggleChanged);
 
   setStage(1);
+  setViewMode('camera');
   setNextEnabled(false);
+
+  function initMaptasticIfNeeded() {
+    if (maptasticInitialized) return;
+    maptasticInitialized = true;
+
+    var maptasticGlobal = window.maptastic;
+    if (!maptasticGlobal || !maptasticGlobal.Maptastic) {
+      console.warn('Maptastic library not loaded; map corner editing is unavailable.');
+      return;
+    }
+
+    try {
+      // Maptastic binds global key controls (Shift+Space) and draggable corners.
+      new maptasticGlobal.Maptastic(dom.mapWarpEl.id);
+      dom.mapHintEl.classList.remove('hidden');
+      dom.mapHintEl.setAttribute('aria-hidden', 'false');
+    } catch (err) {
+      console.error('Failed to initialize Maptastic:', err);
+    }
+  }
 
   function showLoading(message) {
     if (message) dom.loadingEl.textContent = message;
@@ -82,14 +106,59 @@ export function initApp() {
 
     if (stage === 2) {
       dom.surfaceButtonsEl.classList.remove('hidden');
+      dom.apriltagToggleContainerEl.classList.add('hidden');
+      dom.viewToggleContainerEl.classList.remove('hidden');
+      setViewMode(dom.viewToggleEl.checked ? 'map' : 'camera');
     } else {
       dom.surfaceButtonsEl.classList.add('hidden');
+      dom.apriltagToggleContainerEl.classList.remove('hidden');
+      dom.viewToggleContainerEl.classList.add('hidden');
+      setViewMode('camera');
     }
   }
 
   function goToSurfaceSetup() {
     if (!cameraReady) return;
+    dom.viewToggleEl.checked = false;
     setStage(2);
+  }
+
+  function onViewToggleChanged() {
+    if (stage !== 2) return;
+    setViewMode(dom.viewToggleEl.checked ? 'map' : 'camera');
+  }
+
+  function setViewMode(mode) {
+    viewMode = mode === 'map' ? 'map' : 'camera';
+
+    if (viewMode === 'map') {
+      dom.mapViewEl.classList.remove('hidden');
+      dom.mapViewEl.setAttribute('aria-hidden', 'false');
+      dom.viewToggleContainerEl.classList.add('toggle-floating');
+      initMaptasticIfNeeded();
+      pauseProcessing();
+      return;
+    }
+
+    dom.mapViewEl.classList.add('hidden');
+    dom.mapViewEl.setAttribute('aria-hidden', 'true');
+    dom.viewToggleContainerEl.classList.remove('toggle-floating');
+    resumeProcessingIfReady();
+  }
+
+  function pauseProcessing() {
+    isProcessing = false;
+    if (animationId) {
+      cancelAnimationFrame(animationId);
+      animationId = null;
+    }
+  }
+
+  function resumeProcessingIfReady() {
+    if (!cameraReady) return;
+    if (viewMode !== 'camera') return;
+    if (isProcessing) return;
+    startProcessing();
   }
 
   function onApriltagToggleChanged() {
@@ -170,12 +239,7 @@ export function initApp() {
   }
 
   function stopCamera() {
-    isProcessing = false;
-
-    if (animationId) {
-      cancelAnimationFrame(animationId);
-      animationId = null;
-    }
+    pauseProcessing();
 
     stopCameraStream(currentStream);
     currentStream = null;
@@ -188,6 +252,7 @@ export function initApp() {
     dom.startBtn.disabled = false;
     setNextEnabled(false);
     setStage(1);
+    dom.viewToggleEl.checked = false;
 
     setButtonsRunning(false);
   }

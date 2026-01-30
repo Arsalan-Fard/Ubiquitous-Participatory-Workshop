@@ -11,7 +11,13 @@ export function getDom() {
   var startBtn = document.getElementById('startBtn');
   var nextBtn = document.getElementById('nextBtn');
   var stopBtn = document.getElementById('stopBtn');
+  var apriltagToggleContainerEl = document.getElementById('apriltagToggleContainer');
   var apriltagToggleEl = document.getElementById('apriltagToggle');
+  var viewToggleContainerEl = document.getElementById('viewToggleContainer');
+  var viewToggleEl = document.getElementById('viewToggle');
+  var mapViewEl = document.getElementById('mapView');
+  var mapWarpEl = document.getElementById('mapWarp');
+  var mapHintEl = document.getElementById('mapHint');
   var errorEl = document.getElementById('error');
 
   if (
@@ -27,7 +33,13 @@ export function getDom() {
     !startBtn ||
     !nextBtn ||
     !stopBtn ||
+    !apriltagToggleContainerEl ||
     !apriltagToggleEl ||
+    !viewToggleContainerEl ||
+    !viewToggleEl ||
+    !mapViewEl ||
+    !mapWarpEl ||
+    !mapHintEl ||
     !errorEl
   ) {
     throw new Error('Missing required DOM elements. Check index.html ids.');
@@ -46,7 +58,13 @@ export function getDom() {
     startBtn: startBtn,
     nextBtn: nextBtn,
     stopBtn: stopBtn,
+    apriltagToggleContainerEl: apriltagToggleContainerEl,
     apriltagToggleEl: apriltagToggleEl,
+    viewToggleContainerEl: viewToggleContainerEl,
+    viewToggleEl: viewToggleEl,
+    mapViewEl: mapViewEl,
+    mapWarpEl: mapWarpEl,
+    mapHintEl: mapHintEl,
     errorEl: errorEl,
   };
 }
