@@ -339,6 +339,35 @@ h1 {
     margin-top: 12px;
 }
 
+.ui-setup-footer {
+    margin-top: 14px;
+    display: flex;
+    gap: 10px;
+}
+
+.ui-setup-action-btn {
+    flex: 1 1 0;
+    height: 44px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.10);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 800;
+    cursor: pointer;
+    transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.ui-setup-action-btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.24);
+    transform: translateY(-1px);
+}
+
+.ui-setup-action-btn:active {
+    transform: translateY(0);
+}
+
 .ui-setup-input {
     flex: 1 1 auto;
     min-width: 0;

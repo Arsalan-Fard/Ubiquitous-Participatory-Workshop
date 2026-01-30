@@ -31,9 +31,6 @@ export function initUiSetup(options) {
   row.appendChild(addBtn);
   panelEl.appendChild(row);
 
-  var colorRow = document.createElement('div');
-  colorRow.className = 'ui-setup-row';
-
   var colorInputEl = document.createElement('input');
   colorInputEl.type = 'color';
   colorInputEl.className = 'ui-color-input';
@@ -50,10 +47,6 @@ export function initUiSetup(options) {
   addDotBtn.type = 'button';
   addDotBtn.textContent = '+';
   addDotBtn.setAttribute('aria-label', 'Add circle');
-
-  colorRow.appendChild(colorSwatchBtn);
-  colorRow.appendChild(addDotBtn);
-  panelEl.appendChild(colorRow);
 
   addBtn.addEventListener('click', function () {
     createLabelFromInput();
@@ -73,9 +66,6 @@ export function initUiSetup(options) {
   addDotBtn.addEventListener('click', function () {
     createDot();
   });
-
-  var drawRow = document.createElement('div');
-  drawRow.className = 'ui-setup-row';
 
   var drawColorInputEl = document.createElement('input');
   drawColorInputEl.type = 'color';
@@ -100,9 +90,40 @@ export function initUiSetup(options) {
   addDrawBtn.textContent = '+';
   addDrawBtn.setAttribute('aria-label', 'Add drawing');
 
-  drawRow.appendChild(drawSwatchEl);
-  drawRow.appendChild(addDrawBtn);
-  panelEl.appendChild(drawRow);
+  var controlsRow = document.createElement('div');
+  controlsRow.className = 'ui-setup-row';
+  controlsRow.appendChild(colorSwatchBtn);
+  controlsRow.appendChild(addDotBtn);
+  controlsRow.appendChild(drawSwatchEl);
+  controlsRow.appendChild(addDrawBtn);
+  panelEl.appendChild(controlsRow);
+
+  var footer = document.createElement('div');
+  footer.className = 'ui-setup-footer';
+
+  var exportBtn = document.createElement('button');
+  exportBtn.className = 'ui-setup-action-btn';
+  exportBtn.type = 'button';
+  exportBtn.textContent = 'Export';
+
+  var importBtn = document.createElement('button');
+  importBtn.className = 'ui-setup-action-btn';
+  importBtn.type = 'button';
+  importBtn.textContent = 'Import';
+
+  var importFileEl = document.createElement('input');
+  importFileEl.type = 'file';
+  importFileEl.accept = 'application/json,.json';
+  importFileEl.style.position = 'absolute';
+  importFileEl.style.left = '-9999px';
+  importFileEl.style.width = '1px';
+  importFileEl.style.height = '1px';
+  importFileEl.setAttribute('aria-hidden', 'true');
+
+  footer.appendChild(exportBtn);
+  footer.appendChild(importBtn);
+  panelEl.appendChild(footer);
+  panelEl.appendChild(importFileEl);
 
   redrawDrawPreview();
 
@@ -115,6 +136,21 @@ export function initUiSetup(options) {
     createDraw();
   });
 
+  exportBtn.addEventListener('click', function () {
+    exportToJson();
+  });
+
+  importBtn.addEventListener('click', function () {
+    importFileEl.value = '';
+    importFileEl.click();
+  });
+
+  importFileEl.addEventListener('change', function () {
+    var file = importFileEl.files && importFileEl.files[0];
+    if (!file) return;
+    importFromFile(file);
+  });
+
   function createLabelFromInput() {
     var text = String(inputEl.value || '').trim();
     if (!text) return;
@@ -122,6 +158,7 @@ export function initUiSetup(options) {
     var labelEl = document.createElement('div');
     labelEl.className = 'ui-label';
     labelEl.textContent = text;
+    labelEl.dataset.uiType = 'label';
     overlayEl.appendChild(labelEl);
 
     positionLabelAboveInput(labelEl);
@@ -155,6 +192,8 @@ export function initUiSetup(options) {
     var dotEl = document.createElement('div');
     dotEl.className = 'ui-dot';
     dotEl.style.background = currentColor;
+    dotEl.dataset.uiType = 'dot';
+    dotEl.dataset.color = currentColor;
     overlayEl.appendChild(dotEl);
 
     positionDotAboveSwatch(dotEl);
@@ -192,6 +231,8 @@ export function initUiSetup(options) {
     drawEl.className = 'ui-draw';
     drawEl.width = 48;
     drawEl.height = 48;
+    drawEl.dataset.uiType = 'draw';
+    drawEl.dataset.color = currentDrawColor;
     overlayEl.appendChild(drawEl);
 
     positionDrawAboveSwatch(drawEl);
@@ -216,6 +257,101 @@ export function initUiSetup(options) {
       drawEl.style.top = top + 'px';
       drawEl.style.visibility = 'visible';
     });
+  }
+
+  function exportToJson() {
+    var items = [];
+    var children = overlayEl.children;
+
+    for (var i = 0; i < children.length; i++) {
+      var el = children[i];
+      var type = el.dataset && el.dataset.uiType;
+      if (!type) continue;
+
+      var left = parseFloat(el.style.left || '0');
+      var top = parseFloat(el.style.top || '0');
+
+      if (type === 'label') {
+        items.push({ type: 'label', text: el.textContent || '', x: left, y: top });
+      } else if (type === 'dot') {
+        items.push({ type: 'dot', color: el.dataset.color || '#ff3b30', x: left, y: top });
+      } else if (type === 'draw') {
+        items.push({ type: 'draw', color: el.dataset.color || '#2bb8ff', x: left, y: top });
+      }
+    }
+
+    var payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      items: items,
+    };
+
+    downloadTextFile(JSON.stringify(payload, null, 2), fileNameForExport());
+  }
+
+  async function importFromFile(file) {
+    try {
+      var text = await file.text();
+      var data = JSON.parse(text);
+      importFromData(data);
+    } catch (err) {
+      console.error('Import failed:', err);
+      alert('Import failed: invalid JSON.');
+    }
+  }
+
+  function importFromData(data) {
+    if (!data || typeof data !== 'object' || !Array.isArray(data.items)) {
+      alert('Import failed: invalid format.');
+      return;
+    }
+
+    overlayEl.textContent = '';
+
+    for (var i = 0; i < data.items.length; i++) {
+      var item = data.items[i];
+      if (!item || typeof item !== 'object') continue;
+
+      if (item.type === 'label') {
+        var labelEl = document.createElement('div');
+        labelEl.className = 'ui-label';
+        labelEl.textContent = String(item.text || '');
+        labelEl.dataset.uiType = 'label';
+        labelEl.style.left = String(item.x || 0) + 'px';
+        labelEl.style.top = String(item.y || 0) + 'px';
+        overlayEl.appendChild(labelEl);
+        makeDraggable(labelEl);
+        continue;
+      }
+
+      if (item.type === 'dot') {
+        var dotEl = document.createElement('div');
+        dotEl.className = 'ui-dot';
+        dotEl.dataset.uiType = 'dot';
+        dotEl.dataset.color = String(item.color || '#ff3b30');
+        dotEl.style.background = dotEl.dataset.color;
+        dotEl.style.left = String(item.x || 0) + 'px';
+        dotEl.style.top = String(item.y || 0) + 'px';
+        overlayEl.appendChild(dotEl);
+        makeDraggable(dotEl, { draggingClass: 'ui-dot--dragging' });
+        continue;
+      }
+
+      if (item.type === 'draw') {
+        var drawEl = document.createElement('canvas');
+        drawEl.className = 'ui-draw';
+        drawEl.width = 48;
+        drawEl.height = 48;
+        drawEl.dataset.uiType = 'draw';
+        drawEl.dataset.color = String(item.color || '#2bb8ff');
+        drawEl.style.left = String(item.x || 0) + 'px';
+        drawEl.style.top = String(item.y || 0) + 'px';
+        overlayEl.appendChild(drawEl);
+        renderDrawIcon(drawEl, drawEl.dataset.color);
+        makeDraggable(drawEl, { draggingClass: 'ui-draw--dragging' });
+        continue;
+      }
+    }
   }
 }
 
@@ -290,4 +426,25 @@ function drawScribble(ctx, color, w, h) {
   ctx.fill();
 
   ctx.restore();
+}
+
+function downloadTextFile(text, filename) {
+  var blob = new Blob([text], { type: 'application/json' });
+  var url = URL.createObjectURL(blob);
+
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  setTimeout(function () {
+    URL.revokeObjectURL(url);
+  }, 0);
+}
+
+function fileNameForExport() {
+  var iso = new Date().toISOString().replace(/[:.]/g, '-');
+  return 'ui-setup-' + iso + '.json';
 }
