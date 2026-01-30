@@ -21,6 +21,7 @@
             <button id="surfaceBtn4" class="surface-btn" type="button">4</button>
         </div>
         <div class="controls">
+            <button id="backBtn" class="btn btn-secondary" type="button" disabled>Back</button>
             <button id="startBtn" class="btn">Start Camera</button>
             <button id="nextBtn" class="btn btn-secondary" disabled>Next</button>
             <button id="stopBtn" class="btn">Close Camera</button>
@@ -57,6 +58,8 @@
         <div id="mapHint" class="map-hint hidden" aria-hidden="true">
             Edit corners: Shift + Space, then drag corners.
         </div>
+        <div id="uiSetupOverlay" class="ui-setup-overlay hidden" aria-hidden="true"></div>
+        <div id="uiSetupPanel" class="ui-setup-panel hidden" aria-hidden="true"></div>
     </div>
 
     <script src="lib/comlink.min.js"></script>

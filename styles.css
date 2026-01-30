@@ -306,6 +306,163 @@ h1 {
     will-change: transform;
 }
 
+.ui-setup-panel {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 65;
+    width: min(720px, calc(100vw - 48px));
+    min-height: 220px;
+    padding: 18px;
+    border-radius: 18px;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    backdrop-filter: blur(10px);
+    color: #fff;
+}
+
+.ui-setup-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 66;
+    pointer-events: none;
+}
+
+.ui-setup-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.ui-setup-row + .ui-setup-row {
+    margin-top: 12px;
+}
+
+.ui-setup-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 44px;
+    padding: 0 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    outline: none;
+    font-size: 14px;
+}
+
+.ui-setup-input::placeholder {
+    color: rgba(255, 255, 255, 0.65);
+}
+
+.ui-setup-input:focus-visible {
+    border-color: rgba(43, 184, 255, 0.9);
+    box-shadow: 0 0 0 3px rgba(43, 184, 255, 0.22);
+}
+
+.ui-setup-add-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.10);
+    color: #fff;
+    font-size: 22px;
+    line-height: 1;
+    font-weight: 800;
+    cursor: pointer;
+    transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.ui-setup-add-btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.24);
+    transform: translateY(-1px);
+}
+
+.ui-setup-add-btn:active {
+    transform: translateY(0);
+}
+
+.ui-label {
+    position: absolute;
+    left: 0;
+    top: 0;
+    padding: 10px 12px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.68);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    pointer-events: auto;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35);
+}
+
+.ui-label:active {
+    cursor: grabbing;
+}
+
+.ui-label--dragging {
+    opacity: 0.95;
+}
+
+.ui-color-swatch {
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.10);
+    cursor: pointer;
+    position: relative;
+    flex: 0 0 auto;
+    overflow: hidden;
+}
+
+.ui-color-swatch:focus-visible {
+    outline: 2px solid rgba(43, 184, 255, 0.9);
+    outline-offset: 2px;
+}
+
+.ui-color-input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    border: 0;
+    padding: 0;
+    margin: 0;
+}
+
+.ui-dot {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #ff3b30;
+    border: 2px solid rgba(255, 255, 255, 0.85);
+    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35);
+    pointer-events: auto;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+    will-change: transform;
+}
+
+.ui-dot:active {
+    cursor: grabbing;
+}
+
+.ui-dot--dragging {
+    opacity: 0.95;
+}
+
 .map-hint {
     position: fixed;
     top: 16px;

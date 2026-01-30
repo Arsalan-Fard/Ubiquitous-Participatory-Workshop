@@ -8,6 +8,7 @@ export function getDom() {
   var surfaceBtn2 = document.getElementById('surfaceBtn2');
   var surfaceBtn3 = document.getElementById('surfaceBtn3');
   var surfaceBtn4 = document.getElementById('surfaceBtn4');
+  var backBtn = document.getElementById('backBtn');
   var startBtn = document.getElementById('startBtn');
   var nextBtn = document.getElementById('nextBtn');
   var stopBtn = document.getElementById('stopBtn');
@@ -19,6 +20,8 @@ export function getDom() {
   var mapWarpEl = document.getElementById('mapWarp');
   var mapFingerDotEl = document.getElementById('mapFingerDot');
   var mapHintEl = document.getElementById('mapHint');
+  var uiSetupOverlayEl = document.getElementById('uiSetupOverlay');
+  var uiSetupPanelEl = document.getElementById('uiSetupPanel');
   var errorEl = document.getElementById('error');
 
   if (
@@ -31,6 +34,7 @@ export function getDom() {
     !surfaceBtn2 ||
     !surfaceBtn3 ||
     !surfaceBtn4 ||
+    !backBtn ||
     !startBtn ||
     !nextBtn ||
     !stopBtn ||
@@ -42,6 +46,8 @@ export function getDom() {
     !mapWarpEl ||
     !mapFingerDotEl ||
     !mapHintEl ||
+    !uiSetupOverlayEl ||
+    !uiSetupPanelEl ||
     !errorEl
   ) {
     throw new Error('Missing required DOM elements. Check index.html ids.');
@@ -57,6 +63,7 @@ export function getDom() {
     surfaceBtn2: surfaceBtn2,
     surfaceBtn3: surfaceBtn3,
     surfaceBtn4: surfaceBtn4,
+    backBtn: backBtn,
     startBtn: startBtn,
     nextBtn: nextBtn,
     stopBtn: stopBtn,
@@ -68,6 +75,8 @@ export function getDom() {
     mapWarpEl: mapWarpEl,
     mapFingerDotEl: mapFingerDotEl,
     mapHintEl: mapHintEl,
+    uiSetupOverlayEl: uiSetupOverlayEl,
+    uiSetupPanelEl: uiSetupPanelEl,
     errorEl: errorEl,
   };
 }

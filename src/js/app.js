@@ -4,6 +4,7 @@ import { initDetector } from './detector.js';
 import { initHandDetector } from './handDetector.js';
 import { rgbaToGrayscale } from './grayscale.js';
 import { clearOverlay, drawDetections, drawSurface } from './render.js';
+import { initUiSetup } from './uiSetup.js';
 
 export function initApp() {
   var dom = getDom();
@@ -43,8 +44,11 @@ export function initApp() {
     updateLoadingMessage();
   });
 
+  initUiSetup({ panelEl: dom.uiSetupPanelEl, overlayEl: dom.uiSetupOverlayEl });
+
   dom.startBtn.addEventListener('click', startCamera);
-  dom.nextBtn.addEventListener('click', goToSurfaceSetup);
+  dom.nextBtn.addEventListener('click', onNextClicked);
+  dom.backBtn.addEventListener('click', onBackClicked);
   dom.stopBtn.addEventListener('click', stopCamera);
   dom.apriltagToggleEl.addEventListener('change', onApriltagToggleChanged);
   dom.viewToggleEl.addEventListener('change', onViewToggleChanged);
@@ -65,6 +69,8 @@ export function initApp() {
   setViewMode('camera');
   setNextEnabled(false);
   updateSurfaceButtonsUI();
+  updateUiSetupPanelVisibility();
+  updateBackState();
 
   function initMaptasticIfNeeded() {
     if (maptasticInitialized) return;
@@ -118,22 +124,74 @@ export function initApp() {
 
     var titleText = 'Camera Setup Stage 1/4';
     if (stage === 2) titleText = 'Surface Setup Stage 2/4';
-    if (stage === 3) titleText = 'Stage 3/4';
+    if (stage === 3) titleText = 'UI Setup Stage 3/4';
     if (stage === 4) titleText = 'Stage 4/4';
 
     dom.pageTitleEl.textContent = titleText;
     document.title = titleText;
 
-    if (stage === 2) {
-      dom.surfaceButtonsEl.classList.remove('hidden');
+    if (stage === 2 || stage === 3) {
       dom.apriltagToggleContainerEl.classList.add('hidden');
       dom.viewToggleContainerEl.classList.remove('hidden');
-      setViewMode(dom.viewToggleEl.checked ? 'map' : 'camera');
     } else {
-      dom.surfaceButtonsEl.classList.add('hidden');
       dom.apriltagToggleContainerEl.classList.remove('hidden');
       dom.viewToggleContainerEl.classList.add('hidden');
+    }
+
+    if (stage === 2) {
+      dom.surfaceButtonsEl.classList.remove('hidden');
+      setViewMode(dom.viewToggleEl.checked ? 'map' : 'camera');
+    } else if (stage === 3) {
+      dom.surfaceButtonsEl.classList.add('hidden');
+      dom.viewToggleEl.checked = true;
+      setViewMode('map');
+    } else {
+      dom.surfaceButtonsEl.classList.add('hidden');
       setViewMode('camera');
+    }
+
+    updateUiSetupPanelVisibility();
+    updateBackState();
+  }
+
+  function onNextClicked() {
+    if (!cameraReady) return;
+
+    if (stage === 1) {
+      goToSurfaceSetup();
+      return;
+    }
+
+    if (stage === 2) {
+      goToUiSetup();
+      return;
+    }
+
+    if (stage === 3) {
+      setStage(4);
+      return;
+    }
+  }
+
+  function onBackClicked() {
+    if (!cameraReady) return;
+
+    if (stage === 2) {
+      setStage(1);
+      return;
+    }
+
+    if (stage === 3) {
+      // Surface setup should default back to camera view.
+      dom.viewToggleEl.checked = false;
+      setStage(2);
+      return;
+    }
+
+    if (stage === 4) {
+      dom.viewToggleEl.checked = true;
+      setStage(3);
+      return;
     }
   }
 
@@ -144,8 +202,15 @@ export function initApp() {
     setStage(2);
   }
 
+  function goToUiSetup() {
+    if (!cameraReady) return;
+    clearArmedCorner();
+    dom.viewToggleEl.checked = true;
+    setStage(3);
+  }
+
   function onViewToggleChanged() {
-    if (stage !== 2) return;
+    if (stage !== 2 && stage !== 3) return;
     setViewMode(dom.viewToggleEl.checked ? 'map' : 'camera');
   }
 
@@ -158,6 +223,7 @@ export function initApp() {
       dom.viewToggleContainerEl.classList.add('toggle-floating');
       initMaptasticIfNeeded();
       // Keep processing running so we can track the index fingertip and project it onto the map.
+      updateUiSetupPanelVisibility();
       return;
     }
 
@@ -165,6 +231,7 @@ export function initApp() {
     dom.mapViewEl.setAttribute('aria-hidden', 'true');
     dom.viewToggleContainerEl.classList.remove('toggle-floating');
     setMapFingerDotVisible(false);
+    updateUiSetupPanelVisibility();
     resumeProcessingIfReady();
   }
 
@@ -211,6 +278,23 @@ export function initApp() {
 
     dom.mapFingerDotEl.classList.add('hidden');
     dom.mapFingerDotEl.setAttribute('aria-hidden', 'true');
+  }
+
+  function updateUiSetupPanelVisibility() {
+    var visible = stage === 3 && viewMode === 'map';
+
+    if (visible) {
+      dom.uiSetupPanelEl.classList.remove('hidden');
+      dom.uiSetupPanelEl.setAttribute('aria-hidden', 'false');
+      dom.uiSetupOverlayEl.classList.remove('hidden');
+      dom.uiSetupOverlayEl.setAttribute('aria-hidden', 'false');
+      return;
+    }
+
+    dom.uiSetupPanelEl.classList.add('hidden');
+    dom.uiSetupPanelEl.setAttribute('aria-hidden', 'true');
+    dom.uiSetupOverlayEl.classList.add('hidden');
+    dom.uiSetupOverlayEl.setAttribute('aria-hidden', 'true');
   }
 
   function areSurfaceCornersReady() {
@@ -418,7 +502,7 @@ export function initApp() {
       }
     }
 
-    var isSurfaceSetupCameraView = stage === 2 && viewMode === 'camera';
+    var isSurfaceSetupCameraView = (stage === 2 || stage === 3) && viewMode === 'camera';
     var usableIndexTipPoint = null;
     if (indexTipPoint) {
       usableIndexTipPoint = indexTipPoint;
@@ -446,7 +530,7 @@ export function initApp() {
       });
     }
 
-    var isSurfaceSetupMapView = stage === 2 && viewMode === 'map';
+    var isSurfaceSetupMapView = (stage === 2 || stage === 3) && viewMode === 'map';
     if (isSurfaceSetupMapView && surfaceHomography && usableIndexTipPoint) {
       updateMapFingerDot(usableIndexTipPoint);
     } else {
@@ -478,6 +562,12 @@ export function initApp() {
       dom.startBtn.style.display = 'inline-block';
       dom.stopBtn.style.display = 'none';
     }
+  }
+
+  function updateBackState() {
+    var visible = stage !== 1;
+    dom.backBtn.classList.toggle('hidden', !visible);
+    dom.backBtn.disabled = !visible;
   }
 
   function setError(text) {
