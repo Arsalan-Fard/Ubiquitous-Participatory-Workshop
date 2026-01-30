@@ -362,10 +362,6 @@ function makeDraggable(el, options) {
   var offsetX = 0;
   var offsetY = 0;
 
-  // Mark for hand-pinch dragging, so a single global controller can move it.
-  el.dataset.handDraggable = 'true';
-  el.dataset.handDraggingClass = draggingClass;
-
   el.addEventListener('pointerdown', function (e) {
     if (e.button !== 0) return;
     e.preventDefault();

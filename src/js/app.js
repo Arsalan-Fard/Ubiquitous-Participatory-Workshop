@@ -42,11 +42,6 @@ export function initApp() {
   var lastIndexTipPoints = null;
   var lastIndexTipTimeMs = 0;
   var surfaceHomography = null;
-  var handPointer = createHandPointer();
-  var pinchPressed = false;
-  var lastGestureHandTimeMs = 0;
-  var lastPinchLogMs = 0;
-  var handDebugEl = null;
   var availableVideoDevices = [];
   var customCameraSources = loadCustomCameraSources();
   var ipCameraImg = null;
@@ -100,7 +95,6 @@ export function initApp() {
   });
 
   initUiSetup({ panelEl: dom.uiSetupPanelEl, overlayEl: dom.uiSetupOverlayEl });
-  handDebugEl = initHandDebug(dom.mapViewEl);
 
   dom.startBtn.addEventListener('click', startCamera);
   dom.nextBtn.addEventListener('click', onNextClicked);
@@ -397,7 +391,6 @@ export function initApp() {
       dom.uiSetupPanelEl.setAttribute('aria-hidden', 'false');
       dom.uiSetupOverlayEl.classList.remove('hidden');
       dom.uiSetupOverlayEl.setAttribute('aria-hidden', 'false');
-      setHandDebugVisible(true);
       return;
     }
 
@@ -405,7 +398,6 @@ export function initApp() {
     dom.uiSetupPanelEl.setAttribute('aria-hidden', 'true');
     dom.uiSetupOverlayEl.classList.add('hidden');
     dom.uiSetupOverlayEl.setAttribute('aria-hidden', 'true');
-    setHandDebugVisible(false);
   }
 
   function areSurfaceCornersReady() {
@@ -418,16 +410,11 @@ export function initApp() {
       return;
     }
 
-    // Map the physical surface (captured in camera pixels) directly to the browser viewport (client pixels).
-    // This makes finger interactions line up with what is rendered in the window.
-    var viewportW = Math.max(1, window.innerWidth || 1);
-    var viewportH = Math.max(1, window.innerHeight || 1);
-
     surfaceHomography = computeHomography(surfaceCorners, [
       { x: 0, y: 0 },
-      { x: viewportW, y: 0 },
-      { x: viewportW, y: viewportH },
-      { x: 0, y: viewportH },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
     ]);
 
     if (!surfaceHomography) {
@@ -1105,9 +1092,6 @@ export function initApp() {
       }
     }
 
-    updateHandPinchInteractions(hands, width, height);
-    updateStage3HandDebug(hands);
-
     var isSurfaceSetupMapView = (stage === 2 || stage === 3) && viewMode === 'map';
     if (isSurfaceSetupMapView && surfaceHomography && usableIndexTipPoints && usableIndexTipPoints.length > 0) {
       updateMapFingerDots(usableIndexTipPoints);
@@ -1130,256 +1114,6 @@ export function initApp() {
     }
 
     animationId = requestAnimationFrame(processFrame);
-  }
-
-  function updateHandPinchInteractions(hands, captureWidth, captureHeight) {
-    // Enable pinch interactions once we have a camera->viewport homography.
-    // Keep it active in both camera/map views so UI controls (like the map toggle) are clickable by pinching.
-    if ((stage !== 2 && stage !== 3) || !surfaceHomography) {
-      if (pinchPressed) {
-        pinchPressed = false;
-        handPointer.reset();
-      }
-      setMapFingerDotsPinchActive(false);
-      return;
-    }
-
-    // While capturing corners in stage 2 camera view, don't trigger clicks/drags.
-    if (stage === 2 && viewMode === 'camera' && armedCornerCaptureRequested) {
-      if (pinchPressed) {
-        pinchPressed = false;
-        handPointer.reset();
-      }
-      setMapFingerDotsPinchActive(false);
-      return;
-    }
-
-    var nowMs = performance.now();
-
-    var interactionHand = pickInteractionHand(hands);
-    if (!interactionHand || !interactionHand.landmarks || interactionHand.landmarks.length <= 8) {
-      // If tracking drops briefly, keep dragging for a moment; then release.
-      if (pinchPressed && nowMs - lastGestureHandTimeMs > 200) {
-        pinchPressed = false;
-        handPointer.reset();
-      }
-      setMapFingerDotsPinchActive(false);
-      return;
-    }
-
-    lastGestureHandTimeMs = nowMs;
-
-    var thumbTip = interactionHand.landmarks[4];
-    var indexTip = interactionHand.landmarks[8];
-    if (!thumbTip || !indexTip) return;
-
-    var pinchDistance2d = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-
-    // Hysteresis to avoid flicker.
-    var minDim = Math.max(1, Math.min(captureWidth || 1, captureHeight || 1));
-    // Calibrated against ~640x480 defaults: 40px/480 ~= 0.083, 55px/480 ~= 0.115.
-    var pinchDownPx = clamp(minDim * 0.03, 18, 160);
-    var pinchUpPx = clamp(minDim * 0.04, 26, 220);
-    var wasPinchPressed = pinchPressed;
-    if (!pinchPressed && pinchDistance2d < pinchDownPx) pinchPressed = true;
-    else if (pinchPressed && pinchDistance2d > pinchUpPx) pinchPressed = false;
-
-    // Use the index fingertip for the cursor position (including click targeting).
-    // This matches the stage-3 debug overlay and tends to feel more intuitive for UI interaction.
-    var cursorCamPoint = { x: indexTip.x, y: indexTip.y };
-
-    var mapped = applyHomography(surfaceHomography, cursorCamPoint.x, cursorCamPoint.y);
-    if (!mapped || typeof mapped.x !== 'number' || typeof mapped.y !== 'number') {
-      if (pinchPressed) {
-        pinchPressed = false;
-        handPointer.reset();
-      }
-      setMapFingerDotsPinchActive(false);
-      return;
-    }
-
-    setMapFingerDotsPinchActive(pinchPressed);
-
-    if (pinchPressed !== wasPinchPressed || (pinchPressed && nowMs - lastPinchLogMs > 250)) {
-      lastPinchLogMs = nowMs;
-      console.log('[hand] pinch', pinchPressed ? 'down' : 'up', {
-        client: { x: Math.round(mapped.x), y: Math.round(mapped.y) },
-        camera: { x: Math.round(cursorCamPoint.x), y: Math.round(cursorCamPoint.y) },
-        pinchDistancePx: Math.round(pinchDistance2d),
-        pinchDownPx: Math.round(pinchDownPx),
-        pinchUpPx: Math.round(pinchUpPx),
-        capture: { width: captureWidth || null, height: captureHeight || null },
-        viewport: { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio || 1 },
-        screen: { width: window.screen && window.screen.width, height: window.screen && window.screen.height },
-        viewMode: viewMode,
-        stage: stage,
-      });
-    }
-
-    handPointer.update({
-      clientX: mapped.x,
-      clientY: mapped.y,
-      pressed: pinchPressed,
-      nowMs: nowMs,
-    });
-  }
-
-  function pickInteractionHand(hands) {
-    if (!hands || hands.length === 0) return null;
-
-    // Prefer the "most pinched" hand, so pinch intent wins if two hands are visible.
-    var best = null;
-    var bestDistance = Infinity;
-
-    for (var i = 0; i < hands.length; i++) {
-      var hand = hands[i];
-      if (!hand || !hand.landmarks || hand.landmarks.length <= 8) continue;
-      var thumbTip = hand.landmarks[4];
-      var indexTip = hand.landmarks[8];
-      if (!thumbTip || !indexTip) continue;
-
-      var d = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-      if (d < bestDistance) {
-        bestDistance = d;
-        best = hand;
-      }
-    }
-
-    return best;
-  }
-
-  function clamp(value, min, max) {
-    if (value < min) return min;
-    if (value > max) return max;
-    return value;
-  }
-
-  function initHandDebug(parentEl) {
-    try {
-      var el = document.createElement('pre');
-      el.className = 'hand-debug hidden';
-      el.setAttribute('aria-hidden', 'true');
-      el.textContent = '';
-      parentEl.appendChild(el);
-      return el;
-    } catch {
-      return null;
-    }
-  }
-
-  function setHandDebugVisible(visible) {
-    if (!handDebugEl) return;
-    if (visible) {
-      handDebugEl.classList.remove('hidden');
-      handDebugEl.setAttribute('aria-hidden', 'false');
-      return;
-    }
-    handDebugEl.classList.add('hidden');
-    handDebugEl.setAttribute('aria-hidden', 'true');
-  }
-
-  function updateStage3HandDebug(hands) {
-    if (!handDebugEl) return;
-    if (stage !== 3 || viewMode !== 'map') return;
-
-    var inputEl = dom.uiSetupPanelEl.querySelector('.ui-setup-input');
-    var inputRect = null;
-    if (inputEl && inputEl.getBoundingClientRect) inputRect = inputEl.getBoundingClientRect();
-
-    var fingerClient = null;
-    if (surfaceHomography) {
-      var interactionHand = pickInteractionHand(hands);
-      if (interactionHand && interactionHand.landmarks && interactionHand.landmarks.length > 8) {
-        var indexTip = interactionHand.landmarks[8];
-        if (indexTip) {
-          var mapped = applyHomography(surfaceHomography, indexTip.x, indexTip.y);
-          if (mapped && isFinite(mapped.x) && isFinite(mapped.y)) {
-            fingerClient = { x: mapped.x, y: mapped.y };
-          }
-        }
-      }
-    }
-
-    var inside = false;
-    if (inputRect && fingerClient) {
-      inside =
-        fingerClient.x >= inputRect.left &&
-        fingerClient.x <= inputRect.right &&
-        fingerClient.y >= inputRect.top &&
-        fingerClient.y <= inputRect.bottom;
-    }
-
-    var active = null;
-    try {
-      active = document.activeElement;
-    } catch {}
-
-    var activeInfo = 'N/A';
-    if (active) {
-      var tag = active.tagName || 'UNKNOWN';
-      var id = active.id ? '#' + active.id : '';
-      var cls = active.className ? '.' + String(active.className).trim().replace(/\s+/g, '.') : '';
-      activeInfo = tag + id + cls;
-    }
-
-    var inputFocused = !!(active && inputEl && active === inputEl);
-
-    handDebugEl.textContent =
-      'DEBUG (stage 3)\n' +
-      'viewport: ' +
-      window.innerWidth +
-      ' x ' +
-      window.innerHeight +
-      ' (dpr ' +
-      (window.devicePixelRatio || 1) +
-      ')\n' +
-      'homography: ' +
-      (surfaceHomography ? 'ready' : 'not ready') +
-      '\n' +
-      'pinchPressed: ' +
-      (pinchPressed ? 'true' : 'false') +
-      '\n' +
-      'ui-setup-input rect: ' +
-      (inputRect
-        ? 'L ' +
-          Math.round(inputRect.left) +
-          ' T ' +
-          Math.round(inputRect.top) +
-          ' R ' +
-          Math.round(inputRect.right) +
-          ' B ' +
-          Math.round(inputRect.bottom) +
-          ' (W ' +
-          Math.round(inputRect.width) +
-          ' H ' +
-          Math.round(inputRect.height) +
-          ')'
-        : 'N/A') +
-      '\n' +
-      'index finger (client): ' +
-      (fingerClient ? 'x ' + Math.round(fingerClient.x) + ' y ' + Math.round(fingerClient.y) : 'N/A') +
-      '\n' +
-      'inside input: ' +
-      (inside ? 'YES' : 'NO') +
-      '\n' +
-      'activeElement: ' +
-      activeInfo +
-      '\n' +
-      'input focused: ' +
-      (inputFocused ? 'YES' : 'NO');
-  }
-
-  function setMapFingerDotsPinchActive(active) {
-    dom.mapFingerDotsEl.classList.toggle('map-finger-dots--pinch', !!active);
-  }
-
-  function logScreenInfo(source) {
-    try {
-      console.log('[hand] screen', source, {
-        viewport: { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio || 1 },
-        screen: { width: window.screen && window.screen.width, height: window.screen && window.screen.height },
-      });
-    } catch {}
   }
 
   function setButtonsRunning(isRunning) {
@@ -1622,6 +1356,13 @@ export function initApp() {
       return;
     }
 
+    var w = dom.mapWarpEl.offsetWidth;
+    var h = dom.mapWarpEl.offsetHeight;
+    if (!w || !h) {
+      setMapFingerDotsVisible(false);
+      return;
+    }
+
     var required = cameraPoints.length;
     while (dom.mapFingerDotsEl.children.length < required) {
       var dotEl = document.createElement('div');
@@ -1633,28 +1374,22 @@ export function initApp() {
     }
 
     var anyVisible = false;
-    var tolerancePx = 80;
-    var viewportW = Math.max(1, window.innerWidth || 1);
-    var viewportH = Math.max(1, window.innerHeight || 1);
+    var tolerance = 0.12;
 
     for (var i = 0; i < required; i++) {
       var point = cameraPoints[i];
       var dotEl = dom.mapFingerDotsEl.children[i];
 
-      var mapped = applyHomography(surfaceHomography, point.x, point.y);
-      if (
-        !mapped ||
-        mapped.x < -tolerancePx ||
-        mapped.x > viewportW + tolerancePx ||
-        mapped.y < -tolerancePx ||
-        mapped.y > viewportH + tolerancePx
-      ) {
+      var uv = applyHomography(surfaceHomography, point.x, point.y);
+      if (!uv || uv.x < -tolerance || uv.x > 1 + tolerance || uv.y < -tolerance || uv.y > 1 + tolerance) {
         dotEl.classList.add('hidden');
         continue;
       }
 
-      var x = mapped.x;
-      var y = mapped.y;
+      var u = clamp01(uv.x);
+      var v = clamp01(uv.y);
+      var x = u * w;
+      var y = v * h;
 
       // Dot is 14px; center it.
       dotEl.style.transform = 'translate(' + (x - 7) + 'px, ' + (y - 7) + 'px)';
