@@ -34,6 +34,7 @@ export function initApp() {
   var armedCornerTimeoutId = null;
   var armedCornerCaptureRequested = false;
   var lastIndexTipPoint = null;
+  var lastIndexTipPoints = null;
   var lastIndexTipTimeMs = 0;
   var surfaceHomography = null;
 
@@ -230,7 +231,7 @@ export function initApp() {
     dom.mapViewEl.classList.add('hidden');
     dom.mapViewEl.setAttribute('aria-hidden', 'true');
     dom.viewToggleContainerEl.classList.remove('toggle-floating');
-    setMapFingerDotVisible(false);
+    setMapFingerDotsVisible(false);
     updateUiSetupPanelVisibility();
     resumeProcessingIfReady();
   }
@@ -266,18 +267,19 @@ export function initApp() {
     surfaceHomography = null;
     clearArmedCorner();
     updateSurfaceButtonsUI();
-    setMapFingerDotVisible(false);
+    setMapFingerDotsVisible(false);
   }
 
-  function setMapFingerDotVisible(visible) {
+  function setMapFingerDotsVisible(visible) {
     if (visible) {
-      dom.mapFingerDotEl.classList.remove('hidden');
-      dom.mapFingerDotEl.setAttribute('aria-hidden', 'false');
+      dom.mapFingerDotsEl.classList.remove('hidden');
+      dom.mapFingerDotsEl.setAttribute('aria-hidden', 'false');
       return;
     }
 
-    dom.mapFingerDotEl.classList.add('hidden');
-    dom.mapFingerDotEl.setAttribute('aria-hidden', 'true');
+    dom.mapFingerDotsEl.classList.add('hidden');
+    dom.mapFingerDotsEl.setAttribute('aria-hidden', 'true');
+    dom.mapFingerDotsEl.textContent = '';
   }
 
   function updateUiSetupPanelVisibility() {
@@ -491,22 +493,32 @@ export function initApp() {
     }
 
     var indexTipPoint = null;
+    var indexTipPoints = [];
 
     if (hands && hands.length > 0) {
-      var bestHand = hands[0];
-      if (bestHand && bestHand.landmarks && bestHand.landmarks.length > 8) {
-        var indexTip = bestHand.landmarks[8];
-        indexTipPoint = { x: indexTip.x, y: indexTip.y };
+      for (var i = 0; i < hands.length; i++) {
+        var hand = hands[i];
+        if (!hand || !hand.landmarks || hand.landmarks.length <= 8) continue;
+        var tip = hand.landmarks[8];
+        indexTipPoints.push({ x: tip.x, y: tip.y });
+      }
+
+      if (indexTipPoints.length > 0) {
+        indexTipPoint = indexTipPoints[0];
         lastIndexTipPoint = indexTipPoint;
+        lastIndexTipPoints = indexTipPoints;
         lastIndexTipTimeMs = performance.now();
       }
     }
 
     var isSurfaceSetupCameraView = (stage === 2 || stage === 3) && viewMode === 'camera';
     var usableIndexTipPoint = null;
+    var usableIndexTipPoints = null;
     if (indexTipPoint) {
       usableIndexTipPoint = indexTipPoint;
-    } else if (lastIndexTipPoint && performance.now() - lastIndexTipTimeMs < 150) {
+      usableIndexTipPoints = indexTipPoints;
+    } else if (lastIndexTipPoints && performance.now() - lastIndexTipTimeMs < 150) {
+      usableIndexTipPoints = lastIndexTipPoints;
       usableIndexTipPoint = lastIndexTipPoint;
     }
 
@@ -531,10 +543,10 @@ export function initApp() {
     }
 
     var isSurfaceSetupMapView = (stage === 2 || stage === 3) && viewMode === 'map';
-    if (isSurfaceSetupMapView && surfaceHomography && usableIndexTipPoint) {
-      updateMapFingerDot(usableIndexTipPoint);
+    if (isSurfaceSetupMapView && surfaceHomography && usableIndexTipPoints && usableIndexTipPoints.length > 0) {
+      updateMapFingerDots(usableIndexTipPoints);
     } else {
-      setMapFingerDotVisible(false);
+      setMapFingerDotsVisible(false);
     }
 
     // AprilTag detection
@@ -574,40 +586,54 @@ export function initApp() {
     dom.errorEl.textContent = text;
   }
 
-  function updateMapFingerDot(cameraPoint) {
+  function updateMapFingerDots(cameraPoints) {
     if (!surfaceHomography) {
-      setMapFingerDotVisible(false);
+      setMapFingerDotsVisible(false);
       return;
     }
-
-    var uv = applyHomography(surfaceHomography, cameraPoint.x, cameraPoint.y);
-    if (!uv) {
-      setMapFingerDotVisible(false);
-      return;
-    }
-
-    var tolerance = 0.12;
-    if (uv.x < -tolerance || uv.x > 1 + tolerance || uv.y < -tolerance || uv.y > 1 + tolerance) {
-      setMapFingerDotVisible(false);
-      return;
-    }
-
-    var u = clamp01(uv.x);
-    var v = clamp01(uv.y);
 
     var w = dom.mapWarpEl.offsetWidth;
     var h = dom.mapWarpEl.offsetHeight;
     if (!w || !h) {
-      setMapFingerDotVisible(false);
+      setMapFingerDotsVisible(false);
       return;
     }
 
-    var x = u * w;
-    var y = v * h;
+    var required = cameraPoints.length;
+    while (dom.mapFingerDotsEl.children.length < required) {
+      var dotEl = document.createElement('div');
+      dotEl.className = 'map-finger-dot';
+      dom.mapFingerDotsEl.appendChild(dotEl);
+    }
+    while (dom.mapFingerDotsEl.children.length > required) {
+      dom.mapFingerDotsEl.removeChild(dom.mapFingerDotsEl.lastChild);
+    }
 
-    // Dot is 14px; center it.
-    dom.mapFingerDotEl.style.transform = 'translate(' + (x - 7) + 'px, ' + (y - 7) + 'px)';
-    setMapFingerDotVisible(true);
+    var anyVisible = false;
+    var tolerance = 0.12;
+
+    for (var i = 0; i < required; i++) {
+      var point = cameraPoints[i];
+      var dotEl = dom.mapFingerDotsEl.children[i];
+
+      var uv = applyHomography(surfaceHomography, point.x, point.y);
+      if (!uv || uv.x < -tolerance || uv.x > 1 + tolerance || uv.y < -tolerance || uv.y > 1 + tolerance) {
+        dotEl.classList.add('hidden');
+        continue;
+      }
+
+      var u = clamp01(uv.x);
+      var v = clamp01(uv.y);
+      var x = u * w;
+      var y = v * h;
+
+      // Dot is 14px; center it.
+      dotEl.style.transform = 'translate(' + (x - 7) + 'px, ' + (y - 7) + 'px)';
+      dotEl.classList.remove('hidden');
+      anyVisible = true;
+    }
+
+    setMapFingerDotsVisible(anyVisible);
   }
 }
 

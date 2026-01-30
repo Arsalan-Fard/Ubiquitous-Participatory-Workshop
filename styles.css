@@ -291,6 +291,13 @@ h1 {
     display: block;
 }
 
+.map-finger-dots {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    pointer-events: none;
+}
+
 .map-finger-dot {
     position: absolute;
     left: 0;
@@ -301,7 +308,6 @@ h1 {
     background: #ff3b30;
     box-shadow: 0 10px 26px rgba(255, 59, 48, 0.35);
     border: 2px solid rgba(255, 255, 255, 0.85);
-    z-index: 10;
     pointer-events: none;
     will-change: transform;
 }
