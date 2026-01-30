@@ -102,10 +102,34 @@ h1 {
     color: #ddd;
     font-weight: 700;
     cursor: pointer;
+    transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
 }
 
 .surface-btn:hover {
     background: rgba(255, 255, 255, 0.10);
+}
+
+.surface-btn--set {
+    background: rgba(49, 214, 123, 0.12);
+    border-color: rgba(49, 214, 123, 0.55);
+    color: #fff;
+}
+
+.surface-btn--armed {
+    background: rgba(43, 184, 255, 0.16);
+    border-color: rgba(43, 184, 255, 0.75);
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+@keyframes surfaceBtnFlash {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.08); }
+    100% { transform: scale(1); }
+}
+
+.surface-btn--flash {
+    animation: surfaceBtnFlash 220ms ease-out;
 }
 
 .btn-secondary {

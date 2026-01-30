@@ -3,7 +3,7 @@ import { startCameraStream, stopCameraStream, waitForVideoMetadata } from './cam
 import { initDetector } from './detector.js';
 import { initHandDetector } from './handDetector.js';
 import { rgbaToGrayscale } from './grayscale.js';
-import { clearOverlay, drawDetections } from './render.js';
+import { clearOverlay, drawDetections, drawSurface } from './render.js';
 
 export function initApp() {
   var dom = getDom();
@@ -28,6 +28,12 @@ export function initApp() {
   var apriltagEnabled = dom.apriltagToggleEl.checked;
   var viewMode = 'camera';
   var maptasticInitialized = false;
+  var surfaceCorners = [null, null, null, null];
+  var armedCornerIndex = null;
+  var armedCornerTimeoutId = null;
+  var armedCornerCaptureRequested = false;
+  var lastIndexTipPoint = null;
+  var lastIndexTipTimeMs = 0;
 
   var videoContainer = document.querySelector('.video-container');
   initHandDetector({ videoContainer: videoContainer }).then(function (h) {
@@ -41,10 +47,23 @@ export function initApp() {
   dom.stopBtn.addEventListener('click', stopCamera);
   dom.apriltagToggleEl.addEventListener('change', onApriltagToggleChanged);
   dom.viewToggleEl.addEventListener('change', onViewToggleChanged);
+  dom.surfaceBtn1.addEventListener('click', function () {
+    armCorner(0);
+  });
+  dom.surfaceBtn2.addEventListener('click', function () {
+    armCorner(1);
+  });
+  dom.surfaceBtn3.addEventListener('click', function () {
+    armCorner(2);
+  });
+  dom.surfaceBtn4.addEventListener('click', function () {
+    armCorner(3);
+  });
 
   setStage(1);
   setViewMode('camera');
   setNextEnabled(false);
+  updateSurfaceButtonsUI();
 
   function initMaptasticIfNeeded() {
     if (maptasticInitialized) return;
@@ -120,6 +139,7 @@ export function initApp() {
   function goToSurfaceSetup() {
     if (!cameraReady) return;
     dom.viewToggleEl.checked = false;
+    resetSurfaceCorners();
     setStage(2);
   }
 
@@ -170,6 +190,66 @@ export function initApp() {
     }
 
     loadDetectorIfNeeded();
+  }
+
+  function resetSurfaceCorners() {
+    surfaceCorners = [null, null, null, null];
+    clearArmedCorner();
+    updateSurfaceButtonsUI();
+  }
+
+  function clearArmedCorner() {
+    armedCornerIndex = null;
+    armedCornerCaptureRequested = false;
+    if (armedCornerTimeoutId) {
+      clearTimeout(armedCornerTimeoutId);
+      armedCornerTimeoutId = null;
+    }
+  }
+
+  function armCorner(index) {
+    if (stage !== 2) return;
+
+    if (viewMode !== 'camera') {
+      dom.viewToggleEl.checked = false;
+      setViewMode('camera');
+    }
+
+    armedCornerIndex = index;
+    armedCornerCaptureRequested = true;
+    updateSurfaceButtonsUI();
+
+    if (armedCornerTimeoutId) clearTimeout(armedCornerTimeoutId);
+    armedCornerTimeoutId = setTimeout(function () {
+      clearArmedCorner();
+      updateSurfaceButtonsUI();
+    }, 2500);
+  }
+
+  function flashCornerButton(index) {
+    var el = null;
+    if (index === 0) el = dom.surfaceBtn1;
+    if (index === 1) el = dom.surfaceBtn2;
+    if (index === 2) el = dom.surfaceBtn3;
+    if (index === 3) el = dom.surfaceBtn4;
+    if (!el) return;
+
+    el.classList.add('surface-btn--flash');
+    setTimeout(function () {
+      el.classList.remove('surface-btn--flash');
+    }, 220);
+  }
+
+  function updateSurfaceButtonsUI() {
+    dom.surfaceBtn1.classList.toggle('surface-btn--set', !!surfaceCorners[0]);
+    dom.surfaceBtn2.classList.toggle('surface-btn--set', !!surfaceCorners[1]);
+    dom.surfaceBtn3.classList.toggle('surface-btn--set', !!surfaceCorners[2]);
+    dom.surfaceBtn4.classList.toggle('surface-btn--set', !!surfaceCorners[3]);
+
+    dom.surfaceBtn1.classList.toggle('surface-btn--armed', armedCornerIndex === 0);
+    dom.surfaceBtn2.classList.toggle('surface-btn--armed', armedCornerIndex === 1);
+    dom.surfaceBtn3.classList.toggle('surface-btn--armed', armedCornerIndex === 2);
+    dom.surfaceBtn4.classList.toggle('surface-btn--armed', armedCornerIndex === 3);
   }
 
   function loadDetectorIfNeeded() {
@@ -253,6 +333,7 @@ export function initApp() {
     setNextEnabled(false);
     setStage(1);
     dom.viewToggleEl.checked = false;
+    resetSurfaceCorners();
 
     setButtonsRunning(false);
   }
@@ -271,11 +352,62 @@ export function initApp() {
     captureCtx.drawImage(dom.video, 0, 0, width, height);
     var imageData = captureCtx.getImageData(0, 0, width, height);
 
+    clearOverlay(overlayCtx, dom.overlay);
+
+    var hands = [];
+
+    // Hand detection (hand skeleton drawing happens in iframe)
+    if (handDetector) {
+      try {
+        hands = (await handDetector.detect(imageData.data, width, height)) || [];
+      } catch (err) {
+        console.error('Hand detection error:', err);
+        hands = [];
+      }
+    }
+
+    var indexTipPoint = null;
+
+    if (hands && hands.length > 0) {
+      var bestHand = hands[0];
+      if (bestHand && bestHand.landmarks && bestHand.landmarks.length > 8) {
+        var indexTip = bestHand.landmarks[8];
+        indexTipPoint = { x: indexTip.x, y: indexTip.y };
+        lastIndexTipPoint = indexTipPoint;
+        lastIndexTipTimeMs = performance.now();
+      }
+    }
+
+    var isSurfaceSetupCameraView = stage === 2 && viewMode === 'camera';
+    var usableIndexTipPoint = null;
+    if (indexTipPoint) {
+      usableIndexTipPoint = indexTipPoint;
+    } else if (lastIndexTipPoint && performance.now() - lastIndexTipTimeMs < 150) {
+      usableIndexTipPoint = lastIndexTipPoint;
+    }
+
+    if (
+      isSurfaceSetupCameraView &&
+      armedCornerCaptureRequested &&
+      armedCornerIndex !== null &&
+      usableIndexTipPoint
+    ) {
+      surfaceCorners[armedCornerIndex] = usableIndexTipPoint;
+      flashCornerButton(armedCornerIndex);
+      clearArmedCorner();
+      updateSurfaceButtonsUI();
+    }
+
+    if (isSurfaceSetupCameraView) {
+      drawSurface(overlayCtx, surfaceCorners, {
+        previewIndex: armedCornerIndex,
+        previewPoint: armedCornerIndex !== null ? usableIndexTipPoint : null,
+      });
+    }
+
     // AprilTag detection
     if (apriltagEnabled && detector) {
       try {
-        clearOverlay(overlayCtx, dom.overlay);
-
         var grayscale = rgbaToGrayscale(imageData);
         var detections = await detector.detect(grayscale, width, height);
 
@@ -284,15 +416,6 @@ export function initApp() {
         }
       } catch (err) {
         console.error('AprilTag detection error:', err);
-      }
-    }
-
-    // Hand detection (drawing happens in iframe)
-    if (handDetector) {
-      try {
-        await handDetector.detect(imageData.data, width, height);
-      } catch (err) {
-        console.error('Hand detection error:', err);
       }
     }
 
