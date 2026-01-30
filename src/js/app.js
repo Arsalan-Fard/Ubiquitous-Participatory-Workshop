@@ -1,10 +1,15 @@
 import { getDom } from './dom.js';
-import { startCameraStream, stopCameraStream, waitForVideoMetadata } from './camera.js';
+import { startCameraStream, stopCameraStream, waitForVideoMetadata, startCameraById } from './camera.js';
 import { initDetector } from './detector.js';
 import { initHandDetector } from './handDetector.js';
 import { rgbaToGrayscale } from './grayscale.js';
-import { clearOverlay, drawDetections, drawSurface } from './render.js';
+import { clearOverlay, drawDetections, drawSurface, drawStereoCalibPoints } from './render.js';
 import { initUiSetup } from './uiSetup.js';
+import {
+  computeProjectionMatrix,
+  triangulatePoint,
+  computeAverageReprojectionError
+} from './stereo.js';
 
 export function initApp() {
   var dom = getDom();
@@ -43,7 +48,46 @@ export function initApp() {
   var usingIpCamera = false;
   var pixelReadBlockedNotified = false;
 
-  var videoContainer = document.querySelector('.video-container');
+  // Stereo calibration state
+  var stereoMode = false;
+  var stereoCalibrationPoints = [];  // Array of 12 calibration points
+  var stereoProjectionMatrix1 = null;
+  var stereoProjectionMatrix2 = null;
+  var stereoCalibrationReady = false;
+  var stereoArmedPointIndex = null;
+  var stereoArmedTimeoutId = null;
+  var touchZThreshold = 0.05;  // Z values below this are considered "touch"
+
+  // Second camera state
+  var currentStream2 = null;
+  var handDetector2 = null;
+  var handDetectorReady2 = false;
+  var captureCanvas2 = null;
+  var captureCtx2 = null;
+
+  // World positions for 12 calibration points (two-level calibration)
+  // Note: Z values are in normalized units (relative to surface width/height)
+  // Change ELEVATED_Z to match your spacer height (0.1 = 10cm if surface is ~1m)
+  var ELEVATED_Z = 0.1;  // 10cm spacer height
+  var STEREO_WORLD_POSITIONS = [
+    // Surface level (Z=0): 8 points
+    { x: 0, y: 0, z: 0 },      // 1: Top-left corner
+    { x: 1, y: 0, z: 0 },      // 2: Top-right corner
+    { x: 1, y: 1, z: 0 },      // 3: Bottom-right corner
+    { x: 0, y: 1, z: 0 },      // 4: Bottom-left corner
+    { x: 0.5, y: 0, z: 0 },    // 5: Top edge midpoint
+    { x: 1, y: 0.5, z: 0 },    // 6: Right edge midpoint
+    { x: 0.5, y: 1, z: 0 },    // 7: Bottom edge midpoint
+    { x: 0, y: 0.5, z: 0 },    // 8: Left edge midpoint
+    // Elevated level: 4 points (change ELEVATED_Z above to adjust)
+    { x: 0, y: 0, z: ELEVATED_Z },    // 9: Top-left corner, elevated
+    { x: 1, y: 0, z: ELEVATED_Z },    // 10: Top-right corner, elevated
+    { x: 1, y: 1, z: ELEVATED_Z },    // 11: Bottom-right corner, elevated
+    { x: 0, y: 1, z: ELEVATED_Z },    // 12: Bottom-left corner, elevated
+  ];
+
+  var videoContainer = document.getElementById('videoContainer1');
+  var videoContainer2 = document.getElementById('videoContainer2');
   initHandDetector({ videoContainer: videoContainer }).then(function (h) {
     handDetector = h;
     handDetectorReady = true;
@@ -101,6 +145,16 @@ export function initApp() {
     armCorner(3);
   });
 
+  // Stereo calibration button listeners
+  setupStereoCalibButtonListeners();
+
+  // Camera count change listener for stereo mode
+  dom.cameraCountSelectEl.addEventListener('change', function () {
+    var count = parseInt(dom.cameraCountSelectEl.value, 10);
+    stereoMode = count === 2;
+    updateStereoUIVisibility();
+  });
+
   setStage(1);
   setViewMode('camera');
   setNextEnabled(false);
@@ -111,6 +165,7 @@ export function initApp() {
   renderCameraDeviceSelects();
   refreshAvailableCameras();
   closeCameraSourceModal();
+  updateStereoUIVisibility();
 
   function initMaptasticIfNeeded() {
     if (maptasticInitialized) return;
@@ -179,7 +234,12 @@ export function initApp() {
     }
 
     if (stage === 2) {
-      dom.surfaceButtonsEl.classList.remove('hidden');
+      // Show surface buttons only in non-stereo mode
+      if (!stereoMode) {
+        dom.surfaceButtonsEl.classList.remove('hidden');
+      } else {
+        dom.surfaceButtonsEl.classList.add('hidden');
+      }
       setViewMode(dom.viewToggleEl.checked ? 'map' : 'camera');
     } else if (stage === 3) {
       dom.surfaceButtonsEl.classList.add('hidden');
@@ -191,6 +251,7 @@ export function initApp() {
     }
 
     updateUiSetupPanelVisibility();
+    updateStereoUIVisibility();
     updateBackState();
     updateCameraSelectVisibility();
   }
@@ -415,6 +476,312 @@ export function initApp() {
     dom.surfaceBtn4.classList.toggle('surface-btn--armed', armedCornerIndex === 3);
   }
 
+  // ============== Stereo Calibration Functions ==============
+
+  function setupStereoCalibButtonListeners() {
+    for (var i = 1; i <= 12; i++) {
+      (function (index) {
+        var btn = document.getElementById('stereoCalibBtn' + index);
+        if (btn) {
+          btn.addEventListener('click', function () {
+            armStereoCalibPoint(index - 1);
+          });
+        }
+      })(i);
+    }
+
+    var computeBtn = document.getElementById('stereoComputeBtn');
+    if (computeBtn) {
+      computeBtn.addEventListener('click', computeStereoCalibration);
+    }
+  }
+
+  function updateStereoUIVisibility() {
+    var stereoCalibBtns = document.getElementById('stereoCalibButtons');
+    var touchIndicator = document.getElementById('touchIndicator');
+
+    if (stereoMode) {
+      // Show second camera container
+      if (videoContainer2) {
+        videoContainer2.classList.remove('hidden');
+      }
+      // Show stereo calibration buttons in stage 2
+      if (stereoCalibBtns && stage === 2) {
+        stereoCalibBtns.classList.remove('hidden');
+      }
+      // Hide single-camera surface buttons in stereo mode
+      dom.surfaceButtonsEl.classList.add('hidden');
+    } else {
+      // Hide second camera container
+      if (videoContainer2) {
+        videoContainer2.classList.add('hidden');
+      }
+      // Hide stereo calibration buttons
+      if (stereoCalibBtns) {
+        stereoCalibBtns.classList.add('hidden');
+      }
+      // Hide touch indicator
+      if (touchIndicator) {
+        touchIndicator.classList.add('hidden');
+      }
+    }
+
+    // Show touch indicator only if stereo calibration is ready
+    if (touchIndicator) {
+      if (stereoMode && stereoCalibrationReady) {
+        touchIndicator.classList.remove('hidden');
+      } else {
+        touchIndicator.classList.add('hidden');
+      }
+    }
+  }
+
+  function armStereoCalibPoint(index) {
+    if (stage !== 2) return;
+    if (!stereoMode) return;
+
+    if (viewMode !== 'camera') {
+      dom.viewToggleEl.checked = false;
+      setViewMode('camera');
+    }
+
+    stereoArmedPointIndex = index;
+    updateStereoCalibButtonsUI();
+
+    if (stereoArmedTimeoutId) clearTimeout(stereoArmedTimeoutId);
+    stereoArmedTimeoutId = setTimeout(function () {
+      clearStereoArmedPoint();
+      updateStereoCalibButtonsUI();
+    }, 3000);
+  }
+
+  function clearStereoArmedPoint() {
+    stereoArmedPointIndex = null;
+    if (stereoArmedTimeoutId) {
+      clearTimeout(stereoArmedTimeoutId);
+      stereoArmedTimeoutId = null;
+    }
+  }
+
+  function flashStereoCalibButton(index) {
+    var btn = document.getElementById('stereoCalibBtn' + (index + 1));
+    if (!btn) return;
+
+    btn.classList.add('stereo-calib-btn--flash');
+    setTimeout(function () {
+      btn.classList.remove('stereo-calib-btn--flash');
+    }, 220);
+  }
+
+  function updateStereoCalibButtonsUI() {
+    for (var i = 0; i < 12; i++) {
+      var btn = document.getElementById('stereoCalibBtn' + (i + 1));
+      if (!btn) continue;
+
+      var isSet = stereoCalibrationPoints[i] &&
+                  stereoCalibrationPoints[i].camera1Pixel &&
+                  stereoCalibrationPoints[i].camera2Pixel;
+      var isArmed = stereoArmedPointIndex === i;
+
+      btn.classList.toggle('stereo-calib-btn--set', !!isSet);
+      btn.classList.toggle('stereo-calib-btn--armed', isArmed);
+    }
+
+    // Update compute button state
+    var computeBtn = document.getElementById('stereoComputeBtn');
+    if (computeBtn) {
+      var validCount = countValidStereoPoints();
+      computeBtn.disabled = validCount < 6;
+      computeBtn.textContent = 'Compute (' + validCount + '/12)';
+    }
+
+    // Update status
+    var statusEl = document.getElementById('stereoCalibStatus');
+    if (statusEl) {
+      if (stereoCalibrationReady) {
+        statusEl.textContent = 'Calibrated!';
+        statusEl.className = 'stereo-calib-status stereo-calib-status--success';
+      } else if (stereoArmedPointIndex !== null) {
+        statusEl.textContent = 'Touch point ' + (stereoArmedPointIndex + 1) + ' with both cameras seeing your finger...';
+        statusEl.className = 'stereo-calib-status stereo-calib-status--armed';
+      } else {
+        statusEl.textContent = '';
+        statusEl.className = 'stereo-calib-status';
+      }
+    }
+  }
+
+  function countValidStereoPoints() {
+    var count = 0;
+    for (var i = 0; i < stereoCalibrationPoints.length; i++) {
+      var pt = stereoCalibrationPoints[i];
+      if (pt && pt.camera1Pixel && pt.camera2Pixel) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  function captureStereoCalibPoint(fingertip1, fingertip2) {
+    if (stereoArmedPointIndex === null) return;
+    if (!fingertip1 || !fingertip2) return;
+
+    var index = stereoArmedPointIndex;
+    stereoCalibrationPoints[index] = {
+      index: index,
+      worldPos: STEREO_WORLD_POSITIONS[index],
+      camera1Pixel: { x: fingertip1.x, y: fingertip1.y },
+      camera2Pixel: { x: fingertip2.x, y: fingertip2.y },
+      timestamp: Date.now()
+    };
+
+    flashStereoCalibButton(index);
+    clearStereoArmedPoint();
+    updateStereoCalibButtonsUI();
+  }
+
+  function computeStereoCalibration() {
+    var validPoints = [];
+    for (var i = 0; i < stereoCalibrationPoints.length; i++) {
+      var pt = stereoCalibrationPoints[i];
+      if (pt && pt.worldPos && pt.camera1Pixel && pt.camera2Pixel) {
+        validPoints.push(pt);
+      }
+    }
+
+    if (validPoints.length < 6) {
+      setError('Need at least 6 calibration points for stereo calibration. Currently have ' + validPoints.length + '.');
+      return;
+    }
+
+    var worldPoints = validPoints.map(function (p) { return p.worldPos; });
+    var imagePoints1 = validPoints.map(function (p) { return p.camera1Pixel; });
+    var imagePoints2 = validPoints.map(function (p) { return p.camera2Pixel; });
+
+    stereoProjectionMatrix1 = computeProjectionMatrix(worldPoints, imagePoints1);
+    stereoProjectionMatrix2 = computeProjectionMatrix(worldPoints, imagePoints2);
+
+    if (!stereoProjectionMatrix1 || !stereoProjectionMatrix2) {
+      setError('Failed to compute projection matrices. Check calibration points are not collinear.');
+      stereoCalibrationReady = false;
+      updateStereoUIVisibility();
+      return;
+    }
+
+    // Validate with reprojection error
+    var avgError = computeAverageReprojectionError(
+      stereoProjectionMatrix1,
+      stereoProjectionMatrix2,
+      validPoints
+    );
+
+    if (avgError > 15) {
+      setError('High reprojection error (' + avgError.toFixed(1) + 'px). Consider recalibrating.');
+      // Still mark as ready but warn
+    }
+
+    stereoCalibrationReady = true;
+    setError('');
+    updateStereoCalibButtonsUI();
+    updateStereoUIVisibility();
+
+    console.log('Stereo calibration complete. Avg reprojection error:', avgError.toFixed(2), 'px');
+  }
+
+  function updateTouchIndicator(worldPoint) {
+    var touchIndicator = document.getElementById('touchIndicator');
+    var touchStatus = document.getElementById('touchStatus');
+    var touchZ = document.getElementById('touchZ');
+
+    if (!touchIndicator || !touchStatus || !touchZ) return;
+
+    var z = worldPoint.z;
+    var isTouch = Math.abs(z) < touchZThreshold;
+
+    touchStatus.textContent = isTouch ? 'TOUCH' : 'HOVER';
+    touchStatus.classList.toggle('touch-status--touch', isTouch);
+    touchStatus.classList.toggle('touch-status--hover', !isTouch);
+    touchZ.textContent = 'Z: ' + z.toFixed(3);
+  }
+
+  function resetStereoCalibration() {
+    stereoCalibrationPoints = [];
+    stereoProjectionMatrix1 = null;
+    stereoProjectionMatrix2 = null;
+    stereoCalibrationReady = false;
+    clearStereoArmedPoint();
+    updateStereoCalibButtonsUI();
+    updateStereoUIVisibility();
+  }
+
+  // ============== Second Camera Functions ==============
+
+  async function startSecondCamera() {
+    var selectEl = dom.cameraDeviceSelectsEl.querySelector('select[data-camera-index="1"]');
+    if (!selectEl) return false;
+
+    var deviceId = selectEl.value;
+    if (!deviceId || deviceId.startsWith('ip:')) {
+      console.warn('Second camera: IP cameras not yet supported for stereo mode');
+      return false;
+    }
+
+    try {
+      // Create video element for camera 2 if needed
+      var video2 = document.getElementById('video2');
+      if (!video2) return false;
+
+      currentStream2 = await startCameraById(video2, deviceId, {
+        width: 640,
+        height: 480
+      });
+
+      await waitForVideoMetadata(video2);
+
+      // Create capture canvas for camera 2
+      captureCanvas2 = document.createElement('canvas');
+      captureCanvas2.width = video2.videoWidth;
+      captureCanvas2.height = video2.videoHeight;
+      captureCtx2 = captureCanvas2.getContext('2d', { willReadFrequently: true });
+
+      // Set overlay size
+      var overlay2 = document.getElementById('overlay2');
+      if (overlay2) {
+        overlay2.width = video2.videoWidth;
+        overlay2.height = video2.videoHeight;
+      }
+
+      // Initialize second hand detector
+      handDetector2 = await initHandDetector({
+        videoContainer: videoContainer2,
+        instanceId: 'camera2'
+      });
+      handDetectorReady2 = !!handDetector2;
+
+      console.log('Second camera started successfully');
+      return true;
+    } catch (err) {
+      console.error('Failed to start second camera:', err);
+      return false;
+    }
+  }
+
+  function stopSecondCamera() {
+    if (currentStream2) {
+      stopCameraStream(currentStream2);
+      currentStream2 = null;
+    }
+
+    if (handDetector2 && handDetector2.destroy) {
+      handDetector2.destroy();
+      handDetector2 = null;
+      handDetectorReady2 = false;
+    }
+
+    captureCanvas2 = null;
+    captureCtx2 = null;
+  }
+
   function loadDetectorIfNeeded() {
     if (!apriltagEnabled) return;
     if (detector) return;
@@ -492,6 +859,18 @@ export function initApp() {
         loadDetectorIfNeeded();
       }
 
+      // Start second camera if in stereo mode
+      var cameraCount = parseInt(dom.cameraCountSelectEl.value, 10);
+      stereoMode = cameraCount === 2;
+      if (stereoMode) {
+        var secondCameraOk = await startSecondCamera();
+        if (!secondCameraOk) {
+          setError('Failed to start second camera. Stereo mode disabled.');
+          stereoMode = false;
+        }
+      }
+      updateStereoUIVisibility();
+
       refreshAvailableCameras();
       startProcessing();
     } catch (err) {
@@ -512,6 +891,9 @@ export function initApp() {
     stopCameraStream(currentStream);
     currentStream = null;
 
+    // Stop second camera if running
+    stopSecondCamera();
+
     dom.video.srcObject = null;
     dom.video.classList.remove('hidden');
     clearOverlay(overlayCtx, dom.overlay);
@@ -523,6 +905,7 @@ export function initApp() {
     setStage(1);
     dom.viewToggleEl.checked = false;
     resetSurfaceCorners();
+    resetStereoCalibration();
 
     setButtonsRunning(false);
   }
@@ -564,14 +947,45 @@ export function initApp() {
     }
 
     var hands = [];
+    var hands2 = [];
 
-    // Hand detection (hand skeleton drawing happens in iframe)
+    // Hand detection for camera 1 (hand skeleton drawing happens in iframe)
     if (handDetector) {
       try {
         hands = (await handDetector.detect(imageData.data, width, height)) || [];
       } catch (err) {
-        console.error('Hand detection error:', err);
+        console.error('Hand detection error (camera 1):', err);
         hands = [];
+      }
+    }
+
+    // Hand detection for camera 2 (stereo mode)
+    var fingertip2 = null;
+    if (stereoMode && handDetector2 && captureCanvas2 && captureCtx2) {
+      try {
+        var video2 = document.getElementById('video2');
+        if (video2 && video2.readyState >= 2) {
+          var w2 = captureCanvas2.width;
+          var h2 = captureCanvas2.height;
+          captureCtx2.drawImage(video2, 0, 0, w2, h2);
+          var imageData2 = captureCtx2.getImageData(0, 0, w2, h2);
+          hands2 = (await handDetector2.detect(imageData2.data, w2, h2)) || [];
+
+          // Extract fingertip from camera 2
+          if (hands2 && hands2.length > 0) {
+            for (var j = 0; j < hands2.length; j++) {
+              var hand2 = hands2[j];
+              if (hand2 && hand2.landmarks && hand2.landmarks.length > 8) {
+                var tip2 = hand2.landmarks[8];
+                fingertip2 = { x: tip2.x, y: tip2.y };
+                break;
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Hand detection error (camera 2):', err);
+        hands2 = [];
       }
     }
 
@@ -605,7 +1019,9 @@ export function initApp() {
       usableIndexTipPoint = lastIndexTipPoint;
     }
 
+    // Single camera corner capture (non-stereo mode)
     if (
+      !stereoMode &&
       isSurfaceSetupCameraView &&
       armedCornerCaptureRequested &&
       armedCornerIndex !== null &&
@@ -618,11 +1034,62 @@ export function initApp() {
       recomputeSurfaceHomographyIfReady();
     }
 
+    // Stereo calibration capture
+    if (
+      stereoMode &&
+      isSurfaceSetupCameraView &&
+      stereoArmedPointIndex !== null &&
+      usableIndexTipPoint &&
+      fingertip2
+    ) {
+      captureStereoCalibPoint(usableIndexTipPoint, fingertip2);
+    }
+
+    // Stereo triangulation for touch detection (runtime)
+    if (
+      stereoMode &&
+      stereoCalibrationReady &&
+      usableIndexTipPoint &&
+      fingertip2
+    ) {
+      var worldPoint = triangulatePoint(
+        stereoProjectionMatrix1,
+        stereoProjectionMatrix2,
+        usableIndexTipPoint,
+        fingertip2
+      );
+      if (worldPoint) {
+        updateTouchIndicator(worldPoint);
+      }
+    }
+
     if (isSurfaceSetupCameraView) {
-      drawSurface(overlayCtx, surfaceCorners, {
-        previewIndex: armedCornerIndex,
-        previewPoint: armedCornerIndex !== null ? usableIndexTipPoint : null,
-      });
+      if (stereoMode) {
+        // Draw stereo calibration points on camera 1
+        drawStereoCalibPoints(overlayCtx, stereoCalibrationPoints, 'camera1Pixel', {
+          armedIndex: stereoArmedPointIndex,
+          previewPoint: usableIndexTipPoint
+        });
+
+        // Draw stereo calibration points on camera 2
+        var overlay2 = document.getElementById('overlay2');
+        if (overlay2) {
+          var ctx2 = overlay2.getContext('2d');
+          if (ctx2) {
+            ctx2.clearRect(0, 0, overlay2.width, overlay2.height);
+            drawStereoCalibPoints(ctx2, stereoCalibrationPoints, 'camera2Pixel', {
+              armedIndex: stereoArmedPointIndex,
+              previewPoint: fingertip2
+            });
+          }
+        }
+      } else {
+        // Single camera mode - draw surface corners
+        drawSurface(overlayCtx, surfaceCorners, {
+          previewIndex: armedCornerIndex,
+          previewPoint: armedCornerIndex !== null ? usableIndexTipPoint : null,
+        });
+      }
     }
 
     var isSurfaceSetupMapView = (stage === 2 || stage === 3) && viewMode === 'map';
@@ -800,15 +1267,17 @@ export function initApp() {
     if (!ipCameraImg) {
       ipCameraImg = document.createElement('img');
       ipCameraImg.alt = 'IP camera';
+      ipCameraImg.id = 'ipCameraImage';
       ipCameraImg.decoding = 'async';
       ipCameraImg.loading = 'eager';
       ipCameraImg.style.width = '100%';
+      ipCameraImg.style.height = 'auto';
       ipCameraImg.style.borderRadius = '8px';
       ipCameraImg.style.background = '#000';
       ipCameraImg.style.display = 'block';
-      ipCameraImg.style.objectFit = 'cover';
       ipCameraImg.crossOrigin = 'anonymous';
-      videoContainer.insertBefore(ipCameraImg, dom.video.nextSibling);
+      // Insert before the overlay so overlay is on top
+      videoContainer.insertBefore(ipCameraImg, dom.overlay);
     }
 
     dom.video.classList.add('hidden');
@@ -827,10 +1296,19 @@ export function initApp() {
 
     var w = ipCameraImg.naturalWidth || 640;
     var h = ipCameraImg.naturalHeight || 480;
+
+    // Set canvas internal dimensions to match image native resolution
     dom.overlay.width = w;
     dom.overlay.height = h;
     captureCanvas.width = w;
     captureCanvas.height = h;
+
+    // Ensure overlay canvas has same display aspect ratio as image
+    // The CSS width:100% handles horizontal, we need to set height proportionally
+    dom.overlay.style.height = 'auto';
+    dom.overlay.style.aspectRatio = w + ' / ' + h;
+
+    console.log('IP camera dimensions:', w, 'x', h);
 
     setButtonsRunning(true);
     cameraStarting = false;
@@ -841,6 +1319,18 @@ export function initApp() {
     if (apriltagEnabled) {
       loadDetectorIfNeeded();
     }
+
+    // Start second camera if in stereo mode (same logic as regular camera path)
+    var cameraCount = parseInt(dom.cameraCountSelectEl.value, 10);
+    stereoMode = cameraCount === 2;
+    if (stereoMode) {
+      var secondCameraOk = await startSecondCamera();
+      if (!secondCameraOk) {
+        setError('Failed to start second camera. Stereo mode disabled.');
+        stereoMode = false;
+      }
+    }
+    updateStereoUIVisibility();
 
     startProcessing();
   }

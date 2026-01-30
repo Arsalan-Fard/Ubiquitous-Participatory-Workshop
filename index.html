@@ -9,16 +9,56 @@
 <body>
     <div class="container">
         <h1 id="pageTitle">Camera Setup Stage 1/4</h1>
-        <div class="video-container">
-            <video id="video" autoplay playsinline></video>
-            <canvas id="overlay"></canvas>
-            <div id="loading" class="loading hidden" role="status" aria-live="polite">Loading...</div>
+        <div class="video-containers-wrapper">
+            <div class="video-container" id="videoContainer1">
+                <div class="video-container-label">Camera 1</div>
+                <video id="video" autoplay playsinline></video>
+                <canvas id="overlay"></canvas>
+                <div id="loading" class="loading hidden" role="status" aria-live="polite">Loading...</div>
+            </div>
+            <div class="video-container hidden" id="videoContainer2">
+                <div class="video-container-label">Camera 2</div>
+                <video id="video2" autoplay playsinline></video>
+                <canvas id="overlay2"></canvas>
+            </div>
         </div>
         <div id="surfaceButtons" class="surface-buttons hidden" aria-label="Surface setup tools">
             <button id="surfaceBtn1" class="surface-btn" type="button">1</button>
             <button id="surfaceBtn2" class="surface-btn" type="button">2</button>
             <button id="surfaceBtn3" class="surface-btn" type="button">3</button>
             <button id="surfaceBtn4" class="surface-btn" type="button">4</button>
+        </div>
+
+        <!-- Stereo Calibration Buttons (shown when 2 cameras selected) -->
+        <div id="stereoCalibButtons" class="stereo-calib-buttons hidden" aria-label="Stereo calibration points">
+            <div class="stereo-calib-group">
+                <span class="stereo-calib-group-label">Surface (Z=0):</span>
+                <button id="stereoCalibBtn1" class="stereo-calib-btn" type="button" title="Top-left corner">1</button>
+                <button id="stereoCalibBtn2" class="stereo-calib-btn" type="button" title="Top-right corner">2</button>
+                <button id="stereoCalibBtn3" class="stereo-calib-btn" type="button" title="Bottom-right corner">3</button>
+                <button id="stereoCalibBtn4" class="stereo-calib-btn" type="button" title="Bottom-left corner">4</button>
+                <button id="stereoCalibBtn5" class="stereo-calib-btn" type="button" title="Top edge midpoint">5</button>
+                <button id="stereoCalibBtn6" class="stereo-calib-btn" type="button" title="Right edge midpoint">6</button>
+                <button id="stereoCalibBtn7" class="stereo-calib-btn" type="button" title="Bottom edge midpoint">7</button>
+                <button id="stereoCalibBtn8" class="stereo-calib-btn" type="button" title="Left edge midpoint">8</button>
+            </div>
+            <div class="stereo-calib-group">
+                <span class="stereo-calib-group-label">Elevated (Z=10cm):</span>
+                <button id="stereoCalibBtn9" class="stereo-calib-btn stereo-calib-btn--elevated" type="button" title="Top-left corner, elevated">9</button>
+                <button id="stereoCalibBtn10" class="stereo-calib-btn stereo-calib-btn--elevated" type="button" title="Top-right corner, elevated">10</button>
+                <button id="stereoCalibBtn11" class="stereo-calib-btn stereo-calib-btn--elevated" type="button" title="Bottom-right corner, elevated">11</button>
+                <button id="stereoCalibBtn12" class="stereo-calib-btn stereo-calib-btn--elevated" type="button" title="Bottom-left corner, elevated">12</button>
+            </div>
+            <div class="stereo-calib-actions">
+                <button id="stereoComputeBtn" class="btn btn-secondary" type="button" disabled>Compute Calibration</button>
+                <span id="stereoCalibStatus" class="stereo-calib-status"></span>
+            </div>
+        </div>
+
+        <!-- Touch/Hover Indicator (shown after stereo calibration) -->
+        <div id="touchIndicator" class="touch-indicator hidden" aria-live="polite">
+            <span id="touchStatus" class="touch-status">HOVER</span>
+            <span id="touchZ" class="touch-z">Z: 0.000</span>
         </div>
         <div class="controls">
             <button id="backBtn" class="btn btn-secondary" type="button" disabled>Back</button>

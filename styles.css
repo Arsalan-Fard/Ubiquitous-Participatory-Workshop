@@ -18,7 +18,7 @@ body {
 .container {
     text-align: center;
     width: 100%;
-    max-width: 800px;
+    max-width: 1400px;
 }
 
 h1 {
@@ -26,26 +26,52 @@ h1 {
     margin-bottom: 20px;
 }
 
+/* Wrapper for side-by-side camera views */
+.video-containers-wrapper {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
 .video-container {
     position: relative;
     display: inline-block;
     width: 100%;
     max-width: 640px;
+    flex: 1 1 auto;
+    min-width: 300px;
 }
 
-#video {
+.video-container-label {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 25;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    pointer-events: none;
+}
+
+#video,
+#video2,
+#ipCameraImage {
     width: 100%;
     border-radius: 8px;
     background-color: #000;
     display: block;
 }
 
-#overlay {
+#overlay,
+#overlay2 {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
-    height: 100%;
     pointer-events: none;
     border-radius: 8px;
     z-index: 10;
@@ -191,6 +217,138 @@ h1 {
 
 .surface-btn--flash {
     animation: surfaceBtnFlash 220ms ease-out;
+}
+
+/* ============== Stereo Calibration Buttons ============== */
+
+.stereo-calib-buttons {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.stereo-calib-group {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.stereo-calib-group-label {
+    color: #aaa;
+    font-size: 13px;
+    font-weight: 600;
+    margin-right: 4px;
+}
+
+.stereo-calib-btn {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.06);
+    color: #ddd;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.stereo-calib-btn:hover {
+    background: rgba(255, 255, 255, 0.10);
+}
+
+.stereo-calib-btn--elevated {
+    border-color: rgba(255, 184, 43, 0.35);
+    background: rgba(255, 184, 43, 0.08);
+}
+
+.stereo-calib-btn--set {
+    background: rgba(49, 214, 123, 0.12);
+    border-color: rgba(49, 214, 123, 0.55);
+    color: #fff;
+}
+
+.stereo-calib-btn--armed {
+    background: rgba(43, 184, 255, 0.16);
+    border-color: rgba(43, 184, 255, 0.75);
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+@keyframes stereoCalibBtnFlash {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); }
+}
+
+.stereo-calib-btn--flash {
+    animation: stereoCalibBtnFlash 220ms ease-out;
+}
+
+.stereo-calib-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 4px;
+}
+
+.stereo-calib-status {
+    font-size: 13px;
+    color: #aaa;
+}
+
+.stereo-calib-status--armed {
+    color: #2bb8ff;
+}
+
+.stereo-calib-status--success {
+    color: #31d67b;
+    font-weight: 600;
+}
+
+/* ============== Touch/Hover Indicator ============== */
+
+.touch-indicator {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 100;
+    padding: 14px 18px;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #fff;
+    font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+    font-size: 15px;
+    backdrop-filter: blur(10px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-width: 100px;
+}
+
+.touch-status {
+    font-weight: 800;
+    font-size: 18px;
+    letter-spacing: 1px;
+}
+
+.touch-status--touch {
+    color: #4CAF50;
+}
+
+.touch-status--hover {
+    color: #ff9800;
+}
+
+.touch-z {
+    font-size: 13px;
+    color: #888;
 }
 
 .btn-secondary {

@@ -95,6 +95,70 @@ export function drawSurface(ctx, corners, options) {
   ctx.restore();
 }
 
+/**
+ * Draw stereo calibration points on the overlay.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {Array} calibrationPoints - Array of calibration point objects
+ * @param {string} cameraKey - 'camera1Pixel' or 'camera2Pixel'
+ * @param {Object} options - { armedIndex, previewPoint }
+ */
+export function drawStereoCalibPoints(ctx, calibrationPoints, cameraKey, options) {
+  options = options || {};
+  var armedIndex = typeof options.armedIndex === 'number' ? options.armedIndex : null;
+  var previewPoint = options.previewPoint || null;
+
+  ctx.save();
+
+  // Draw captured points
+  for (var i = 0; i < calibrationPoints.length; i++) {
+    var pt = calibrationPoints[i];
+    if (!pt || !pt[cameraKey]) continue;
+
+    var pixel = pt[cameraKey];
+    var isElevated = i >= 8; // Points 9-12 are elevated
+
+    // Draw point circle
+    ctx.beginPath();
+    ctx.arc(pixel.x, pixel.y, 8, 0, 2 * Math.PI);
+    ctx.fillStyle = isElevated ? 'rgba(255, 184, 43, 0.95)' : 'rgba(49, 214, 123, 0.95)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Draw point number
+    ctx.font = 'bold 11px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#0b0b0b';
+    ctx.fillText(String(i + 1), pixel.x, pixel.y);
+  }
+
+  // Draw preview for armed point
+  if (armedIndex !== null && previewPoint) {
+    var isElevatedArmed = armedIndex >= 8;
+
+    // Dashed circle around preview point
+    ctx.save();
+    ctx.strokeStyle = isElevatedArmed ? 'rgba(255, 184, 43, 0.9)' : 'rgba(43, 184, 255, 0.9)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.arc(previewPoint.x, previewPoint.y, 12, 0, 2 * Math.PI);
+    ctx.stroke();
+    ctx.restore();
+
+    // Show which point number is being captured
+    ctx.font = 'bold 14px Arial';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = isElevatedArmed ? 'rgba(255, 184, 43, 0.95)' : 'rgba(43, 184, 255, 0.95)';
+    ctx.fillText('Point ' + (armedIndex + 1), previewPoint.x + 18, previewPoint.y);
+  }
+
+  ctx.restore();
+}
+
 function drawDetection(ctx, det) {
   var corners = det.corners;
 
