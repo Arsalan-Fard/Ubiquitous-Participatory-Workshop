@@ -16,13 +16,7 @@
  */
 export function computeProjectionMatrix(worldPoints, imagePoints) {
   var n = worldPoints.length;
-  if (n < 6) {
-    console.error('computeProjectionMatrix: need at least 6 points, got', n);
-    return null;
-  }
-
-  if (worldPoints.length !== imagePoints.length) {
-    console.error('computeProjectionMatrix: worldPoints and imagePoints must have same length');
+  if (n < 6 || worldPoints.length !== imagePoints.length) {
     return null;
   }
 
@@ -49,10 +43,7 @@ export function computeProjectionMatrix(worldPoints, imagePoints) {
   // Solve using SVD approach: find null space of A
   // We use the constraint P[11] = 1 and solve the 11x11 system
   var p = solveDLT(A);
-  if (!p) {
-    console.error('computeProjectionMatrix: DLT solve failed');
-    return null;
-  }
+  if (!p) return null;
 
   // Denormalize the projection matrix
   // P_denorm = T_image^-1 * P_norm * T_world
@@ -392,7 +383,7 @@ function solveDLT(A) {
   var AtA = matMul(At, Aprime);
   var Atb = matVecMul(At, b);
 
-  var p11 = solveLinearSystemNxN(AtA, Atb);
+  var p11 = solveLinearSystem(AtA, Atb);
   if (!p11) {
     return null;
   }
@@ -499,8 +490,9 @@ function determinant3x3(A) {
 
 /**
  * Solve NxN linear system using Gaussian elimination with partial pivoting.
+ * Exported for use in homography computation.
  */
-function solveLinearSystemNxN(A, b) {
+export function solveLinearSystem(A, b) {
   var n = A.length;
 
   // Create augmented matrix

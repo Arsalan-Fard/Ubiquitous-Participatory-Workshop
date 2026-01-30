@@ -1,154 +1,83 @@
+// List of all required DOM element IDs
+var DOM_IDS = [
+  'video', 'overlay', 'loading', 'pageTitle', 'gestureControls',
+  'pinchThresholdSlider', 'pinchThresholdValue',
+  'holdStillThresholdSlider', 'holdStillThresholdValue',
+  'dwellTimeSlider', 'dwellTimeValue',
+  'pinchHoldTimeSlider', 'pinchHoldTimeValue',
+  'surfaceButtons', 'surfaceBtn1', 'surfaceBtn2', 'surfaceBtn3', 'surfaceBtn4',
+  'backBtn', 'startBtn', 'nextBtn', 'stopBtn',
+  'cameraSelectRow', 'cameraCountSelect', 'cameraAddBtn', 'cameraDeviceSelects',
+  'cameraSourceModal', 'cameraSourceInput', 'cameraSourceSaveBtn', 'cameraSourceCancelBtn',
+  'apriltagToggleContainer', 'apriltagToggle',
+  'viewToggleContainer', 'viewToggle',
+  'mapView', 'mapWarp', 'leafletMap', 'mapFingerDots',
+  'hamburgerMenu', 'hamburgerBtn', 'hamburgerPanel', 'hamburgerContent',
+  'mapHint', 'uiSetupOverlay', 'uiSetupPanel', 'mapFingerCursor', 'edgeGuides', 'error'
+];
+
+// Mapping from camelCase property names to element IDs
+var ID_TO_PROP = {
+  'video': 'video',
+  'overlay': 'overlay',
+  'loading': 'loadingEl',
+  'pageTitle': 'pageTitleEl',
+  'gestureControls': 'gestureControlsEl',
+  'pinchThresholdSlider': 'pinchThresholdSliderEl',
+  'pinchThresholdValue': 'pinchThresholdValueEl',
+  'holdStillThresholdSlider': 'holdStillThresholdSliderEl',
+  'holdStillThresholdValue': 'holdStillThresholdValueEl',
+  'dwellTimeSlider': 'dwellTimeSliderEl',
+  'dwellTimeValue': 'dwellTimeValueEl',
+  'pinchHoldTimeSlider': 'pinchHoldTimeSliderEl',
+  'pinchHoldTimeValue': 'pinchHoldTimeValueEl',
+  'surfaceButtons': 'surfaceButtonsEl',
+  'surfaceBtn1': 'surfaceBtn1',
+  'surfaceBtn2': 'surfaceBtn2',
+  'surfaceBtn3': 'surfaceBtn3',
+  'surfaceBtn4': 'surfaceBtn4',
+  'backBtn': 'backBtn',
+  'startBtn': 'startBtn',
+  'nextBtn': 'nextBtn',
+  'stopBtn': 'stopBtn',
+  'cameraSelectRow': 'cameraSelectRowEl',
+  'cameraCountSelect': 'cameraCountSelectEl',
+  'cameraAddBtn': 'cameraAddBtnEl',
+  'cameraDeviceSelects': 'cameraDeviceSelectsEl',
+  'cameraSourceModal': 'cameraSourceModalEl',
+  'cameraSourceInput': 'cameraSourceInputEl',
+  'cameraSourceSaveBtn': 'cameraSourceSaveBtnEl',
+  'cameraSourceCancelBtn': 'cameraSourceCancelBtnEl',
+  'apriltagToggleContainer': 'apriltagToggleContainerEl',
+  'apriltagToggle': 'apriltagToggleEl',
+  'viewToggleContainer': 'viewToggleContainerEl',
+  'viewToggle': 'viewToggleEl',
+  'mapView': 'mapViewEl',
+  'mapWarp': 'mapWarpEl',
+  'leafletMap': 'leafletMapEl',
+  'mapFingerDots': 'mapFingerDotsEl',
+  'hamburgerMenu': 'hamburgerMenuEl',
+  'hamburgerBtn': 'hamburgerBtnEl',
+  'hamburgerPanel': 'hamburgerPanelEl',
+  'hamburgerContent': 'hamburgerContentEl',
+  'mapHint': 'mapHintEl',
+  'uiSetupOverlay': 'uiSetupOverlayEl',
+  'uiSetupPanel': 'uiSetupPanelEl',
+  'mapFingerCursor': 'mapFingerCursorEl',
+  'edgeGuides': 'edgeGuidesEl',
+  'error': 'errorEl'
+};
+
 export function getDom() {
-  var video = document.getElementById('video');
-  var overlay = document.getElementById('overlay');
-  var loadingEl = document.getElementById('loading');
-  var pageTitleEl = document.getElementById('pageTitle');
-  var gestureControlsEl = document.getElementById('gestureControls');
-  var pinchThresholdSliderEl = document.getElementById('pinchThresholdSlider');
-  var pinchThresholdValueEl = document.getElementById('pinchThresholdValue');
-  var holdStillThresholdSliderEl = document.getElementById('holdStillThresholdSlider');
-  var holdStillThresholdValueEl = document.getElementById('holdStillThresholdValue');
-  var dwellTimeSliderEl = document.getElementById('dwellTimeSlider');
-  var dwellTimeValueEl = document.getElementById('dwellTimeValue');
-  var pinchHoldTimeSliderEl = document.getElementById('pinchHoldTimeSlider');
-  var pinchHoldTimeValueEl = document.getElementById('pinchHoldTimeValue');
-  var surfaceButtonsEl = document.getElementById('surfaceButtons');
-  var surfaceBtn1 = document.getElementById('surfaceBtn1');
-  var surfaceBtn2 = document.getElementById('surfaceBtn2');
-  var surfaceBtn3 = document.getElementById('surfaceBtn3');
-  var surfaceBtn4 = document.getElementById('surfaceBtn4');
-  var backBtn = document.getElementById('backBtn');
-  var startBtn = document.getElementById('startBtn');
-  var nextBtn = document.getElementById('nextBtn');
-  var stopBtn = document.getElementById('stopBtn');
-  var cameraSelectRowEl = document.getElementById('cameraSelectRow');
-  var cameraCountSelectEl = document.getElementById('cameraCountSelect');
-  var cameraAddBtnEl = document.getElementById('cameraAddBtn');
-  var cameraDeviceSelectsEl = document.getElementById('cameraDeviceSelects');
-  var cameraSourceModalEl = document.getElementById('cameraSourceModal');
-  var cameraSourceInputEl = document.getElementById('cameraSourceInput');
-  var cameraSourceSaveBtnEl = document.getElementById('cameraSourceSaveBtn');
-  var cameraSourceCancelBtnEl = document.getElementById('cameraSourceCancelBtn');
-  var apriltagToggleContainerEl = document.getElementById('apriltagToggleContainer');
-  var apriltagToggleEl = document.getElementById('apriltagToggle');
-  var viewToggleContainerEl = document.getElementById('viewToggleContainer');
-  var viewToggleEl = document.getElementById('viewToggle');
-  var mapViewEl = document.getElementById('mapView');
-  var mapWarpEl = document.getElementById('mapWarp');
-  var leafletMapEl = document.getElementById('leafletMap');
-  var mapFingerDotsEl = document.getElementById('mapFingerDots');
-  var hamburgerMenuEl = document.getElementById('hamburgerMenu');
-  var hamburgerBtnEl = document.getElementById('hamburgerBtn');
-  var hamburgerPanelEl = document.getElementById('hamburgerPanel');
-  var hamburgerContentEl = document.getElementById('hamburgerContent');
-  var mapHintEl = document.getElementById('mapHint');
-  var uiSetupOverlayEl = document.getElementById('uiSetupOverlay');
-  var uiSetupPanelEl = document.getElementById('uiSetupPanel');
-  var mapFingerCursorEl = document.getElementById('mapFingerCursor');
-  var edgeGuidesEl = document.getElementById('edgeGuides');
-  var errorEl = document.getElementById('error');
-
-  if (
-    !video ||
-    !overlay ||
-    !loadingEl ||
-    !pageTitleEl ||
-    !gestureControlsEl ||
-    !pinchThresholdSliderEl ||
-    !pinchThresholdValueEl ||
-    !holdStillThresholdSliderEl ||
-    !holdStillThresholdValueEl ||
-    !dwellTimeSliderEl ||
-    !dwellTimeValueEl ||
-    !pinchHoldTimeSliderEl ||
-    !pinchHoldTimeValueEl ||
-    !surfaceButtonsEl ||
-    !surfaceBtn1 ||
-    !surfaceBtn2 ||
-    !surfaceBtn3 ||
-    !surfaceBtn4 ||
-    !backBtn ||
-    !startBtn ||
-    !nextBtn ||
-    !stopBtn ||
-    !cameraSelectRowEl ||
-    !cameraCountSelectEl ||
-    !cameraAddBtnEl ||
-    !cameraDeviceSelectsEl ||
-    !cameraSourceModalEl ||
-    !cameraSourceInputEl ||
-    !cameraSourceSaveBtnEl ||
-    !cameraSourceCancelBtnEl ||
-    !apriltagToggleContainerEl ||
-    !apriltagToggleEl ||
-    !viewToggleContainerEl ||
-    !viewToggleEl ||
-    !mapViewEl ||
-    !mapWarpEl ||
-    !leafletMapEl ||
-    !mapFingerDotsEl ||
-    !hamburgerMenuEl ||
-    !hamburgerBtnEl ||
-    !hamburgerPanelEl ||
-    !hamburgerContentEl ||
-    !mapHintEl ||
-    !uiSetupOverlayEl ||
-    !uiSetupPanelEl ||
-    !mapFingerCursorEl ||
-    !edgeGuidesEl ||
-    !errorEl
-  ) {
-    throw new Error('Missing required DOM elements. Check index.html ids.');
+  var dom = {};
+  for (var i = 0; i < DOM_IDS.length; i++) {
+    var id = DOM_IDS[i];
+    var el = document.getElementById(id);
+    if (!el) {
+      throw new Error('Missing DOM element: ' + id);
+    }
+    var propName = ID_TO_PROP[id] || id;
+    dom[propName] = el;
   }
-
-  return {
-    video: video,
-    overlay: overlay,
-    loadingEl: loadingEl,
-    pageTitleEl: pageTitleEl,
-    gestureControlsEl: gestureControlsEl,
-    pinchThresholdSliderEl: pinchThresholdSliderEl,
-    pinchThresholdValueEl: pinchThresholdValueEl,
-    holdStillThresholdSliderEl: holdStillThresholdSliderEl,
-    holdStillThresholdValueEl: holdStillThresholdValueEl,
-    dwellTimeSliderEl: dwellTimeSliderEl,
-    dwellTimeValueEl: dwellTimeValueEl,
-    pinchHoldTimeSliderEl: pinchHoldTimeSliderEl,
-    pinchHoldTimeValueEl: pinchHoldTimeValueEl,
-    surfaceButtonsEl: surfaceButtonsEl,
-    surfaceBtn1: surfaceBtn1,
-    surfaceBtn2: surfaceBtn2,
-    surfaceBtn3: surfaceBtn3,
-    surfaceBtn4: surfaceBtn4,
-    backBtn: backBtn,
-    startBtn: startBtn,
-    nextBtn: nextBtn,
-    stopBtn: stopBtn,
-    cameraSelectRowEl: cameraSelectRowEl,
-    cameraCountSelectEl: cameraCountSelectEl,
-    cameraAddBtnEl: cameraAddBtnEl,
-    cameraDeviceSelectsEl: cameraDeviceSelectsEl,
-    cameraSourceModalEl: cameraSourceModalEl,
-    cameraSourceInputEl: cameraSourceInputEl,
-    cameraSourceSaveBtnEl: cameraSourceSaveBtnEl,
-    cameraSourceCancelBtnEl: cameraSourceCancelBtnEl,
-    apriltagToggleContainerEl: apriltagToggleContainerEl,
-    apriltagToggleEl: apriltagToggleEl,
-    viewToggleContainerEl: viewToggleContainerEl,
-    viewToggleEl: viewToggleEl,
-    mapViewEl: mapViewEl,
-    mapWarpEl: mapWarpEl,
-    leafletMapEl: leafletMapEl,
-    mapFingerDotsEl: mapFingerDotsEl,
-    hamburgerMenuEl: hamburgerMenuEl,
-    hamburgerBtnEl: hamburgerBtnEl,
-    hamburgerPanelEl: hamburgerPanelEl,
-    hamburgerContentEl: hamburgerContentEl,
-    mapHintEl: mapHintEl,
-    uiSetupOverlayEl: uiSetupOverlayEl,
-    uiSetupPanelEl: uiSetupPanelEl,
-    mapFingerCursorEl: mapFingerCursorEl,
-    edgeGuidesEl: edgeGuidesEl,
-    errorEl: errorEl,
-  };
+  return dom;
 }
