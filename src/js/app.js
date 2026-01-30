@@ -71,6 +71,17 @@ export function initApp() {
   var viewToggleDockParent = null;
   var viewToggleDockNextSibling = null;
 
+  // Stage 4 drawing tool
+  var stage4DrawMode = false;
+  var stage4DrawColor = '#2bb8ff';
+  var stage4IsDrawing = false;
+  var stage4LastDrawContainerPt = null; // Leaflet container point, for throttling
+  var stage4ActiveStroke = null; // { latlngs: [], glow: L.Polyline, main: L.Polyline }
+  var stage4DrawLayer = null; // L.LayerGroup
+  var leafletGlobal = null;
+  var leafletMap = null;
+  var leafletTileLayer = null;
+
   // Stereo calibration state
   var stereoMode = false;
   var stereoCalibrationPoints = [];  // Array of 12 calibration points
@@ -188,6 +199,7 @@ export function initApp() {
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
     if (hamburgerOpen) setHamburgerOpen(false);
+    if (stage4DrawMode) setStage4DrawMode(false);
   });
 
   // Stage 4 sticker placement: dragging a sticker clones it (template stays put).
@@ -197,7 +209,21 @@ export function initApp() {
     if (!dom.uiSetupOverlayEl || dom.uiSetupOverlayEl.classList.contains('hidden')) return;
     if (!e.target || !e.target.closest) return;
 
-    var stickerEl = e.target.closest('.ui-dot, .ui-draw');
+    // Dot stickers can be cloned/dragged. Draw stickers are tools (click to enter draw mode).
+    var drawTemplateEl = e.target.closest('.ui-draw');
+    if (drawTemplateEl && dom.uiSetupOverlayEl.contains(drawTemplateEl) && !drawTemplateEl.classList.contains('ui-sticker-instance')) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+
+      var color = (drawTemplateEl.dataset && drawTemplateEl.dataset.color) ? drawTemplateEl.dataset.color : stage4DrawColor;
+      var same = stage4DrawMode && stage4DrawColor === color;
+      stage4DrawColor = color;
+      setStage4DrawMode(!same);
+      return;
+    }
+
+    var stickerEl = e.target.closest('.ui-dot');
     if (!stickerEl) return;
     if (!dom.uiSetupOverlayEl.contains(stickerEl)) return;
     if (e.button !== 0) return;
@@ -206,11 +232,136 @@ export function initApp() {
     e.stopImmediatePropagation();
 
     var isInstance = stickerEl.classList.contains('ui-sticker-instance');
-    var dragEl = isInstance ? stickerEl : cloneSticker(stickerEl);
-    if (!dragEl) return;
+    var downX = e.clientX;
+    var downY = e.clientY;
+    var pointerId = e.pointerId;
+    var moved = false;
+    var dragStarted = false;
 
-    startStickerDrag(dragEl, e);
+    function cleanup() {
+      document.removeEventListener('pointermove', onMove, true);
+      document.removeEventListener('pointerup', onUp, true);
+      document.removeEventListener('pointercancel', onUp, true);
+    }
+
+    function onMove(ev) {
+      if (ev.pointerId !== pointerId) return;
+      var dx = ev.clientX - downX;
+      var dy = ev.clientY - downY;
+      if (!moved && Math.sqrt(dx * dx + dy * dy) >= 6) moved = true;
+      if (!moved || dragStarted) return;
+
+      dragStarted = true;
+      cleanup();
+
+      var dragEl = isInstance ? stickerEl : cloneSticker(stickerEl);
+      if (!dragEl) return;
+      startStickerDrag(dragEl, e);
+    }
+
+    function onUp(ev) {
+      if (ev.pointerId !== pointerId) return;
+      cleanup();
+      if (dragStarted) return;
+    }
+
+    document.addEventListener('pointermove', onMove, true);
+    document.addEventListener('pointerup', onUp, true);
+    document.addEventListener('pointercancel', onUp, true);
   }, true);
+
+  window.addEventListener('resize', function () {
+    if (leafletMap) {
+      try { leafletMap.invalidateSize(); } catch {}
+    }
+  });
+
+  function stage4LatLngFromPointerEvent(e) {
+    if (!leafletMap) return null;
+    try { return leafletMap.mouseEventToLatLng(e); } catch {}
+    try {
+      var pt = leafletMap.mouseEventToContainerPoint(e);
+      return leafletMap.containerPointToLatLng(pt);
+    } catch {}
+    return null;
+  }
+
+  function stage4PointerdownOnMap(e) {
+    if (!stage4DrawMode) return;
+    if (stage !== 4 || viewMode !== 'map') return;
+    if (!leafletMap || !stage4DrawLayer || !leafletGlobal) return;
+    if (e.button !== 0) return;
+    if (e.target && e.target.closest && e.target.closest('.hamburger-menu')) return;
+
+    var latlng = stage4LatLngFromPointerEvent(e);
+    if (!latlng) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    stage4IsDrawing = true;
+    stage4LastDrawContainerPt = null;
+    var latlngs = [latlng];
+
+    var glow = leafletGlobal.polyline(latlngs, {
+      color: stage4DrawColor,
+      weight: 14,
+      opacity: 0.25,
+      lineCap: 'round',
+      lineJoin: 'round',
+      interactive: false
+    }).addTo(stage4DrawLayer);
+
+    var main = leafletGlobal.polyline(latlngs, {
+      color: stage4DrawColor,
+      weight: 7,
+      opacity: 0.95,
+      lineCap: 'round',
+      lineJoin: 'round',
+      interactive: false
+    }).addTo(stage4DrawLayer);
+
+    stage4ActiveStroke = { latlngs: latlngs, glow: glow, main: main };
+    try { dom.leafletMapEl.setPointerCapture(e.pointerId); } catch {}
+  }
+
+  function stage4PointermoveOnMap(e) {
+    if (!stage4DrawMode) return;
+    if (!stage4IsDrawing || !stage4ActiveStroke) return;
+    if (!leafletMap) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    var pt;
+    try { pt = leafletMap.mouseEventToContainerPoint(e); } catch { pt = null; }
+    if (pt && stage4LastDrawContainerPt) {
+      var dx = pt.x - stage4LastDrawContainerPt.x;
+      var dy = pt.y - stage4LastDrawContainerPt.y;
+      if ((dx * dx + dy * dy) < 4) return; // ~2px
+    }
+
+    var latlng = stage4LatLngFromPointerEvent(e);
+    if (!latlng) return;
+
+    if (pt) stage4LastDrawContainerPt = pt;
+    stage4ActiveStroke.latlngs.push(latlng);
+    try { stage4ActiveStroke.glow.setLatLngs(stage4ActiveStroke.latlngs); } catch {}
+    try { stage4ActiveStroke.main.setLatLngs(stage4ActiveStroke.latlngs); } catch {}
+  }
+
+  function stage4StopDrawing(e) {
+    if (!stage4IsDrawing) return;
+    stage4IsDrawing = false;
+    stage4LastDrawContainerPt = null;
+    stage4ActiveStroke = null;
+    try { dom.leafletMapEl.releasePointerCapture(e.pointerId); } catch {}
+  }
+
+  dom.leafletMapEl.addEventListener('pointerdown', stage4PointerdownOnMap);
+  dom.leafletMapEl.addEventListener('pointermove', stage4PointermoveOnMap);
+  dom.leafletMapEl.addEventListener('pointerup', stage4StopDrawing);
+  dom.leafletMapEl.addEventListener('pointercancel', stage4StopDrawing);
 
   setStage(1);
   setViewMode('camera');
@@ -439,11 +590,18 @@ export function initApp() {
         dom.viewToggleContainerEl.classList.remove('toggle-floating');
       }
       initMaptasticIfNeeded();
+      initLeafletIfNeeded();
       // Keep processing running so we can track the index fingertip and project it onto the map.
       updateUiSetupPanelVisibility();
       updateEdgeGuidesVisibility();
       updateGestureControlsVisibility();
       updateHamburgerMenuVisibility();
+      if (leafletMap) {
+        try { leafletMap.invalidateSize(); } catch {}
+      }
+      // Re-apply current draw mode (only activates in stage 4 map view).
+      setStage4DrawMode(stage4DrawMode);
+      updateStage4MapInteractivity();
       return;
     }
 
@@ -455,8 +613,43 @@ export function initApp() {
     updateEdgeGuidesVisibility();
     updateGestureControlsVisibility();
     updateHamburgerMenuVisibility();
+    setStage4DrawMode(false);
+    updateStage4MapInteractivity();
     resetStage3Gestures();
     resumeProcessingIfReady();
+  }
+
+  function initLeafletIfNeeded() {
+    if (leafletMap) {
+      try { leafletMap.invalidateSize(); } catch {}
+      return;
+    }
+
+    leafletGlobal = window.L;
+    var L = leafletGlobal;
+    if (!L || !dom.leafletMapEl) {
+      console.warn('Leaflet not available; map view will be blank.');
+      return;
+    }
+
+    leafletMap = L.map(dom.leafletMapEl, {
+      zoomControl: false,
+      attributionControl: false,
+      inertia: true
+    });
+
+    // Default view roughly matching the previous embedded bbox.
+    leafletMap.setView([37.76, -122.44], 12);
+
+    leafletTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      crossOrigin: true
+    });
+    leafletTileLayer.addTo(leafletMap);
+
+    try { stage4DrawLayer = L.layerGroup().addTo(leafletMap); } catch {}
+
+    try { leafletMap.invalidateSize(); } catch {}
   }
 
   function updateHamburgerMenuVisibility() {
@@ -467,6 +660,8 @@ export function initApp() {
     if (!visible) {
       setHamburgerOpen(false);
       undockViewToggle();
+      setStage4DrawMode(false);
+      updateStage4MapInteractivity();
       return;
     }
 
@@ -475,6 +670,7 @@ export function initApp() {
       dom.viewToggleContainerEl.classList.add('hidden');
       dom.viewToggleContainerEl.setAttribute('aria-hidden', 'true');
     }
+    updateStage4MapInteractivity();
   }
 
   function dockViewToggle() {
@@ -501,6 +697,36 @@ export function initApp() {
       dom.viewToggleContainerEl.classList.toggle('hidden', !hamburgerOpen);
       dom.viewToggleContainerEl.setAttribute('aria-hidden', hamburgerOpen ? 'false' : 'true');
     }
+  }
+
+  function setStage4DrawMode(enabled) {
+    stage4DrawMode = !!enabled;
+    stage4IsDrawing = false;
+    stage4LastDrawContainerPt = null;
+    stage4ActiveStroke = null;
+
+    var active = stage4DrawMode && stage === 4 && viewMode === 'map';
+    if (dom.leafletMapEl) {
+      dom.leafletMapEl.classList.toggle('leaflet-map--draw-active', active);
+    }
+    updateStage4MapInteractivity();
+  }
+
+  function updateStage4MapInteractivity() {
+    // Leaflet is same-page; keep it interactive by default.
+    // If we need to disable map interaction while drawing, do it here.
+    if (!leafletMap) return;
+
+    if (stage === 4 && viewMode === 'map' && stage4DrawMode) {
+      try { leafletMap.dragging.disable(); } catch {}
+      try { leafletMap.scrollWheelZoom.disable(); } catch {}
+      try { leafletMap.doubleClickZoom.disable(); } catch {}
+      return;
+    }
+
+    try { leafletMap.dragging.enable(); } catch {}
+    try { leafletMap.scrollWheelZoom.enable(); } catch {}
+    try { leafletMap.doubleClickZoom.enable(); } catch {}
   }
 
   function updateEdgeGuidesVisibility() {

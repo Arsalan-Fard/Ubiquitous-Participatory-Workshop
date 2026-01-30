@@ -720,6 +720,17 @@ h1 {
     display: block;
 }
 
+.leaflet-map {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.leaflet-map.leaflet-map--draw-active {
+    cursor: crosshair;
+}
+
 .map-finger-dots {
     position: absolute;
     inset: 0;

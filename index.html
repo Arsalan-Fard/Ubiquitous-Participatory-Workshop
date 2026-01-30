@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Camera Setup Stage 1/4</title>
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 <body>
     <div class="container">
@@ -124,13 +125,7 @@
 
     <div id="mapView" class="map-view hidden" aria-hidden="true">
         <div id="mapWarp" class="map-warp">
-            <iframe
-                id="osmFrame"
-                title="OpenStreetMap"
-                loading="lazy"
-                referrerpolicy="no-referrer-when-downgrade"
-                src="https://www.openstreetmap.org/export/embed.html?bbox=-122.523%2C37.703%2C-122.356%2C37.815&amp;layer=mapnik"
-            ></iframe>
+            <div id="leafletMap" class="leaflet-map" aria-label="Map"></div>
             <div id="mapFingerDots" class="map-finger-dots hidden" aria-hidden="true"></div>
         </div>
         <div id="mapHint" class="map-hint hidden" aria-hidden="true">
@@ -159,6 +154,7 @@
 
     <script src="lib/comlink.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/maptastic@3.0.0/dist/maptastic.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script type="module" src="src/js/main.js"></script>
 
     <div id="cameraSourceModal" class="modal hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Add camera source">
