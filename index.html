@@ -26,11 +26,14 @@
             <button id="nextBtn" class="btn btn-secondary" disabled>Next</button>
             <button id="stopBtn" class="btn">Close Camera</button>
         </div>
+        <div id="cameraActiveRow" class="camera-select-row hidden" aria-label="Active camera selection">
+            <select id="cameraActiveSelect" class="camera-select" aria-label="Active camera"></select>
+        </div>
         <div id="cameraSelectRow" class="camera-select-row" aria-label="Camera selection">
             <select id="cameraCountSelect" class="camera-select" aria-label="Number of cameras">
-                <option value="0">0</option>
+                <option value="0">0 (Touch Screen)</option>
                 <option value="1" selected>1</option>
-                <option value="2">2</option>
+                <option value="2">2 (Touch Detection on tabletop)</option>
             </select>
             <button id="cameraAddBtn" class="camera-add-btn" type="button" aria-label="Add camera">+</button>
             <div id="cameraDeviceSelects" class="camera-device-selects" aria-label="Available cameras"></div>
@@ -53,7 +56,7 @@
         <p id="error"></p>
     </div>
 
-    <div id="mapView" class="map-view hidden" aria-hidden="true">
+        <div id="mapView" class="map-view hidden" aria-hidden="true">
         <div id="mapWarp" class="map-warp">
             <iframe
                 id="osmFrame"
@@ -62,8 +65,8 @@
                 referrerpolicy="no-referrer-when-downgrade"
                 src="https://www.openstreetmap.org/export/embed.html?bbox=-122.523%2C37.703%2C-122.356%2C37.815&amp;layer=mapnik"
             ></iframe>
-            <div id="mapFingerDots" class="map-finger-dots hidden" aria-hidden="true"></div>
         </div>
+        <div id="mapFingerDots" class="map-finger-dots hidden" aria-hidden="true"></div>
         <div id="mapHint" class="map-hint hidden" aria-hidden="true">
             Edit corners: Shift + Space, then drag corners.
         </div>

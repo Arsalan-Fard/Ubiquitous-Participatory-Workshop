@@ -1,5 +1,6 @@
-1- select 0,1,2 cameras
+1- Camera capturing at the same time.
 2- maptastic for phone
 3- Setup UI
 4- Drawing guides
 5- Touch detection
+6- lower the res

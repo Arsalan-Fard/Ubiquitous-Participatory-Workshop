@@ -430,9 +430,9 @@ h1 {
 }
 
 .map-finger-dots {
-    position: absolute;
+    position: fixed;
     inset: 0;
-    z-index: 10;
+    z-index: 67;
     pointer-events: none;
 }
 
@@ -450,12 +450,34 @@ h1 {
     will-change: transform;
 }
 
+.map-finger-dots--pinch .map-finger-dot {
+    background: #30d158;
+    box-shadow: 0 10px 26px rgba(48, 209, 88, 0.35);
+}
+
+.hand-debug {
+    position: fixed;
+    left: 16px;
+    bottom: 16px;
+    z-index: 75;
+    max-width: min(520px, calc(100vw - 32px));
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #fff;
+    font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    white-space: pre;
+    pointer-events: none;
+    backdrop-filter: blur(8px);
+}
+
 .ui-setup-panel {
     position: fixed;
     left: 50%;
     top: 50%;
     transform: translate(-50%, -50%);
-    z-index: 65;
+    z-index: 80;
     width: min(720px, calc(100vw - 48px));
     min-height: 220px;
     padding: 18px;
