@@ -85,6 +85,67 @@ h1 {
     flex-wrap: wrap;
 }
 
+.camera-select-row {
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.camera-device-selects {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.camera-select {
+    height: 40px;
+    padding: 0 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: #ffffff;
+    color: #2b2b2b;
+    font-weight: 700;
+    outline: none;
+}
+
+.camera-select option {
+    color: #2b2b2b;
+    background: #ffffff;
+}
+
+.camera-select:focus-visible {
+    border-color: rgba(43, 184, 255, 0.9);
+    box-shadow: 0 0 0 3px rgba(43, 184, 255, 0.22);
+}
+
+.camera-add-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    border: 1px solid rgba(0, 0, 0, 0.18);
+    background: #ffffff;
+    color: #2b2b2b;
+    font-size: 20px;
+    font-weight: 900;
+    cursor: pointer;
+    transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.camera-add-btn:hover {
+    background: #f3f3f3;
+    border-color: rgba(0, 0, 0, 0.28);
+    transform: translateY(-1px);
+}
+
+.camera-add-btn:active {
+    transform: translateY(0);
+}
+
 .surface-buttons {
     margin-top: 12px;
     display: flex;

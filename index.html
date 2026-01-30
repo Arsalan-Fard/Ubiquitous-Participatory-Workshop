@@ -26,6 +26,15 @@
             <button id="nextBtn" class="btn btn-secondary" disabled>Next</button>
             <button id="stopBtn" class="btn">Close Camera</button>
         </div>
+        <div id="cameraSelectRow" class="camera-select-row" aria-label="Camera selection">
+            <select id="cameraCountSelect" class="camera-select" aria-label="Number of cameras">
+                <option value="0">0</option>
+                <option value="1" selected>1</option>
+                <option value="2">2</option>
+            </select>
+            <button id="cameraAddBtn" class="camera-add-btn" type="button" aria-label="Add camera">+</button>
+            <div id="cameraDeviceSelects" class="camera-device-selects" aria-label="Available cameras"></div>
+        </div>
         <label id="apriltagToggleContainer" class="toggle-inline">
             <span class="toggle-inline-label">AprilTag detection</span>
             <span class="switch">

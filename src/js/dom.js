@@ -12,6 +12,10 @@ export function getDom() {
   var startBtn = document.getElementById('startBtn');
   var nextBtn = document.getElementById('nextBtn');
   var stopBtn = document.getElementById('stopBtn');
+  var cameraSelectRowEl = document.getElementById('cameraSelectRow');
+  var cameraCountSelectEl = document.getElementById('cameraCountSelect');
+  var cameraAddBtnEl = document.getElementById('cameraAddBtn');
+  var cameraDeviceSelectsEl = document.getElementById('cameraDeviceSelects');
   var apriltagToggleContainerEl = document.getElementById('apriltagToggleContainer');
   var apriltagToggleEl = document.getElementById('apriltagToggle');
   var viewToggleContainerEl = document.getElementById('viewToggleContainer');
@@ -38,6 +42,10 @@ export function getDom() {
     !startBtn ||
     !nextBtn ||
     !stopBtn ||
+    !cameraSelectRowEl ||
+    !cameraCountSelectEl ||
+    !cameraAddBtnEl ||
+    !cameraDeviceSelectsEl ||
     !apriltagToggleContainerEl ||
     !apriltagToggleEl ||
     !viewToggleContainerEl ||
@@ -67,6 +75,10 @@ export function getDom() {
     startBtn: startBtn,
     nextBtn: nextBtn,
     stopBtn: stopBtn,
+    cameraSelectRowEl: cameraSelectRowEl,
+    cameraCountSelectEl: cameraCountSelectEl,
+    cameraAddBtnEl: cameraAddBtnEl,
+    cameraDeviceSelectsEl: cameraDeviceSelectsEl,
     apriltagToggleContainerEl: apriltagToggleContainerEl,
     apriltagToggleEl: apriltagToggleEl,
     viewToggleContainerEl: viewToggleContainerEl,

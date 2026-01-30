@@ -37,6 +37,7 @@ export function initApp() {
   var lastIndexTipPoints = null;
   var lastIndexTipTimeMs = 0;
   var surfaceHomography = null;
+  var availableVideoDevices = [];
 
   var videoContainer = document.querySelector('.video-container');
   initHandDetector({ videoContainer: videoContainer }).then(function (h) {
@@ -53,6 +54,11 @@ export function initApp() {
   dom.stopBtn.addEventListener('click', stopCamera);
   dom.apriltagToggleEl.addEventListener('change', onApriltagToggleChanged);
   dom.viewToggleEl.addEventListener('change', onViewToggleChanged);
+  dom.cameraCountSelectEl.addEventListener('change', function () {
+    renderCameraDeviceSelects();
+  });
+  // No-op for now (reserved for future behavior)
+  dom.cameraAddBtnEl.addEventListener('click', function () {});
   dom.surfaceBtn1.addEventListener('click', function () {
     armCorner(0);
   });
@@ -72,6 +78,9 @@ export function initApp() {
   updateSurfaceButtonsUI();
   updateUiSetupPanelVisibility();
   updateBackState();
+  updateCameraSelectVisibility();
+  renderCameraDeviceSelects();
+  refreshAvailableCameras();
 
   function initMaptasticIfNeeded() {
     if (maptasticInitialized) return;
@@ -153,6 +162,7 @@ export function initApp() {
 
     updateUiSetupPanelVisibility();
     updateBackState();
+    updateCameraSelectVisibility();
   }
 
   function onNextClicked() {
@@ -401,11 +411,23 @@ export function initApp() {
       cameraStarting = true;
       updateLoadingMessage();
 
+      var selectedDeviceId = getSelectedCameraDeviceId();
+      var videoConstraints = {
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+      };
+      if (selectedDeviceId) {
+        videoConstraints.deviceId = { exact: selectedDeviceId };
+      } else {
+        videoConstraints.facingMode = 'environment';
+      }
+
       var stream = await startCameraStream(dom.video, {
         video: {
-          facingMode: 'environment',
-          width: { ideal: 640 },
-          height: { ideal: 480 },
+          deviceId: videoConstraints.deviceId,
+          facingMode: videoConstraints.facingMode,
+          width: videoConstraints.width,
+          height: videoConstraints.height,
         },
         audio: false,
       });
@@ -429,6 +451,7 @@ export function initApp() {
         loadDetectorIfNeeded();
       }
 
+      refreshAvailableCameras();
       startProcessing();
     } catch (err) {
       cameraStarting = false;
@@ -580,6 +603,77 @@ export function initApp() {
     var visible = stage !== 1;
     dom.backBtn.classList.toggle('hidden', !visible);
     dom.backBtn.disabled = !visible;
+  }
+
+  function updateCameraSelectVisibility() {
+    var visible = stage === 1;
+    dom.cameraSelectRowEl.classList.toggle('hidden', !visible);
+  }
+
+  async function refreshAvailableCameras() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+
+    try {
+      var devices = await navigator.mediaDevices.enumerateDevices();
+      availableVideoDevices = devices.filter(function (d) {
+        return d && d.kind === 'videoinput';
+      });
+      renderCameraDeviceSelects();
+    } catch (err) {
+      console.warn('Failed to enumerate camera devices:', err);
+    }
+  }
+
+  function getSelectedCameraDeviceId() {
+    var selectEl = dom.cameraDeviceSelectsEl.querySelector('select[data-camera-index=\"0\"]');
+    if (!selectEl) return null;
+    var id = String(selectEl.value || '').trim();
+    return id || null;
+  }
+
+  function renderCameraDeviceSelects() {
+    var count = parseInt(dom.cameraCountSelectEl.value, 10);
+    if (isNaN(count) || count < 0) count = 0;
+    if (count > 2) count = 2;
+
+    var previousValues = [];
+    var existing = dom.cameraDeviceSelectsEl.querySelectorAll('select');
+    for (var i = 0; i < existing.length; i++) {
+      previousValues[i] = existing[i].value;
+    }
+
+    dom.cameraDeviceSelectsEl.textContent = '';
+
+    for (var index = 0; index < count; index++) {
+      var selectEl = document.createElement('select');
+      selectEl.className = 'camera-select';
+      selectEl.setAttribute('aria-label', 'Camera ' + (index + 1));
+      selectEl.dataset.cameraIndex = String(index);
+
+      var placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Select camera...';
+      selectEl.appendChild(placeholder);
+
+      for (var d = 0; d < availableVideoDevices.length; d++) {
+        var device = availableVideoDevices[d];
+        var opt = document.createElement('option');
+        opt.value = device.deviceId || '';
+
+        var label = device.label;
+        if (!label) label = 'Camera ' + (d + 1);
+        opt.textContent = label;
+        selectEl.appendChild(opt);
+      }
+
+      if (previousValues[index]) {
+        selectEl.value = previousValues[index];
+      } else if (availableVideoDevices[index] && availableVideoDevices[index].deviceId) {
+        selectEl.value = availableVideoDevices[index].deviceId;
+      }
+
+      dom.cameraDeviceSelectsEl.appendChild(selectEl);
+    }
   }
 
   function setError(text) {
