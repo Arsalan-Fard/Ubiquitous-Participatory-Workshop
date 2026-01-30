@@ -3,6 +3,13 @@ export function getDom() {
   var overlay = document.getElementById('overlay');
   var loadingEl = document.getElementById('loading');
   var pageTitleEl = document.getElementById('pageTitle');
+  var gestureControlsEl = document.getElementById('gestureControls');
+  var pinchThresholdSliderEl = document.getElementById('pinchThresholdSlider');
+  var pinchThresholdValueEl = document.getElementById('pinchThresholdValue');
+  var holdStillThresholdSliderEl = document.getElementById('holdStillThresholdSlider');
+  var holdStillThresholdValueEl = document.getElementById('holdStillThresholdValue');
+  var dwellTimeSliderEl = document.getElementById('dwellTimeSlider');
+  var dwellTimeValueEl = document.getElementById('dwellTimeValue');
   var surfaceButtonsEl = document.getElementById('surfaceButtons');
   var surfaceBtn1 = document.getElementById('surfaceBtn1');
   var surfaceBtn2 = document.getElementById('surfaceBtn2');
@@ -30,6 +37,7 @@ export function getDom() {
   var mapHintEl = document.getElementById('mapHint');
   var uiSetupOverlayEl = document.getElementById('uiSetupOverlay');
   var uiSetupPanelEl = document.getElementById('uiSetupPanel');
+  var mapFingerCursorEl = document.getElementById('mapFingerCursor');
   var edgeGuidesEl = document.getElementById('edgeGuides');
   var errorEl = document.getElementById('error');
 
@@ -38,6 +46,13 @@ export function getDom() {
     !overlay ||
     !loadingEl ||
     !pageTitleEl ||
+    !gestureControlsEl ||
+    !pinchThresholdSliderEl ||
+    !pinchThresholdValueEl ||
+    !holdStillThresholdSliderEl ||
+    !holdStillThresholdValueEl ||
+    !dwellTimeSliderEl ||
+    !dwellTimeValueEl ||
     !surfaceButtonsEl ||
     !surfaceBtn1 ||
     !surfaceBtn2 ||
@@ -65,6 +80,7 @@ export function getDom() {
     !mapHintEl ||
     !uiSetupOverlayEl ||
     !uiSetupPanelEl ||
+    !mapFingerCursorEl ||
     !edgeGuidesEl ||
     !errorEl
   ) {
@@ -76,6 +92,13 @@ export function getDom() {
     overlay: overlay,
     loadingEl: loadingEl,
     pageTitleEl: pageTitleEl,
+    gestureControlsEl: gestureControlsEl,
+    pinchThresholdSliderEl: pinchThresholdSliderEl,
+    pinchThresholdValueEl: pinchThresholdValueEl,
+    holdStillThresholdSliderEl: holdStillThresholdSliderEl,
+    holdStillThresholdValueEl: holdStillThresholdValueEl,
+    dwellTimeSliderEl: dwellTimeSliderEl,
+    dwellTimeValueEl: dwellTimeValueEl,
     surfaceButtonsEl: surfaceButtonsEl,
     surfaceBtn1: surfaceBtn1,
     surfaceBtn2: surfaceBtn2,
@@ -103,6 +126,7 @@ export function getDom() {
     mapHintEl: mapHintEl,
     uiSetupOverlayEl: uiSetupOverlayEl,
     uiSetupPanelEl: uiSetupPanelEl,
+    mapFingerCursorEl: mapFingerCursorEl,
     edgeGuidesEl: edgeGuidesEl,
     errorEl: errorEl,
   };

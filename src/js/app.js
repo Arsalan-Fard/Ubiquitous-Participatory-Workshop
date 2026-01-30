@@ -49,21 +49,24 @@ export function initApp() {
   var pixelReadBlockedNotified = false;
 
   // Stage 3 gesture controls (map view)
-  var DWELL_CLICK_MS = 3000;
-  var DWELL_MOVE_THRESHOLD_PX = 14;
   var PINCH_DRAG_ARM_MS = 3000;
-  var PINCH_DISTANCE_THRESHOLD_PX = 45;
+  var pinchDistanceThresholdPx = loadNumberSetting('pinchDistanceThresholdPx', 45, 10, 120);
+  var holdStillThresholdPx = loadNumberSetting('holdStillThresholdPx', 14, 2, 80);
+  var dwellClickMs = loadNumberSetting('dwellClickMs', 3000, 250, 8000);
+  var PINCH_RATIO_THRESHOLD = 0.35;
 
   var dwellAnchor = null; // {x,y} in viewport coords
   var dwellStartMs = 0;
   var dwellFired = false;
 
   var pinchStartMs = 0;
+  var pinchAnchor = null; // {x,y} in viewport coords
   var dragActive = false;
   var dragTarget = null;
   var dragPointerId = 1;
   var lastPointerViewport = null; // {x,y}
   var crossOriginClickWarned = false;
+  var mapFingerCursorProgressCircleEl = null;
 
   // Stereo calibration state
   var stereoMode = false;
@@ -178,12 +181,44 @@ export function initApp() {
   updateSurfaceButtonsUI();
   updateUiSetupPanelVisibility();
   updateEdgeGuidesVisibility();
+  updateGestureControlsVisibility();
   updateBackState();
   updateCameraSelectVisibility();
   renderCameraDeviceSelects();
   refreshAvailableCameras();
   closeCameraSourceModal();
   updateStereoUIVisibility();
+
+  dom.pinchThresholdSliderEl.value = String(Math.round(pinchDistanceThresholdPx));
+  dom.pinchThresholdValueEl.textContent = String(Math.round(pinchDistanceThresholdPx));
+  dom.pinchThresholdSliderEl.addEventListener('input', function () {
+    var v = parseFloat(dom.pinchThresholdSliderEl.value);
+    if (!isFinite(v)) return;
+    pinchDistanceThresholdPx = clamp(v, 10, 120);
+    dom.pinchThresholdValueEl.textContent = String(Math.round(pinchDistanceThresholdPx));
+    saveNumberSetting('pinchDistanceThresholdPx', pinchDistanceThresholdPx);
+  });
+
+  dom.holdStillThresholdSliderEl.value = String(Math.round(holdStillThresholdPx));
+  dom.holdStillThresholdValueEl.textContent = String(Math.round(holdStillThresholdPx));
+  dom.holdStillThresholdSliderEl.addEventListener('input', function () {
+    var v = parseFloat(dom.holdStillThresholdSliderEl.value);
+    if (!isFinite(v)) return;
+    holdStillThresholdPx = clamp(v, 2, 80);
+    dom.holdStillThresholdValueEl.textContent = String(Math.round(holdStillThresholdPx));
+    saveNumberSetting('holdStillThresholdPx', holdStillThresholdPx);
+  });
+
+  dom.dwellTimeSliderEl.value = String((dwellClickMs / 1000).toFixed(1));
+  dom.dwellTimeValueEl.textContent = (dwellClickMs / 1000).toFixed(1);
+  dom.dwellTimeSliderEl.addEventListener('input', function () {
+    var v = parseFloat(dom.dwellTimeSliderEl.value);
+    if (!isFinite(v)) return;
+    // Slider is seconds; store ms.
+    dwellClickMs = clamp(v, 0.25, 8.0) * 1000;
+    dom.dwellTimeValueEl.textContent = (dwellClickMs / 1000).toFixed(1);
+    saveNumberSetting('dwellClickMs', dwellClickMs);
+  });
 
   function initMaptasticIfNeeded() {
     if (maptasticInitialized) return;
@@ -270,6 +305,7 @@ export function initApp() {
 
     updateUiSetupPanelVisibility();
     updateEdgeGuidesVisibility();
+    updateGestureControlsVisibility();
     updateStereoUIVisibility();
     updateBackState();
     updateCameraSelectVisibility();
@@ -346,6 +382,7 @@ export function initApp() {
       // Keep processing running so we can track the index fingertip and project it onto the map.
       updateUiSetupPanelVisibility();
       updateEdgeGuidesVisibility();
+      updateGestureControlsVisibility();
       return;
     }
 
@@ -355,6 +392,7 @@ export function initApp() {
     setMapFingerDotsVisible(false);
     updateUiSetupPanelVisibility();
     updateEdgeGuidesVisibility();
+    updateGestureControlsVisibility();
     resetStage3Gestures();
     resumeProcessingIfReady();
   }
@@ -369,6 +407,18 @@ export function initApp() {
 
     dom.edgeGuidesEl.classList.add('hidden');
     dom.edgeGuidesEl.setAttribute('aria-hidden', 'true');
+  }
+
+  function updateGestureControlsVisibility() {
+    var visible = stage === 3 && viewMode === 'camera';
+    if (visible) {
+      dom.gestureControlsEl.classList.remove('hidden');
+      dom.gestureControlsEl.setAttribute('aria-hidden', 'false');
+      return;
+    }
+
+    dom.gestureControlsEl.classList.add('hidden');
+    dom.gestureControlsEl.setAttribute('aria-hidden', 'true');
   }
 
   function pauseProcessing() {
@@ -1063,10 +1113,39 @@ export function initApp() {
         var hand = hands[i];
         if (!hand || !hand.landmarks || hand.landmarks.length <= 8) continue;
         var tip = hand.landmarks[8];
+        var pinchDistance = typeof hand.pinchDistance === 'number' ? hand.pinchDistance : null;
+        var handScale = null;
+        if (hand.landmarks.length > 17) {
+          // Palm width proxy: index MCP (5) to pinky MCP (17)
+          var lm5 = hand.landmarks[5];
+          var lm17 = hand.landmarks[17];
+          if (lm5 && lm17) {
+            var dxs = lm5.x - lm17.x;
+            var dys = lm5.y - lm17.y;
+            handScale = Math.sqrt(dxs * dxs + dys * dys);
+          }
+        }
+
+        if (!handScale && hand.landmarks.length > 9) {
+          // Fallback: wrist (0) to middle MCP (9)
+          var lm0 = hand.landmarks[0];
+          var lm9 = hand.landmarks[9];
+          if (lm0 && lm9) {
+            var dxs2 = lm0.x - lm9.x;
+            var dys2 = lm0.y - lm9.y;
+            handScale = Math.sqrt(dxs2 * dxs2 + dys2 * dys2);
+          }
+        }
+
+        var pinchRatio = (pinchDistance !== null && handScale && handScale > 1e-6)
+          ? pinchDistance / handScale
+          : null;
+
         indexTipPoints.push({
           x: tip.x,
           y: tip.y,
-          pinchDistance: typeof hand.pinchDistance === 'number' ? hand.pinchDistance : null,
+          pinchDistance: pinchDistance,
+          pinchRatio: pinchRatio,
           handedness: hand.handedness || null
         });
       }
@@ -1206,7 +1285,9 @@ export function initApp() {
 
   function handleStage3Gestures(usableIndexTipPoints) {
     var pointer = getPrimaryMapPointerViewportPoint();
+    updateStage3Cursor(pointer);
     if (!pointer) {
+      setStage3CursorProgress(0, null);
       if (dragActive) endDrag(lastPointerViewport || pointer);
       resetGestureTimers();
       return;
@@ -1216,7 +1297,13 @@ export function initApp() {
 
     var primary = usableIndexTipPoints && usableIndexTipPoints.length > 0 ? usableIndexTipPoints[0] : null;
     var pinchDistance = primary && typeof primary.pinchDistance === 'number' ? primary.pinchDistance : null;
-    var isPinching = pinchDistance !== null && pinchDistance <= PINCH_DISTANCE_THRESHOLD_PX;
+    var pinchRatio = primary && typeof primary.pinchRatio === 'number' ? primary.pinchRatio : null;
+    var isPinching = false;
+    if (pinchDistance !== null) {
+      isPinching = pinchDistance <= pinchDistanceThresholdPx;
+    } else if (pinchRatio !== null) {
+      isPinching = pinchRatio <= PINCH_RATIO_THRESHOLD;
+    }
 
     var nowMs = performance.now();
 
@@ -1226,7 +1313,15 @@ export function initApp() {
       dwellAnchor = null;
       dwellFired = false;
 
-      if (!pinchStartMs) pinchStartMs = nowMs;
+      if (!pinchAnchor || distance(pointer, pinchAnchor) > holdStillThresholdPx) {
+        pinchAnchor = pointer;
+        pinchStartMs = nowMs;
+      } else if (!pinchStartMs) {
+        pinchStartMs = nowMs;
+      }
+
+      var pinchProgress = Math.min(1, (nowMs - pinchStartMs) / PINCH_DRAG_ARM_MS);
+      setStage3CursorProgress(dragActive ? 1 : pinchProgress, dragActive ? 'drag' : 'pinch');
 
       if (!dragActive && nowMs - pinchStartMs >= PINCH_DRAG_ARM_MS) {
         startDrag(pointer);
@@ -1239,22 +1334,31 @@ export function initApp() {
     }
 
     pinchStartMs = 0;
+    pinchAnchor = null;
+    setStage3CursorProgress(0, null);
     if (dragActive) {
       endDrag(pointer);
       return;
     }
 
     // Dwell-to-click
-    if (!dwellAnchor || distance(pointer, dwellAnchor) > DWELL_MOVE_THRESHOLD_PX) {
+    if (!dwellAnchor || distance(pointer, dwellAnchor) > holdStillThresholdPx) {
       dwellAnchor = pointer;
       dwellStartMs = nowMs;
       dwellFired = false;
+      setStage3CursorProgress(0, null);
       return;
     }
 
-    if (!dwellFired && dwellStartMs && nowMs - dwellStartMs >= DWELL_CLICK_MS) {
+    if (!dwellFired && dwellStartMs) {
+      var dwellProgress = Math.min(1, (nowMs - dwellStartMs) / dwellClickMs);
+      setStage3CursorProgress(dwellProgress, 'dwell');
+    }
+
+    if (!dwellFired && dwellStartMs && nowMs - dwellStartMs >= dwellClickMs) {
       dispatchClickAt(pointer);
       dwellFired = true;
+      setStage3CursorProgress(0, null);
     }
   }
 
@@ -1263,12 +1367,58 @@ export function initApp() {
     dwellStartMs = 0;
     dwellFired = false;
     pinchStartMs = 0;
+    pinchAnchor = null;
   }
 
   function resetStage3Gestures() {
     if (dragActive) endDrag(lastPointerViewport);
+    updateStage3Cursor(null);
+    setStage3CursorProgress(0, null);
     resetGestureTimers();
     lastPointerViewport = null;
+  }
+
+  function getMapFingerCursorProgressCircleEl() {
+    if (mapFingerCursorProgressCircleEl) return mapFingerCursorProgressCircleEl;
+    if (!dom.mapFingerCursorEl) return null;
+    mapFingerCursorProgressCircleEl = dom.mapFingerCursorEl.querySelector('.map-finger-cursor__progress');
+    return mapFingerCursorProgressCircleEl;
+  }
+
+  function setStage3CursorProgress(progress01, mode) {
+    if (!dom.mapFingerCursorEl) return;
+    var circle = getMapFingerCursorProgressCircleEl();
+    if (!circle) return;
+
+    var p = Math.max(0, Math.min(1, progress01 || 0));
+    var dashOffset = 100 - p * 100;
+    circle.style.strokeDashoffset = String(dashOffset);
+
+    dom.mapFingerCursorEl.classList.remove('map-finger-cursor--dwell');
+    dom.mapFingerCursorEl.classList.remove('map-finger-cursor--pinch');
+    dom.mapFingerCursorEl.classList.remove('map-finger-cursor--drag');
+
+    if (mode === 'dwell') dom.mapFingerCursorEl.classList.add('map-finger-cursor--dwell');
+    if (mode === 'pinch') dom.mapFingerCursorEl.classList.add('map-finger-cursor--pinch');
+    if (mode === 'drag') dom.mapFingerCursorEl.classList.add('map-finger-cursor--drag');
+  }
+
+  function updateStage3Cursor(pointer) {
+    if (!dom.mapFingerCursorEl) return;
+
+    var visible = stage === 3 && viewMode === 'map' && !!pointer;
+    if (!visible) {
+      dom.mapFingerCursorEl.classList.add('hidden');
+      dom.mapFingerCursorEl.setAttribute('aria-hidden', 'true');
+      dom.mapFingerCursorEl.style.transform = 'translate(-9999px, -9999px)';
+      return;
+    }
+
+    dom.mapFingerCursorEl.classList.remove('hidden');
+    dom.mapFingerCursorEl.setAttribute('aria-hidden', 'false');
+
+    // Cursor is 36px; center it.
+    dom.mapFingerCursorEl.style.transform = 'translate(' + (pointer.x - 18) + 'px, ' + (pointer.y - 18) + 'px)';
   }
 
   function startDrag(pointer) {
@@ -1686,6 +1836,33 @@ function clamp01(value) {
   if (value < 0) return 0;
   if (value > 1) return 1;
   return value;
+}
+
+function clamp(value, min, max) {
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
+
+function loadNumberSetting(key, fallback, min, max) {
+  try {
+    var raw = localStorage.getItem(String(key));
+    if (raw === null || raw === undefined || raw === '') return fallback;
+    var v = parseFloat(raw);
+    if (!isFinite(v)) return fallback;
+    if (typeof min === 'number') v = Math.max(min, v);
+    if (typeof max === 'number') v = Math.min(max, v);
+    return v;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveNumberSetting(key, value) {
+  try {
+    if (!isFinite(value)) return;
+    localStorage.setItem(String(key), String(value));
+  } catch {}
 }
 
 function loadCustomCameraSources() {

@@ -22,6 +22,23 @@
                 <canvas id="overlay2"></canvas>
             </div>
         </div>
+        <div id="gestureControls" class="gesture-controls hidden" aria-hidden="true">
+            <div class="gesture-controls__row">
+                <span class="gesture-controls__label">Pinch distance threshold (px)</span>
+                <span id="pinchThresholdValue" class="gesture-controls__value">45</span>
+            </div>
+            <input id="pinchThresholdSlider" class="gesture-controls__slider" type="range" min="10" max="120" step="1" value="45" aria-label="Pinch distance threshold in pixels" />
+            <div class="gesture-controls__row">
+                <span class="gesture-controls__label">Hold-still threshold (px)</span>
+                <span id="holdStillThresholdValue" class="gesture-controls__value">14</span>
+            </div>
+            <input id="holdStillThresholdSlider" class="gesture-controls__slider" type="range" min="2" max="80" step="1" value="14" aria-label="Hold-still movement threshold in pixels" />
+            <div class="gesture-controls__row">
+                <span class="gesture-controls__label">Dwell time (sec)</span>
+                <span id="dwellTimeValue" class="gesture-controls__value">3.0</span>
+            </div>
+            <input id="dwellTimeSlider" class="gesture-controls__slider" type="range" min="0.5" max="8.0" step="0.1" value="3.0" aria-label="Dwell time in seconds" />
+        </div>
         <div id="surfaceButtons" class="surface-buttons hidden" aria-label="Surface setup tools">
             <button id="surfaceBtn1" class="surface-btn" type="button">1</button>
             <button id="surfaceBtn2" class="surface-btn" type="button">2</button>
@@ -100,7 +117,7 @@
         <div class="edge-guide edge-guide--left" aria-hidden="true"></div>
     </div>
 
-    <div id="mapView" class="map-view hidden" aria-hidden="true">
+        <div id="mapView" class="map-view hidden" aria-hidden="true">
         <div id="mapWarp" class="map-warp">
             <iframe
                 id="osmFrame"
@@ -116,6 +133,13 @@
         </div>
         <div id="uiSetupOverlay" class="ui-setup-overlay hidden" aria-hidden="true"></div>
         <div id="uiSetupPanel" class="ui-setup-panel hidden" aria-hidden="true"></div>
+        <div id="mapFingerCursor" class="map-finger-cursor hidden" aria-hidden="true">
+            <svg class="map-finger-cursor__ring" viewBox="0 0 36 36" aria-hidden="true">
+                <circle class="map-finger-cursor__track" cx="18" cy="18" r="15.915" />
+                <circle class="map-finger-cursor__progress" cx="18" cy="18" r="15.915" />
+            </svg>
+            <div class="map-finger-cursor__dot" aria-hidden="true"></div>
+        </div>
     </div>
 
     <script src="lib/comlink.min.js"></script>
