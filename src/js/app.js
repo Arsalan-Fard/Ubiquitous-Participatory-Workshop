@@ -278,9 +278,23 @@ export function initApp() {
 
   function stage4LatLngFromPointerEvent(e) {
     if (!leafletMap) return null;
-    try { return leafletMap.mouseEventToLatLng(e); } catch {}
+    // When Maptastic warps `#mapWarp`, Leaflet's default mouseEventToLatLng
+    // won't account for that CSS transform. Convert viewport -> unwarped
+    // Leaflet container coords by inverting the `#mapWarp` transform.
     try {
-      var pt = leafletMap.mouseEventToContainerPoint(e);
+      var baseRect = dom.mapViewEl.getBoundingClientRect();
+      var x = e.clientX - baseRect.left;
+      var y = e.clientY - baseRect.top;
+
+      var transform = window.getComputedStyle(dom.mapWarpEl).transform;
+      var m = (transform && transform !== 'none') ? new DOMMatrixReadOnly(transform) : new DOMMatrixReadOnly();
+      var inv = m.inverse();
+      var local = new DOMPoint(x, y, 0, 1).matrixTransform(inv);
+      if (local && typeof local.w === 'number' && local.w && local.w !== 1) {
+        local = new DOMPoint(local.x / local.w, local.y / local.w, local.z / local.w, 1);
+      }
+
+      var pt = leafletGlobal && leafletGlobal.point ? leafletGlobal.point(local.x, local.y) : { x: local.x, y: local.y };
       return leafletMap.containerPointToLatLng(pt);
     } catch {}
     return null;
@@ -334,7 +348,14 @@ export function initApp() {
     e.stopPropagation();
 
     var pt;
-    try { pt = leafletMap.mouseEventToContainerPoint(e); } catch { pt = null; }
+    try {
+      var ll = stage4LatLngFromPointerEvent(e);
+      if (ll) {
+        pt = leafletMap.latLngToContainerPoint(ll);
+      } else {
+        pt = null;
+      }
+    } catch { pt = null; }
     if (pt && stage4LastDrawContainerPt) {
       var dx = pt.x - stage4LastDrawContainerPt.x;
       var dy = pt.y - stage4LastDrawContainerPt.y;
