@@ -9,6 +9,7 @@ export function initUiSetup(options) {
   panelEl.textContent = '';
 
   var currentColor = '#ff3b30';
+  var currentDrawColor = '#2bb8ff';
 
   var row = document.createElement('div');
   row.className = 'ui-setup-row';
@@ -71,6 +72,47 @@ export function initUiSetup(options) {
 
   addDotBtn.addEventListener('click', function () {
     createDot();
+  });
+
+  var drawRow = document.createElement('div');
+  drawRow.className = 'ui-setup-row';
+
+  var drawColorInputEl = document.createElement('input');
+  drawColorInputEl.type = 'color';
+  drawColorInputEl.className = 'ui-color-input';
+  drawColorInputEl.value = currentDrawColor;
+  drawColorInputEl.setAttribute('aria-label', 'Pick drawing color');
+
+  var drawSwatchEl = document.createElement('div');
+  drawSwatchEl.className = 'ui-draw-swatch';
+
+  var drawPreviewCanvas = document.createElement('canvas');
+  drawPreviewCanvas.className = 'ui-draw-preview';
+  drawPreviewCanvas.width = 44;
+  drawPreviewCanvas.height = 44;
+
+  drawSwatchEl.appendChild(drawPreviewCanvas);
+  drawSwatchEl.appendChild(drawColorInputEl);
+
+  var addDrawBtn = document.createElement('button');
+  addDrawBtn.className = 'ui-setup-add-btn';
+  addDrawBtn.type = 'button';
+  addDrawBtn.textContent = '+';
+  addDrawBtn.setAttribute('aria-label', 'Add drawing');
+
+  drawRow.appendChild(drawSwatchEl);
+  drawRow.appendChild(addDrawBtn);
+  panelEl.appendChild(drawRow);
+
+  redrawDrawPreview();
+
+  drawColorInputEl.addEventListener('input', function () {
+    currentDrawColor = drawColorInputEl.value;
+    redrawDrawPreview();
+  });
+
+  addDrawBtn.addEventListener('click', function () {
+    createDraw();
   });
 
   function createLabelFromInput() {
@@ -137,6 +179,44 @@ export function initUiSetup(options) {
       dotEl.style.visibility = 'visible';
     });
   }
+
+  function redrawDrawPreview() {
+    var ctx = drawPreviewCanvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, drawPreviewCanvas.width, drawPreviewCanvas.height);
+    drawScribble(ctx, currentDrawColor, drawPreviewCanvas.width, drawPreviewCanvas.height);
+  }
+
+  function createDraw() {
+    var drawEl = document.createElement('canvas');
+    drawEl.className = 'ui-draw';
+    drawEl.width = 48;
+    drawEl.height = 48;
+    overlayEl.appendChild(drawEl);
+
+    positionDrawAboveSwatch(drawEl);
+    renderDrawIcon(drawEl, currentDrawColor);
+    makeDraggable(drawEl, { draggingClass: 'ui-draw--dragging' });
+  }
+
+  function positionDrawAboveSwatch(drawEl) {
+    var swatchRect = drawSwatchEl.getBoundingClientRect();
+    var x = swatchRect.left + swatchRect.width / 2;
+    var y = swatchRect.top;
+
+    drawEl.style.left = '0px';
+    drawEl.style.top = '0px';
+    drawEl.style.visibility = 'hidden';
+
+    requestAnimationFrame(function () {
+      var rect = drawEl.getBoundingClientRect();
+      var left = Math.max(8, Math.min(window.innerWidth - rect.width - 8, x - rect.width / 2));
+      var top = Math.max(8, y - 10 - rect.height);
+      drawEl.style.left = left + 'px';
+      drawEl.style.top = top + 'px';
+      drawEl.style.visibility = 'visible';
+    });
+  }
 }
 
 function makeDraggable(el, options) {
@@ -182,4 +262,32 @@ function makeDraggable(el, options) {
 
   el.addEventListener('pointerup', stopDrag);
   el.addEventListener('pointercancel', stopDrag);
+}
+
+function renderDrawIcon(canvasEl, color) {
+  var ctx = canvasEl.getContext('2d');
+  if (!ctx) return;
+  ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+  drawScribble(ctx, color, canvasEl.width, canvasEl.height);
+}
+
+function drawScribble(ctx, color, w, h) {
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(2, Math.floor(Math.min(w, h) * 0.12));
+
+  ctx.beginPath();
+  ctx.moveTo(w * 0.18, h * 0.58);
+  ctx.bezierCurveTo(w * 0.32, h * 0.22, w * 0.48, h * 0.78, w * 0.64, h * 0.42);
+  ctx.bezierCurveTo(w * 0.72, h * 0.26, w * 0.80, h * 0.30, w * 0.86, h * 0.22);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.fillStyle = color;
+  ctx.arc(w * 0.22, h * 0.62, ctx.lineWidth * 0.55, 0, 2 * Math.PI);
+  ctx.fill();
+
+  ctx.restore();
 }
