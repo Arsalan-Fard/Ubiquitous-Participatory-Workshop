@@ -30,6 +30,7 @@ export function getDom() {
   var mapHintEl = document.getElementById('mapHint');
   var uiSetupOverlayEl = document.getElementById('uiSetupOverlay');
   var uiSetupPanelEl = document.getElementById('uiSetupPanel');
+  var edgeGuidesEl = document.getElementById('edgeGuides');
   var errorEl = document.getElementById('error');
 
   if (
@@ -64,6 +65,7 @@ export function getDom() {
     !mapHintEl ||
     !uiSetupOverlayEl ||
     !uiSetupPanelEl ||
+    !edgeGuidesEl ||
     !errorEl
   ) {
     throw new Error('Missing required DOM elements. Check index.html ids.');
@@ -101,6 +103,7 @@ export function getDom() {
     mapHintEl: mapHintEl,
     uiSetupOverlayEl: uiSetupOverlayEl,
     uiSetupPanelEl: uiSetupPanelEl,
+    edgeGuidesEl: edgeGuidesEl,
     errorEl: errorEl,
   };
 }

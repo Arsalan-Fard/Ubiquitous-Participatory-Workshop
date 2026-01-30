@@ -48,6 +48,23 @@ export function initApp() {
   var usingIpCamera = false;
   var pixelReadBlockedNotified = false;
 
+  // Stage 3 gesture controls (map view)
+  var DWELL_CLICK_MS = 3000;
+  var DWELL_MOVE_THRESHOLD_PX = 14;
+  var PINCH_DRAG_ARM_MS = 3000;
+  var PINCH_DISTANCE_THRESHOLD_PX = 45;
+
+  var dwellAnchor = null; // {x,y} in viewport coords
+  var dwellStartMs = 0;
+  var dwellFired = false;
+
+  var pinchStartMs = 0;
+  var dragActive = false;
+  var dragTarget = null;
+  var dragPointerId = 1;
+  var lastPointerViewport = null; // {x,y}
+  var crossOriginClickWarned = false;
+
   // Stereo calibration state
   var stereoMode = false;
   var stereoCalibrationPoints = [];  // Array of 12 calibration points
@@ -160,6 +177,7 @@ export function initApp() {
   setNextEnabled(false);
   updateSurfaceButtonsUI();
   updateUiSetupPanelVisibility();
+  updateEdgeGuidesVisibility();
   updateBackState();
   updateCameraSelectVisibility();
   renderCameraDeviceSelects();
@@ -251,6 +269,7 @@ export function initApp() {
     }
 
     updateUiSetupPanelVisibility();
+    updateEdgeGuidesVisibility();
     updateStereoUIVisibility();
     updateBackState();
     updateCameraSelectVisibility();
@@ -326,6 +345,7 @@ export function initApp() {
       initMaptasticIfNeeded();
       // Keep processing running so we can track the index fingertip and project it onto the map.
       updateUiSetupPanelVisibility();
+      updateEdgeGuidesVisibility();
       return;
     }
 
@@ -334,7 +354,21 @@ export function initApp() {
     dom.viewToggleContainerEl.classList.remove('toggle-floating');
     setMapFingerDotsVisible(false);
     updateUiSetupPanelVisibility();
+    updateEdgeGuidesVisibility();
+    resetStage3Gestures();
     resumeProcessingIfReady();
+  }
+
+  function updateEdgeGuidesVisibility() {
+    var visible = stage === 2 && viewMode === 'camera';
+    if (visible) {
+      dom.edgeGuidesEl.classList.remove('hidden');
+      dom.edgeGuidesEl.setAttribute('aria-hidden', 'false');
+      return;
+    }
+
+    dom.edgeGuidesEl.classList.add('hidden');
+    dom.edgeGuidesEl.setAttribute('aria-hidden', 'true');
   }
 
   function pauseProcessing() {
@@ -398,6 +432,7 @@ export function initApp() {
     dom.uiSetupPanelEl.setAttribute('aria-hidden', 'true');
     dom.uiSetupOverlayEl.classList.add('hidden');
     dom.uiSetupOverlayEl.setAttribute('aria-hidden', 'true');
+    resetStage3Gestures();
   }
 
   function areSurfaceCornersReady() {
@@ -419,6 +454,31 @@ export function initApp() {
 
     if (!surfaceHomography) {
       console.warn('Surface homography could not be computed (degenerate corners).');
+    }
+  }
+
+  function recomputeSurfaceHomographyFromStereoIfReady() {
+    if (!stereoMode) return;
+
+    var corners1 = [];
+    for (var i = 0; i < 4; i++) {
+      var pt = stereoCalibrationPoints[i];
+      if (!pt || !pt.camera1Pixel) {
+        surfaceHomography = null;
+        return;
+      }
+      corners1.push({ x: pt.camera1Pixel.x, y: pt.camera1Pixel.y });
+    }
+
+    surfaceHomography = computeHomography(corners1, [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ]);
+
+    if (!surfaceHomography) {
+      console.warn('Stereo surface homography could not be computed (degenerate corners).');
     }
   }
 
@@ -511,6 +571,7 @@ export function initApp() {
       }
       // Hide single-camera surface buttons in stereo mode
       dom.surfaceButtonsEl.classList.add('hidden');
+      recomputeSurfaceHomographyFromStereoIfReady();
     } else {
       // Hide second camera container
       if (videoContainer2) {
@@ -524,6 +585,7 @@ export function initApp() {
       if (touchIndicator) {
         touchIndicator.classList.add('hidden');
       }
+      recomputeSurfaceHomographyIfReady();
     }
 
     // Show touch indicator only if stereo calibration is ready
@@ -638,6 +700,8 @@ export function initApp() {
     flashStereoCalibButton(index);
     clearStereoArmedPoint();
     updateStereoCalibButtonsUI();
+    // Enable stage 3 map finger dot once the 4 surface corners (points 1-4) exist.
+    recomputeSurfaceHomographyFromStereoIfReady();
   }
 
   function computeStereoCalibration() {
@@ -709,9 +773,11 @@ export function initApp() {
     stereoProjectionMatrix1 = null;
     stereoProjectionMatrix2 = null;
     stereoCalibrationReady = false;
+    surfaceHomography = null;
     clearStereoArmedPoint();
     updateStereoCalibButtonsUI();
     updateStereoUIVisibility();
+    setMapFingerDotsVisible(false);
   }
 
   // ============== Second Camera Functions ==============
@@ -997,7 +1063,12 @@ export function initApp() {
         var hand = hands[i];
         if (!hand || !hand.landmarks || hand.landmarks.length <= 8) continue;
         var tip = hand.landmarks[8];
-        indexTipPoints.push({ x: tip.x, y: tip.y });
+        indexTipPoints.push({
+          x: tip.x,
+          y: tip.y,
+          pinchDistance: typeof hand.pinchDistance === 'number' ? hand.pinchDistance : null,
+          handedness: hand.handedness || null
+        });
       }
 
       if (indexTipPoints.length > 0) {
@@ -1099,6 +1170,12 @@ export function initApp() {
       setMapFingerDotsVisible(false);
     }
 
+    if (stage === 3 && viewMode === 'map') {
+      handleStage3Gestures(usableIndexTipPoints);
+    } else {
+      resetStage3Gestures();
+    }
+
     // AprilTag detection
     if (apriltagEnabled && detector && shouldRenderOverlay) {
       try {
@@ -1114,6 +1191,210 @@ export function initApp() {
     }
 
     animationId = requestAnimationFrame(processFrame);
+  }
+
+  function getPrimaryMapPointerViewportPoint() {
+    if (!dom.mapFingerDotsEl || dom.mapFingerDotsEl.classList.contains('hidden')) return null;
+    if (!dom.mapFingerDotsEl.children || dom.mapFingerDotsEl.children.length < 1) return null;
+
+    var dotEl = dom.mapFingerDotsEl.children[0];
+    if (!dotEl || dotEl.classList.contains('hidden')) return null;
+
+    var rect = dotEl.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  }
+
+  function handleStage3Gestures(usableIndexTipPoints) {
+    var pointer = getPrimaryMapPointerViewportPoint();
+    if (!pointer) {
+      if (dragActive) endDrag(lastPointerViewport || pointer);
+      resetGestureTimers();
+      return;
+    }
+
+    lastPointerViewport = pointer;
+
+    var primary = usableIndexTipPoints && usableIndexTipPoints.length > 0 ? usableIndexTipPoints[0] : null;
+    var pinchDistance = primary && typeof primary.pinchDistance === 'number' ? primary.pinchDistance : null;
+    var isPinching = pinchDistance !== null && pinchDistance <= PINCH_DISTANCE_THRESHOLD_PX;
+
+    var nowMs = performance.now();
+
+    // Pinch-to-drag (arm by holding pinch)
+    if (isPinching) {
+      dwellStartMs = 0;
+      dwellAnchor = null;
+      dwellFired = false;
+
+      if (!pinchStartMs) pinchStartMs = nowMs;
+
+      if (!dragActive && nowMs - pinchStartMs >= PINCH_DRAG_ARM_MS) {
+        startDrag(pointer);
+      }
+
+      if (dragActive) {
+        continueDrag(pointer);
+      }
+      return;
+    }
+
+    pinchStartMs = 0;
+    if (dragActive) {
+      endDrag(pointer);
+      return;
+    }
+
+    // Dwell-to-click
+    if (!dwellAnchor || distance(pointer, dwellAnchor) > DWELL_MOVE_THRESHOLD_PX) {
+      dwellAnchor = pointer;
+      dwellStartMs = nowMs;
+      dwellFired = false;
+      return;
+    }
+
+    if (!dwellFired && dwellStartMs && nowMs - dwellStartMs >= DWELL_CLICK_MS) {
+      dispatchClickAt(pointer);
+      dwellFired = true;
+    }
+  }
+
+  function resetGestureTimers() {
+    dwellAnchor = null;
+    dwellStartMs = 0;
+    dwellFired = false;
+    pinchStartMs = 0;
+  }
+
+  function resetStage3Gestures() {
+    if (dragActive) endDrag(lastPointerViewport);
+    resetGestureTimers();
+    lastPointerViewport = null;
+  }
+
+  function startDrag(pointer) {
+    var hit = getEventTargetAt(pointer);
+    dragTarget = hit.target || document.body;
+    dragPointerId = 1;
+    dragActive = true;
+
+    dispatchPointerMouse(dragTarget, 'pointerdown', 'mousedown', pointer, {
+      pointerId: dragPointerId,
+      buttons: 1,
+      button: 0
+    });
+  }
+
+  function continueDrag(pointer) {
+    if (!dragTarget) dragTarget = document.body;
+    dispatchPointerMouse(dragTarget, 'pointermove', 'mousemove', pointer, {
+      pointerId: dragPointerId,
+      buttons: 1,
+      button: 0
+    });
+  }
+
+  function endDrag(pointer) {
+    var pos = pointer || lastPointerViewport;
+    if (!dragTarget || !pos) {
+      dragActive = false;
+      dragTarget = null;
+      return;
+    }
+
+    dispatchPointerMouse(dragTarget, 'pointerup', 'mouseup', pos, {
+      pointerId: dragPointerId,
+      buttons: 0,
+      button: 0
+    });
+
+    dragActive = false;
+    dragTarget = null;
+  }
+
+  function dispatchClickAt(pointer) {
+    var hit = getEventTargetAt(pointer);
+    var target = hit.target || document.body;
+
+    dispatchPointerMouse(target, 'pointerdown', 'mousedown', pointer, { pointerId: 1, buttons: 1, button: 0 });
+    dispatchPointerMouse(target, 'pointerup', 'mouseup', pointer, { pointerId: 1, buttons: 0, button: 0 });
+
+    try {
+      target.dispatchEvent(new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: pointer.x,
+        clientY: pointer.y,
+        button: 0
+      }));
+    } catch {}
+  }
+
+  function getEventTargetAt(pointer) {
+    var el = document.elementFromPoint(pointer.x, pointer.y);
+    if (!el) return { target: document.body };
+
+    if (el.tagName === 'IFRAME') {
+      try {
+        var iframe = el;
+        var rect = iframe.getBoundingClientRect();
+        var innerX = pointer.x - rect.left;
+        var innerY = pointer.y - rect.top;
+        var doc = iframe.contentWindow && iframe.contentWindow.document;
+        if (doc && typeof doc.elementFromPoint === 'function') {
+          var innerTarget = doc.elementFromPoint(innerX, innerY);
+          if (innerTarget) return { target: innerTarget };
+        }
+      } catch (err) {
+        if (!crossOriginClickWarned) {
+          crossOriginClickWarned = true;
+          console.warn('Gesture click/drag: iframe appears cross-origin; cannot dispatch events into its document.');
+        }
+      }
+      return { target: el };
+    }
+
+    return { target: el };
+  }
+
+  function dispatchPointerMouse(target, pointerType, mouseType, pointer, options) {
+    options = options || {};
+    var pointerId = typeof options.pointerId === 'number' ? options.pointerId : 1;
+    var buttons = typeof options.buttons === 'number' ? options.buttons : 0;
+    var button = typeof options.button === 'number' ? options.button : 0;
+
+    try {
+      target.dispatchEvent(new PointerEvent(pointerType, {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: pointer.x,
+        clientY: pointer.y,
+        pointerId: pointerId,
+        pointerType: 'mouse',
+        isPrimary: true,
+        buttons: buttons,
+        button: button
+      }));
+    } catch {}
+
+    try {
+      target.dispatchEvent(new MouseEvent(mouseType, {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: pointer.x,
+        clientY: pointer.y,
+        buttons: buttons,
+        button: button
+      }));
+    } catch {}
+  }
+
+  function distance(a, b) {
+    var dx = a.x - b.x;
+    var dy = a.y - b.y;
+    return Math.sqrt(dx * dx + dy * dy);
   }
 
   function setButtonsRunning(isRunning) {

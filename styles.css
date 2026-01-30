@@ -21,6 +21,53 @@ body {
     max-width: 1400px;
 }
 
+.edge-guides {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    pointer-events: none;
+}
+
+.edge-guide {
+    position: absolute;
+    border: 2px solid rgba(43, 184, 255, 0.95);
+    background: rgba(43, 184, 255, 0.10);
+    border-radius: 4px;
+    box-shadow: 0 10px 26px rgba(43, 184, 255, 0.18);
+}
+
+.edge-guide--top,
+.edge-guide--bottom {
+    width: 44px;
+    height: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.edge-guide--top {
+    top: 12px;
+}
+
+.edge-guide--bottom {
+    bottom: 12px;
+}
+
+.edge-guide--left,
+.edge-guide--right {
+    width: 12px;
+    height: 44px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.edge-guide--left {
+    left: 12px;
+}
+
+.edge-guide--right {
+    right: 12px;
+}
+
 h1 {
     color: #fff;
     margin-bottom: 20px;
