@@ -984,16 +984,16 @@ export function initApp() {
       }
     }
 
-    // Map finger dots
-    var isSurfaceSetupMapView = (state.stage === 2 || state.stage === 3) && state.viewMode === 'map';
-    if (isSurfaceSetupMapView && state.surfaceHomography && usableIndexTipPoints && usableIndexTipPoints.length > 0) {
+    // Map finger dots (show in Stage 2, 3, and 4)
+    var isMapViewWithHomography = (state.stage === 2 || state.stage === 3 || state.stage === 4) && state.viewMode === 'map';
+    if (isMapViewWithHomography && state.surfaceHomography && usableIndexTipPoints && usableIndexTipPoints.length > 0) {
       updateMapFingerDots(usableIndexTipPoints);
     } else {
       setMapFingerDotsVisible(false);
     }
 
-    // Gesture handling
-    if (state.stage === 3 && state.viewMode === 'map') {
+    // Gesture handling (dwell-to-click and pinch-to-drag for Stage 3 and 4)
+    if ((state.stage === 3 || state.stage === 4) && state.viewMode === 'map') {
       handleStage3Gestures(usableIndexTipPoints);
     } else {
       resetStage3Gestures();

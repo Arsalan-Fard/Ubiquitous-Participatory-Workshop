@@ -1,5 +1,5 @@
 /**
- * Gesture controls for Stage 3 map interaction
+ * Gesture controls for Stage 3 and Stage 4 map interaction
  * - Dwell-to-click: Hold finger still to trigger a click
  * - Pinch-to-drag: Pinch and hold to start dragging
  */
@@ -148,7 +148,8 @@ export function updateStage3Cursor(pointer) {
   var dom = state.dom;
   if (!dom.mapFingerCursorEl) return;
 
-  var visible = state.stage === 3 && state.viewMode === 'map' && !!pointer;
+  // Show cursor in both Stage 3 and Stage 4 when in map view
+  var visible = (state.stage === 3 || state.stage === 4) && state.viewMode === 'map' && !!pointer;
   if (!visible) {
     dom.mapFingerCursorEl.classList.add('hidden');
     dom.mapFingerCursorEl.setAttribute('aria-hidden', 'true');
