@@ -2,4 +2,4 @@
 2- maptastic for phone
 3- Setup UI
 4- Drawing guides
-5-
+5- Touch detection

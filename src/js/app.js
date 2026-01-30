@@ -38,6 +38,10 @@ export function initApp() {
   var lastIndexTipTimeMs = 0;
   var surfaceHomography = null;
   var availableVideoDevices = [];
+  var customCameraSources = loadCustomCameraSources();
+  var ipCameraImg = null;
+  var usingIpCamera = false;
+  var pixelReadBlockedNotified = false;
 
   var videoContainer = document.querySelector('.video-container');
   initHandDetector({ videoContainer: videoContainer }).then(function (h) {
@@ -57,8 +61,33 @@ export function initApp() {
   dom.cameraCountSelectEl.addEventListener('change', function () {
     renderCameraDeviceSelects();
   });
-  // No-op for now (reserved for future behavior)
-  dom.cameraAddBtnEl.addEventListener('click', function () {});
+  dom.cameraAddBtnEl.addEventListener('click', function () {
+    if (stage !== 1) return;
+    openCameraSourceModal();
+  });
+  dom.cameraSourceCancelBtnEl.addEventListener('click', function () {
+    closeCameraSourceModal();
+  });
+  dom.cameraSourceSaveBtnEl.addEventListener('click', function () {
+    saveCameraSourceFromModal();
+  });
+  dom.cameraSourceModalEl.addEventListener('click', function (e) {
+    if (e.target && e.target.classList && e.target.classList.contains('modal-backdrop')) {
+      closeCameraSourceModal();
+    }
+  });
+  dom.cameraSourceInputEl.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeCameraSourceModal();
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveCameraSourceFromModal();
+    }
+  });
   dom.surfaceBtn1.addEventListener('click', function () {
     armCorner(0);
   });
@@ -81,6 +110,7 @@ export function initApp() {
   updateCameraSelectVisibility();
   renderCameraDeviceSelects();
   refreshAvailableCameras();
+  closeCameraSourceModal();
 
   function initMaptasticIfNeeded() {
     if (maptasticInitialized) return;
@@ -411,7 +441,18 @@ export function initApp() {
       cameraStarting = true;
       updateLoadingMessage();
 
-      var selectedDeviceId = getSelectedCameraDeviceId();
+      var selectedSource = getSelectedCameraSource();
+      if (selectedSource && selectedSource.type === 'ip') {
+        await startIpCamera(selectedSource.url);
+        return;
+      }
+
+      stopIpCameraIfRunning();
+      usingIpCamera = false;
+      pixelReadBlockedNotified = false;
+      dom.video.classList.remove('hidden');
+
+      var selectedDeviceId = selectedSource && selectedSource.type === 'device' ? selectedSource.deviceId : null;
       var videoConstraints = {
         width: { ideal: 640 },
         height: { ideal: 480 },
@@ -467,10 +508,12 @@ export function initApp() {
   function stopCamera() {
     pauseProcessing();
 
+    stopIpCameraIfRunning();
     stopCameraStream(currentStream);
     currentStream = null;
 
     dom.video.srcObject = null;
+    dom.video.classList.remove('hidden');
     clearOverlay(overlayCtx, dom.overlay);
     cameraStarting = false;
     cameraReady = false;
@@ -495,8 +538,25 @@ export function initApp() {
     var width = captureCanvas.width;
     var height = captureCanvas.height;
 
-    captureCtx.drawImage(dom.video, 0, 0, width, height);
-    var imageData = captureCtx.getImageData(0, 0, width, height);
+    var frameSource = usingIpCamera && ipCameraImg ? ipCameraImg : dom.video;
+    try {
+      captureCtx.drawImage(frameSource, 0, 0, width, height);
+    } catch (err) {
+      animationId = requestAnimationFrame(processFrame);
+      return;
+    }
+
+    var imageData = null;
+    try {
+      imageData = captureCtx.getImageData(0, 0, width, height);
+    } catch (err) {
+      if (!pixelReadBlockedNotified && usingIpCamera) {
+        pixelReadBlockedNotified = true;
+        setError('IP camera stream is visible, but pixel processing is blocked (CORS). Use a same-origin proxy or a camera stream with CORS enabled.');
+      }
+      animationId = requestAnimationFrame(processFrame);
+      return;
+    }
 
     var shouldRenderOverlay = viewMode === 'camera';
     if (shouldRenderOverlay) {
@@ -608,6 +668,7 @@ export function initApp() {
   function updateCameraSelectVisibility() {
     var visible = stage === 1;
     dom.cameraSelectRowEl.classList.toggle('hidden', !visible);
+    if (!visible) closeCameraSourceModal();
   }
 
   async function refreshAvailableCameras() {
@@ -624,11 +685,17 @@ export function initApp() {
     }
   }
 
-  function getSelectedCameraDeviceId() {
+  function getSelectedCameraSource() {
     var selectEl = dom.cameraDeviceSelectsEl.querySelector('select[data-camera-index=\"0\"]');
     if (!selectEl) return null;
     var id = String(selectEl.value || '').trim();
-    return id || null;
+    if (!id) return null;
+
+    if (id.startsWith('ip:')) {
+      return { type: 'ip', url: id.slice(3) };
+    }
+
+    return { type: 'device', deviceId: id };
   }
 
   function renderCameraDeviceSelects() {
@@ -666,6 +733,21 @@ export function initApp() {
         selectEl.appendChild(opt);
       }
 
+      if (customCameraSources.length > 0) {
+        var group = document.createElement('optgroup');
+        group.label = 'IP camera sources';
+
+        for (var s = 0; s < customCameraSources.length; s++) {
+          var url = customCameraSources[s];
+          var opt2 = document.createElement('option');
+          opt2.value = 'ip:' + url;
+          opt2.textContent = url;
+          group.appendChild(opt2);
+        }
+
+        selectEl.appendChild(group);
+      }
+
       if (previousValues[index]) {
         selectEl.value = previousValues[index];
       } else if (availableVideoDevices[index] && availableVideoDevices[index].deviceId) {
@@ -673,6 +755,104 @@ export function initApp() {
       }
 
       dom.cameraDeviceSelectsEl.appendChild(selectEl);
+    }
+  }
+
+  function openCameraSourceModal() {
+    dom.cameraSourceInputEl.value = '';
+    dom.cameraSourceModalEl.classList.remove('hidden');
+    dom.cameraSourceModalEl.setAttribute('aria-hidden', 'false');
+    setTimeout(function () {
+      dom.cameraSourceInputEl.focus();
+    }, 0);
+  }
+
+  function closeCameraSourceModal() {
+    dom.cameraSourceModalEl.classList.add('hidden');
+    dom.cameraSourceModalEl.setAttribute('aria-hidden', 'true');
+  }
+
+  function saveCameraSourceFromModal() {
+    var raw = String(dom.cameraSourceInputEl.value || '').trim();
+    if (!raw) return;
+
+    if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
+      setError('Camera source must start with http:// or https://');
+      return;
+    }
+
+    if (customCameraSources.indexOf(raw) === -1) {
+      customCameraSources.push(raw);
+      saveCustomCameraSources(customCameraSources);
+    }
+
+    closeCameraSourceModal();
+    renderCameraDeviceSelects();
+  }
+
+  async function startIpCamera(url) {
+    stopCameraStream(currentStream);
+    currentStream = null;
+
+    usingIpCamera = true;
+    pixelReadBlockedNotified = false;
+
+    if (!ipCameraImg) {
+      ipCameraImg = document.createElement('img');
+      ipCameraImg.alt = 'IP camera';
+      ipCameraImg.decoding = 'async';
+      ipCameraImg.loading = 'eager';
+      ipCameraImg.style.width = '100%';
+      ipCameraImg.style.borderRadius = '8px';
+      ipCameraImg.style.background = '#000';
+      ipCameraImg.style.display = 'block';
+      ipCameraImg.style.objectFit = 'cover';
+      ipCameraImg.crossOrigin = 'anonymous';
+      videoContainer.insertBefore(ipCameraImg, dom.video.nextSibling);
+    }
+
+    dom.video.classList.add('hidden');
+
+    try {
+      await waitForImageLoad(ipCameraImg, url);
+    } catch (err) {
+      cameraStarting = false;
+      cameraReady = false;
+      updateLoadingMessage();
+      dom.startBtn.disabled = false;
+      setNextEnabled(false);
+      setError('Failed to load IP camera URL.');
+      return;
+    }
+
+    var w = ipCameraImg.naturalWidth || 640;
+    var h = ipCameraImg.naturalHeight || 480;
+    dom.overlay.width = w;
+    dom.overlay.height = h;
+    captureCanvas.width = w;
+    captureCanvas.height = h;
+
+    setButtonsRunning(true);
+    cameraStarting = false;
+    cameraReady = true;
+    updateLoadingMessage();
+    setNextEnabled(true);
+
+    if (apriltagEnabled) {
+      loadDetectorIfNeeded();
+    }
+
+    startProcessing();
+  }
+
+  function stopIpCameraIfRunning() {
+    if (!usingIpCamera) return;
+    usingIpCamera = false;
+
+    if (ipCameraImg) {
+      try {
+        ipCameraImg.src = '';
+      } catch {}
     }
   }
 
@@ -735,6 +915,65 @@ function clamp01(value) {
   if (value < 0) return 0;
   if (value > 1) return 1;
   return value;
+}
+
+function loadCustomCameraSources() {
+  try {
+    var raw = localStorage.getItem('customCameraSources');
+    if (!raw) return [];
+    var parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(function (v) {
+        return typeof v === 'string' && v.trim();
+      })
+      .map(function (v) {
+        return v.trim();
+      });
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomCameraSources(sources) {
+  try {
+    localStorage.setItem('customCameraSources', JSON.stringify(sources || []));
+  } catch {}
+}
+
+function waitForImageLoad(imgEl, url) {
+  return new Promise(function (resolve, reject) {
+    var settled = false;
+
+    function cleanup() {
+      imgEl.removeEventListener('load', onLoad);
+      imgEl.removeEventListener('error', onError);
+    }
+
+    function onLoad() {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    }
+
+    function onError() {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error('Image load failed'));
+    }
+
+    imgEl.addEventListener('load', onLoad, { once: true });
+    imgEl.addEventListener('error', onError, { once: true });
+
+    // Bust caches so snapshot endpoints update.
+    var cacheBustedUrl = url;
+    if (url.indexOf('?') >= 0) cacheBustedUrl = url + '&_t=' + Date.now();
+    else cacheBustedUrl = url + '?_t=' + Date.now();
+
+    imgEl.src = cacheBustedUrl;
+  });
 }
 
 function applyHomography(H, x, y) {

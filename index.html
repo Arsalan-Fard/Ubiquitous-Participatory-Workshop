@@ -74,5 +74,18 @@
     <script src="lib/comlink.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/maptastic@3.0.0/dist/maptastic.min.js"></script>
     <script type="module" src="src/js/main.js"></script>
+
+    <div id="cameraSourceModal" class="modal hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Add camera source">
+        <div class="modal-backdrop"></div>
+        <div class="modal-card" role="document">
+            <h2 class="modal-title">Add camera source</h2>
+            <p class="modal-subtitle">Paste an IP camera URL (e.g. http://...)</p>
+            <input id="cameraSourceInput" class="modal-input" type="text" placeholder="http://..." autocomplete="off" spellcheck="false" />
+            <div class="modal-actions">
+                <button id="cameraSourceCancelBtn" class="btn btn-secondary" type="button">Cancel</button>
+                <button id="cameraSourceSaveBtn" class="btn" type="button">Add</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

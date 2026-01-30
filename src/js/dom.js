@@ -16,6 +16,10 @@ export function getDom() {
   var cameraCountSelectEl = document.getElementById('cameraCountSelect');
   var cameraAddBtnEl = document.getElementById('cameraAddBtn');
   var cameraDeviceSelectsEl = document.getElementById('cameraDeviceSelects');
+  var cameraSourceModalEl = document.getElementById('cameraSourceModal');
+  var cameraSourceInputEl = document.getElementById('cameraSourceInput');
+  var cameraSourceSaveBtnEl = document.getElementById('cameraSourceSaveBtn');
+  var cameraSourceCancelBtnEl = document.getElementById('cameraSourceCancelBtn');
   var apriltagToggleContainerEl = document.getElementById('apriltagToggleContainer');
   var apriltagToggleEl = document.getElementById('apriltagToggle');
   var viewToggleContainerEl = document.getElementById('viewToggleContainer');
@@ -46,6 +50,10 @@ export function getDom() {
     !cameraCountSelectEl ||
     !cameraAddBtnEl ||
     !cameraDeviceSelectsEl ||
+    !cameraSourceModalEl ||
+    !cameraSourceInputEl ||
+    !cameraSourceSaveBtnEl ||
+    !cameraSourceCancelBtnEl ||
     !apriltagToggleContainerEl ||
     !apriltagToggleEl ||
     !viewToggleContainerEl ||
@@ -79,6 +87,10 @@ export function getDom() {
     cameraCountSelectEl: cameraCountSelectEl,
     cameraAddBtnEl: cameraAddBtnEl,
     cameraDeviceSelectsEl: cameraDeviceSelectsEl,
+    cameraSourceModalEl: cameraSourceModalEl,
+    cameraSourceInputEl: cameraSourceInputEl,
+    cameraSourceSaveBtnEl: cameraSourceSaveBtnEl,
+    cameraSourceCancelBtnEl: cameraSourceCancelBtnEl,
     apriltagToggleContainerEl: apriltagToggleContainerEl,
     apriltagToggleEl: apriltagToggleEl,
     viewToggleContainerEl: viewToggleContainerEl,
