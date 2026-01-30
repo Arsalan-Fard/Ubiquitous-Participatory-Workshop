@@ -36,6 +36,10 @@ export function getDom() {
   var mapViewEl = document.getElementById('mapView');
   var mapWarpEl = document.getElementById('mapWarp');
   var mapFingerDotsEl = document.getElementById('mapFingerDots');
+  var hamburgerMenuEl = document.getElementById('hamburgerMenu');
+  var hamburgerBtnEl = document.getElementById('hamburgerBtn');
+  var hamburgerPanelEl = document.getElementById('hamburgerPanel');
+  var hamburgerContentEl = document.getElementById('hamburgerContent');
   var mapHintEl = document.getElementById('mapHint');
   var uiSetupOverlayEl = document.getElementById('uiSetupOverlay');
   var uiSetupPanelEl = document.getElementById('uiSetupPanel');
@@ -81,6 +85,10 @@ export function getDom() {
     !mapViewEl ||
     !mapWarpEl ||
     !mapFingerDotsEl ||
+    !hamburgerMenuEl ||
+    !hamburgerBtnEl ||
+    !hamburgerPanelEl ||
+    !hamburgerContentEl ||
     !mapHintEl ||
     !uiSetupOverlayEl ||
     !uiSetupPanelEl ||
@@ -129,6 +137,10 @@ export function getDom() {
     mapViewEl: mapViewEl,
     mapWarpEl: mapWarpEl,
     mapFingerDotsEl: mapFingerDotsEl,
+    hamburgerMenuEl: hamburgerMenuEl,
+    hamburgerBtnEl: hamburgerBtnEl,
+    hamburgerPanelEl: hamburgerPanelEl,
+    hamburgerContentEl: hamburgerContentEl,
     mapHintEl: mapHintEl,
     uiSetupOverlayEl: uiSetupOverlayEl,
     uiSetupPanelEl: uiSetupPanelEl,

@@ -655,6 +655,57 @@ h1 {
     overflow: hidden;
 }
 
+.hamburger-menu {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    z-index: 80;
+    pointer-events: none;
+}
+
+.hamburger-btn {
+    pointer-events: auto;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 22px;
+    font-weight: 900;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+}
+
+.hamburger-panel {
+    pointer-events: auto;
+    margin-top: 10px;
+    width: min(320px, calc(100vw - 32px));
+    padding: 12px;
+    border-radius: 16px;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    backdrop-filter: blur(10px);
+}
+
+.hamburger-panel__title {
+    color: #fff;
+    font-weight: 800;
+    font-size: 14px;
+    margin-bottom: 10px;
+}
+
+.hamburger-panel__content {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.hamburger-panel__content .toggle-inline {
+    margin-top: 0;
+    justify-content: space-between;
+}
+
 .map-warp {
     position: absolute;
     inset: 0;
@@ -772,6 +823,13 @@ h1 {
     inset: 0;
     z-index: 66;
     pointer-events: none;
+}
+
+.ui-setup-overlay--locked .ui-label,
+.ui-setup-overlay--locked .ui-dot,
+.ui-setup-overlay--locked .ui-draw {
+    pointer-events: none !important;
+    cursor: default !important;
 }
 
 .ui-setup-row {

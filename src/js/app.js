@@ -67,6 +67,9 @@ export function initApp() {
   var lastPointerViewport = null; // {x,y}
   var crossOriginClickWarned = false;
   var mapFingerCursorProgressCircleEl = null;
+  var hamburgerOpen = false;
+  var viewToggleDockParent = null;
+  var viewToggleDockNextSibling = null;
 
   // Stereo calibration state
   var stereoMode = false;
@@ -175,6 +178,18 @@ export function initApp() {
     updateStereoUIVisibility();
   });
 
+  viewToggleDockParent = dom.viewToggleContainerEl.parentNode;
+  viewToggleDockNextSibling = dom.viewToggleContainerEl.nextSibling;
+
+  dom.hamburgerBtnEl.addEventListener('click', function () {
+    setHamburgerOpen(!hamburgerOpen);
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (hamburgerOpen) setHamburgerOpen(false);
+  });
+
   setStage(1);
   setViewMode('camera');
   setNextEnabled(false);
@@ -182,6 +197,7 @@ export function initApp() {
   updateUiSetupPanelVisibility();
   updateEdgeGuidesVisibility();
   updateGestureControlsVisibility();
+  updateHamburgerMenuVisibility();
   updateBackState();
   updateCameraSelectVisibility();
   renderCameraDeviceSelects();
@@ -291,6 +307,9 @@ export function initApp() {
     if (stage === 2 || stage === 3) {
       dom.apriltagToggleContainerEl.classList.add('hidden');
       dom.viewToggleContainerEl.classList.remove('hidden');
+    } else if (stage === 4) {
+      dom.apriltagToggleContainerEl.classList.add('hidden');
+      dom.viewToggleContainerEl.classList.add('hidden');
     } else {
       dom.apriltagToggleContainerEl.classList.remove('hidden');
       dom.viewToggleContainerEl.classList.add('hidden');
@@ -308,6 +327,10 @@ export function initApp() {
       dom.surfaceButtonsEl.classList.add('hidden');
       dom.viewToggleEl.checked = true;
       setViewMode('map');
+    } else if (stage === 4) {
+      dom.surfaceButtonsEl.classList.add('hidden');
+      dom.viewToggleEl.checked = true;
+      setViewMode('map');
     } else {
       dom.surfaceButtonsEl.classList.add('hidden');
       setViewMode('camera');
@@ -317,6 +340,7 @@ export function initApp() {
     updateEdgeGuidesVisibility();
     updateGestureControlsVisibility();
     updateStereoUIVisibility();
+    updateHamburgerMenuVisibility();
     updateBackState();
     updateCameraSelectVisibility();
   }
@@ -377,7 +401,7 @@ export function initApp() {
   }
 
   function onViewToggleChanged() {
-    if (stage !== 2 && stage !== 3) return;
+    if (stage !== 2 && stage !== 3 && stage !== 4) return;
     setViewMode(dom.viewToggleEl.checked ? 'map' : 'camera');
   }
 
@@ -387,12 +411,17 @@ export function initApp() {
     if (viewMode === 'map') {
       dom.mapViewEl.classList.remove('hidden');
       dom.mapViewEl.setAttribute('aria-hidden', 'false');
-      dom.viewToggleContainerEl.classList.add('toggle-floating');
+      if (stage !== 4) {
+        dom.viewToggleContainerEl.classList.add('toggle-floating');
+      } else {
+        dom.viewToggleContainerEl.classList.remove('toggle-floating');
+      }
       initMaptasticIfNeeded();
       // Keep processing running so we can track the index fingertip and project it onto the map.
       updateUiSetupPanelVisibility();
       updateEdgeGuidesVisibility();
       updateGestureControlsVisibility();
+      updateHamburgerMenuVisibility();
       return;
     }
 
@@ -403,8 +432,53 @@ export function initApp() {
     updateUiSetupPanelVisibility();
     updateEdgeGuidesVisibility();
     updateGestureControlsVisibility();
+    updateHamburgerMenuVisibility();
     resetStage3Gestures();
     resumeProcessingIfReady();
+  }
+
+  function updateHamburgerMenuVisibility() {
+    var visible = stage === 4;
+    dom.hamburgerMenuEl.classList.toggle('hidden', !visible);
+    dom.hamburgerMenuEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+
+    if (!visible) {
+      setHamburgerOpen(false);
+      undockViewToggle();
+      return;
+    }
+
+    dockViewToggle();
+    if (!hamburgerOpen) {
+      dom.viewToggleContainerEl.classList.add('hidden');
+      dom.viewToggleContainerEl.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  function dockViewToggle() {
+    if (!dom.hamburgerContentEl) return;
+    if (dom.viewToggleContainerEl.parentNode === dom.hamburgerContentEl) return;
+    dom.hamburgerContentEl.appendChild(dom.viewToggleContainerEl);
+    dom.viewToggleContainerEl.classList.add('hidden');
+    dom.viewToggleContainerEl.setAttribute('aria-hidden', 'true');
+  }
+
+  function undockViewToggle() {
+    if (!viewToggleDockParent) return;
+    if (dom.viewToggleContainerEl.parentNode !== dom.hamburgerContentEl) return;
+    viewToggleDockParent.insertBefore(dom.viewToggleContainerEl, viewToggleDockNextSibling);
+  }
+
+  function setHamburgerOpen(open) {
+    hamburgerOpen = !!open;
+    dom.hamburgerBtnEl.setAttribute('aria-expanded', hamburgerOpen ? 'true' : 'false');
+    dom.hamburgerPanelEl.classList.toggle('hidden', !hamburgerOpen);
+    dom.hamburgerPanelEl.setAttribute('aria-hidden', hamburgerOpen ? 'false' : 'true');
+
+    if (stage === 4) {
+      dom.viewToggleContainerEl.classList.toggle('hidden', !hamburgerOpen);
+      dom.viewToggleContainerEl.setAttribute('aria-hidden', hamburgerOpen ? 'false' : 'true');
+    }
   }
 
   function updateEdgeGuidesVisibility() {
@@ -478,21 +552,17 @@ export function initApp() {
   }
 
   function updateUiSetupPanelVisibility() {
-    var visible = stage === 3 && viewMode === 'map';
+    var overlayVisible = (stage === 3 || stage === 4) && viewMode === 'map';
+    var panelVisible = stage === 3 && viewMode === 'map';
 
-    if (visible) {
-      dom.uiSetupPanelEl.classList.remove('hidden');
-      dom.uiSetupPanelEl.setAttribute('aria-hidden', 'false');
-      dom.uiSetupOverlayEl.classList.remove('hidden');
-      dom.uiSetupOverlayEl.setAttribute('aria-hidden', 'false');
-      return;
-    }
+    dom.uiSetupOverlayEl.classList.toggle('hidden', !overlayVisible);
+    dom.uiSetupOverlayEl.setAttribute('aria-hidden', overlayVisible ? 'false' : 'true');
+    dom.uiSetupOverlayEl.classList.toggle('ui-setup-overlay--locked', stage === 4);
 
-    dom.uiSetupPanelEl.classList.add('hidden');
-    dom.uiSetupPanelEl.setAttribute('aria-hidden', 'true');
-    dom.uiSetupOverlayEl.classList.add('hidden');
-    dom.uiSetupOverlayEl.setAttribute('aria-hidden', 'true');
-    resetStage3Gestures();
+    dom.uiSetupPanelEl.classList.toggle('hidden', !panelVisible);
+    dom.uiSetupPanelEl.setAttribute('aria-hidden', panelVisible ? 'false' : 'true');
+
+    if (!overlayVisible) resetStage3Gestures();
   }
 
   function areSurfaceCornersReady() {

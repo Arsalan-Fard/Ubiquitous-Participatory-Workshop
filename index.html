@@ -122,7 +122,7 @@
         <div class="edge-guide edge-guide--left" aria-hidden="true"></div>
     </div>
 
-        <div id="mapView" class="map-view hidden" aria-hidden="true">
+    <div id="mapView" class="map-view hidden" aria-hidden="true">
         <div id="mapWarp" class="map-warp">
             <iframe
                 id="osmFrame"
@@ -144,6 +144,16 @@
                 <circle class="map-finger-cursor__progress" cx="18" cy="18" r="15.915" />
             </svg>
             <div class="map-finger-cursor__dot" aria-hidden="true"></div>
+        </div>
+    </div>
+
+    <div id="hamburgerMenu" class="hamburger-menu hidden" aria-hidden="true">
+        <button id="hamburgerBtn" class="hamburger-btn" type="button" aria-label="Open menu" aria-expanded="false">
+            ☰
+        </button>
+        <div id="hamburgerPanel" class="hamburger-panel hidden" aria-hidden="true" role="menu" aria-label="Menu">
+            <div class="hamburger-panel__title">Menu</div>
+            <div id="hamburgerContent" class="hamburger-panel__content"></div>
         </div>
     </div>
 
