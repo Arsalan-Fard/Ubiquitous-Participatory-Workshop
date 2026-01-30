@@ -826,10 +826,21 @@ h1 {
 }
 
 .ui-setup-overlay--locked .ui-label,
-.ui-setup-overlay--locked .ui-dot,
-.ui-setup-overlay--locked .ui-draw {
+.ui-setup-overlay--locked .ui-label {
     pointer-events: none !important;
     cursor: default !important;
+}
+
+.ui-dot.ui-sticker-instance {
+    width: 24px;
+    height: 24px;
+    border-width: 1px;
+}
+
+.ui-draw.ui-sticker-instance {
+    width: 24px;
+    height: 24px;
+    border-width: 1px;
 }
 
 .ui-setup-row {

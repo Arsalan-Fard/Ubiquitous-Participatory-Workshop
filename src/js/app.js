@@ -190,6 +190,28 @@ export function initApp() {
     if (hamburgerOpen) setHamburgerOpen(false);
   });
 
+  // Stage 4 sticker placement: dragging a sticker clones it (template stays put).
+  document.addEventListener('pointerdown', function (e) {
+    if (stage !== 4) return;
+    if (viewMode !== 'map') return;
+    if (!dom.uiSetupOverlayEl || dom.uiSetupOverlayEl.classList.contains('hidden')) return;
+    if (!e.target || !e.target.closest) return;
+
+    var stickerEl = e.target.closest('.ui-dot, .ui-draw');
+    if (!stickerEl) return;
+    if (!dom.uiSetupOverlayEl.contains(stickerEl)) return;
+    if (e.button !== 0) return;
+
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    var isInstance = stickerEl.classList.contains('ui-sticker-instance');
+    var dragEl = isInstance ? stickerEl : cloneSticker(stickerEl);
+    if (!dragEl) return;
+
+    startStickerDrag(dragEl, e);
+  }, true);
+
   setStage(1);
   setViewMode('camera');
   setNextEnabled(false);
@@ -1916,6 +1938,81 @@ function clamp01(value) {
   if (value < 0) return 0;
   if (value > 1) return 1;
   return value;
+}
+
+function cloneSticker(templateEl) {
+  if (!templateEl) return null;
+  var type = templateEl.dataset && templateEl.dataset.uiType ? templateEl.dataset.uiType : null;
+  if (type !== 'dot' && type !== 'draw') return null;
+
+  if (type === 'dot') {
+    var dotEl = document.createElement('div');
+    dotEl.className = 'ui-dot ui-sticker-instance';
+    dotEl.dataset.uiType = 'dot';
+    dotEl.dataset.color = templateEl.dataset && templateEl.dataset.color ? templateEl.dataset.color : (templateEl.style.background || '#ff3b30');
+    dotEl.style.background = dotEl.dataset.color;
+    dotEl.style.left = templateEl.style.left || '0px';
+    dotEl.style.top = templateEl.style.top || '0px';
+    templateEl.parentElement.appendChild(dotEl);
+    return dotEl;
+  }
+
+  // draw
+  var drawEl = document.createElement('canvas');
+  drawEl.className = 'ui-draw ui-sticker-instance';
+  drawEl.dataset.uiType = 'draw';
+  drawEl.dataset.color = templateEl.dataset && templateEl.dataset.color ? templateEl.dataset.color : '#2bb8ff';
+  drawEl.width = 24;
+  drawEl.height = 24;
+  drawEl.style.left = templateEl.style.left || '0px';
+  drawEl.style.top = templateEl.style.top || '0px';
+
+  // Copy pixels from template canvas if possible.
+  try {
+    var srcCanvas = templateEl;
+    var ctx = drawEl.getContext('2d');
+    if (ctx && srcCanvas && srcCanvas.width && srcCanvas.height) {
+      ctx.drawImage(srcCanvas, 0, 0, drawEl.width, drawEl.height);
+    }
+  } catch {}
+
+  templateEl.parentElement.appendChild(drawEl);
+  return drawEl;
+}
+
+function startStickerDrag(el, startEvent) {
+  if (!el || !startEvent) return;
+  var draggingClass = el.classList.contains('ui-dot') ? 'ui-dot--dragging' : 'ui-draw--dragging';
+
+  var rect = el.getBoundingClientRect();
+  var offsetX = startEvent.clientX - rect.left;
+  var offsetY = startEvent.clientY - rect.top;
+  var pointerId = startEvent.pointerId;
+
+  el.classList.add(draggingClass);
+  try { el.setPointerCapture(pointerId); } catch {}
+
+  function onMove(e) {
+    if (e.pointerId !== pointerId) return;
+    e.preventDefault();
+    var left = e.clientX - offsetX;
+    var top = e.clientY - offsetY;
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+  }
+
+  function onEnd(e) {
+    if (e.pointerId !== pointerId) return;
+    el.classList.remove(draggingClass);
+    try { el.releasePointerCapture(pointerId); } catch {}
+    document.removeEventListener('pointermove', onMove, true);
+    document.removeEventListener('pointerup', onEnd, true);
+    document.removeEventListener('pointercancel', onEnd, true);
+  }
+
+  document.addEventListener('pointermove', onMove, true);
+  document.addEventListener('pointerup', onEnd, true);
+  document.addEventListener('pointercancel', onEnd, true);
 }
 
 function clamp(value, min, max) {
