@@ -15,6 +15,64 @@ export function initUiSetup(options) {
   var currentDrawColor = '#2bb8ff';
   var currentNoteColor = '#ffc857';
 
+  // Stage 3 input mode / participants (AprilTag mode)
+  if (state.stage3InputMode !== 'hand' && state.stage3InputMode !== 'apriltag') {
+    state.stage3InputMode = state.apriltagEnabled ? 'apriltag' : 'hand';
+  }
+
+  var inputModeToggleLabel = document.createElement('label');
+  inputModeToggleLabel.className = 'toggle-inline ui-setup-detection-toggle';
+  inputModeToggleLabel.setAttribute('aria-label', 'Select input mode: Hand gestures or AprilTag');
+
+  var handModeLabelEl = document.createElement('span');
+  handModeLabelEl.className = 'toggle-inline-label';
+  handModeLabelEl.textContent = 'Hand';
+
+  var switchEl = document.createElement('span');
+  switchEl.className = 'switch';
+
+  var inputModeToggleEl = document.createElement('input');
+  inputModeToggleEl.type = 'checkbox';
+  inputModeToggleEl.checked = state.stage3InputMode === 'apriltag';
+  inputModeToggleEl.setAttribute('aria-label', 'Toggle AprilTag mode');
+
+  var sliderEl = document.createElement('span');
+  sliderEl.className = 'slider';
+  sliderEl.setAttribute('aria-hidden', 'true');
+
+  switchEl.appendChild(inputModeToggleEl);
+  switchEl.appendChild(sliderEl);
+
+  var apriltagModeLabelEl = document.createElement('span');
+  apriltagModeLabelEl.className = 'toggle-inline-label';
+  apriltagModeLabelEl.textContent = 'AprilTag';
+
+  inputModeToggleLabel.appendChild(handModeLabelEl);
+  inputModeToggleLabel.appendChild(switchEl);
+  inputModeToggleLabel.appendChild(apriltagModeLabelEl);
+  panelEl.appendChild(inputModeToggleLabel);
+
+  var participantsRowEl = document.createElement('div');
+  participantsRowEl.className = 'ui-setup-row hidden';
+  participantsRowEl.setAttribute('aria-hidden', 'true');
+
+  var participantsInputEl = document.createElement('input');
+  participantsInputEl.className = 'ui-setup-input ui-setup-input--narrow';
+  participantsInputEl.type = 'number';
+  participantsInputEl.min = '1';
+  participantsInputEl.max = '10';
+  participantsInputEl.inputMode = 'numeric';
+  participantsInputEl.placeholder = 'Participants (1-10)';
+  participantsInputEl.value = state.stage3ParticipantCount ? String(state.stage3ParticipantCount) : '';
+
+  participantsRowEl.appendChild(participantsInputEl);
+  panelEl.appendChild(participantsRowEl);
+
+  var participantSelectsRowEl = document.createElement('div');
+  participantSelectsRowEl.className = 'ui-setup-row ui-setup-row--wrap hidden';
+  participantSelectsRowEl.setAttribute('aria-hidden', 'true');
+  panelEl.appendChild(participantSelectsRowEl);
+
   var row = document.createElement('div');
   row.className = 'ui-setup-row';
 
@@ -34,6 +92,116 @@ export function initUiSetup(options) {
   row.appendChild(inputEl);
   row.appendChild(addBtn);
   panelEl.appendChild(row);
+
+  function setApriltagEnabled(enabled) {
+    state.stage3InputMode = enabled ? 'apriltag' : 'hand';
+
+    // Keep global Apriltag toggle in sync (used by app processing).
+    if (state.dom && state.dom.apriltagToggleEl) {
+      state.dom.apriltagToggleEl.checked = !!enabled;
+      try {
+        state.dom.apriltagToggleEl.dispatchEvent(new Event('change', { bubbles: true }));
+      } catch (e) { /* ignore */ }
+    } else {
+      state.apriltagEnabled = !!enabled;
+    }
+  }
+
+  function sanitizeParticipantCount(v) {
+    var n = parseInt(v, 10);
+    if (!isFinite(n) || n < 1) return 0;
+    if (n > 10) n = 10;
+    return n;
+  }
+
+  function renderParticipantSelects(count) {
+    participantSelectsRowEl.textContent = '';
+
+    if (!count) {
+      state.stage3ParticipantTagIds = [];
+      return;
+    }
+
+    // Ensure array has correct length
+    if (!Array.isArray(state.stage3ParticipantTagIds)) state.stage3ParticipantTagIds = [];
+    state.stage3ParticipantTagIds.length = count;
+
+    for (var i = 0; i < count; i++) {
+      var wrap = document.createElement('div');
+      wrap.className = 'ui-setup-participant';
+
+      var label = document.createElement('div');
+      label.className = 'ui-setup-participant__label';
+      label.textContent = 'P' + (i + 1);
+
+      var selectEl = document.createElement('select');
+      selectEl.className = 'ui-setup-select';
+      selectEl.setAttribute('aria-label', 'Participant ' + (i + 1) + ' AprilTag ID');
+
+      for (var tagId = 11; tagId <= 20; tagId++) {
+        var opt = document.createElement('option');
+        opt.value = String(tagId);
+        opt.textContent = String(tagId);
+        selectEl.appendChild(opt);
+      }
+
+      var current = parseInt(state.stage3ParticipantTagIds[i], 10);
+      if (!isFinite(current) || current < 11 || current > 20) {
+        current = 11 + i;
+        if (current > 20) current = 11;
+      }
+      state.stage3ParticipantTagIds[i] = current;
+      selectEl.value = String(current);
+
+      (function (index, sel) {
+        sel.addEventListener('change', function () {
+          var v = parseInt(sel.value, 10);
+          if (!isFinite(v)) return;
+          state.stage3ParticipantTagIds[index] = v;
+        });
+      })(i, selectEl);
+
+      wrap.appendChild(label);
+      wrap.appendChild(selectEl);
+      participantSelectsRowEl.appendChild(wrap);
+    }
+  }
+
+  function updateApriltagUiVisibility() {
+    var apriltagOn = !!inputModeToggleEl.checked;
+    participantsRowEl.classList.toggle('hidden', !apriltagOn);
+    participantsRowEl.setAttribute('aria-hidden', apriltagOn ? 'false' : 'true');
+    participantSelectsRowEl.classList.toggle('hidden', !apriltagOn);
+    participantSelectsRowEl.setAttribute('aria-hidden', apriltagOn ? 'false' : 'true');
+
+    if (!apriltagOn) return;
+
+    var count = sanitizeParticipantCount(participantsInputEl.value);
+    state.stage3ParticipantCount = count;
+    renderParticipantSelects(count);
+  }
+
+  inputModeToggleEl.addEventListener('change', function () {
+    var enabled = !!inputModeToggleEl.checked;
+    setApriltagEnabled(enabled);
+
+    // If enabling and count isn't set, default to 1 to show the selects immediately.
+    if (enabled && !sanitizeParticipantCount(participantsInputEl.value)) {
+      participantsInputEl.value = String(state.stage3ParticipantCount || 1);
+    }
+
+    updateApriltagUiVisibility();
+  });
+
+  participantsInputEl.addEventListener('input', function () {
+    var count = sanitizeParticipantCount(participantsInputEl.value);
+    state.stage3ParticipantCount = count;
+    renderParticipantSelects(count);
+  });
+
+  // Initialize visibility on first render
+  setApriltagEnabled(inputModeToggleEl.checked);
+  updateApriltagUiVisibility();
 
   var colorInputEl = document.createElement('input');
   colorInputEl.type = 'color';

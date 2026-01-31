@@ -576,6 +576,8 @@ export function initApp() {
     dom.video.srcObject = null;
     dom.video.classList.remove('hidden');
     clearOverlay(state.overlayCtx, dom.overlay);
+    updateApriltagHud(dom.apriltagHudEl, null, 0, 0);
+    updateApriltagHud(dom.apriltagHud2El, null, 0, 0);
     state.cameraStarting = false;
     state.cameraReady = false;
     updateLoadingMessage();
@@ -843,6 +845,7 @@ export function initApp() {
 
     var hands = [];
     var hands2 = [];
+    var imageData2 = null;
 
     // Hand detection camera 1
     if (state.handDetector) {
@@ -862,7 +865,7 @@ export function initApp() {
           var w2 = state.captureCanvas2.width;
           var h2 = state.captureCanvas2.height;
           state.captureCtx2.drawImage(video2, 0, 0, w2, h2);
-          var imageData2 = state.captureCtx2.getImageData(0, 0, w2, h2);
+          imageData2 = state.captureCtx2.getImageData(0, 0, w2, h2);
           hands2 = (await state.handDetector2.detect(imageData2.data, w2, h2)) || [];
 
           if (hands2.length > 0) {
@@ -1020,7 +1023,8 @@ export function initApp() {
 
     // Map finger dots (show in Stage 2, 3, and 4)
     var isMapViewWithHomography = (state.stage === 2 || state.stage === 3 || state.stage === 4) && state.viewMode === 'map';
-    if (isMapViewWithHomography && state.surfaceHomography && usableIndexTipPoints && usableIndexTipPoints.length > 0) {
+    var allowFingerDots = !(state.stage3InputMode === 'apriltag' && (state.stage === 3 || state.stage === 4));
+    if (allowFingerDots && isMapViewWithHomography && state.surfaceHomography && usableIndexTipPoints && usableIndexTipPoints.length > 0) {
       updateMapFingerDots(usableIndexTipPoints);
     } else {
       setMapFingerDotsVisible(false);
@@ -1028,22 +1032,130 @@ export function initApp() {
 
     // Gesture handling (dwell-to-click and pinch-to-drag for Stage 3 and 4)
     if ((state.stage === 3 || state.stage === 4) && state.viewMode === 'map') {
-      handleStage3Gestures(usableIndexTipPoints);
+      if (state.stage3InputMode === 'apriltag') {
+        var apriltagPoints = [];
+        if (Array.isArray(state.stage3ParticipantTagIds)) {
+          for (var t = 0; t < state.stage3ParticipantTagIds.length; t++) {
+            var tagId = parseInt(state.stage3ParticipantTagIds[t], 10);
+            if (!isFinite(tagId)) continue;
+            var touchInfo = state.apriltagTouchById && state.apriltagTouchById[tagId] ? state.apriltagTouchById[tagId] : null;
+            apriltagPoints.push({
+              handId: String(tagId),
+              isApriltag: true,
+              tagId: tagId,
+              isTouch: touchInfo ? !!touchInfo.isTouch : null,
+              // Make it behave like "pinching" so pinch-hold UI can be reused.
+              pinchDistance: 0,
+              pinchRatio: 0
+            });
+          }
+        }
+        handleStage3Gestures(apriltagPoints);
+      } else {
+        handleStage3Gestures(usableIndexTipPoints);
+      }
     } else {
       resetStage3Gestures();
     }
 
-    // AprilTag detection
-    if (state.apriltagEnabled && state.detector && state.viewMode === 'camera') {
+    // AprilTag detection (keep latest results for map debug dots and AprilTag gestures)
+    if (state.apriltagEnabled && state.detector) {
       try {
         var grayscale = rgbaToGrayscale(imageData);
         var detections = await state.detector.detect(grayscale, width, height);
-        if (detections && detections.length > 0) {
-          drawDetections(state.overlayCtx, detections);
+        state.lastApriltagDetections = detections || [];
+
+        if (state.viewMode === 'camera') {
+          updateApriltagHud(dom.apriltagHudEl, state.lastApriltagDetections, width, height);
+          // Keep canvas drawing too (useful on platforms where it renders correctly).
+          if (detections && detections.length > 0) {
+            drawDetections(state.overlayCtx, detections);
+          }
+        } else {
+          updateApriltagHud(dom.apriltagHudEl, null, width, height);
+        }
+
+        // Stereo AprilTag touch/hover classification (cancel pinch while hovering)
+        if (state.stage3InputMode === 'apriltag' && state.stereoMode && state.stereoCalibrationReady && imageData2) {
+          try {
+            var grayscale2 = rgbaToGrayscale(imageData2);
+            var detections2 = await state.detector.detect(grayscale2, imageData2.width, imageData2.height);
+            state.lastApriltagDetections2 = detections2 || [];
+            if (state.viewMode === 'camera') {
+              updateApriltagHud(dom.apriltagHud2El, state.lastApriltagDetections2, imageData2.width, imageData2.height);
+            } else {
+              updateApriltagHud(dom.apriltagHud2El, null, imageData2.width, imageData2.height);
+            }
+
+            var touchById = {};
+
+            var det1ById = {};
+            for (var di1 = 0; di1 < (state.lastApriltagDetections || []).length; di1++) {
+              var d1 = state.lastApriltagDetections[di1];
+              if (!d1) continue;
+              var id1 = typeof d1.id === 'number' ? d1.id : parseInt(d1.id, 10);
+              if (!isFinite(id1) || !d1.center) continue;
+              det1ById[id1] = d1;
+            }
+
+            var det2ById = {};
+            for (var di2 = 0; di2 < (state.lastApriltagDetections2 || []).length; di2++) {
+              var d2 = state.lastApriltagDetections2[di2];
+              if (!d2) continue;
+              var id2 = typeof d2.id === 'number' ? d2.id : parseInt(d2.id, 10);
+              if (!isFinite(id2) || !d2.center) continue;
+              det2ById[id2] = d2;
+            }
+
+            if (Array.isArray(state.stage3ParticipantTagIds)) {
+              for (var ti = 0; ti < state.stage3ParticipantTagIds.length; ti++) {
+                var tagId2 = parseInt(state.stage3ParticipantTagIds[ti], 10);
+                if (!isFinite(tagId2)) continue;
+                var a = det1ById[tagId2] || null;
+                var b = det2ById[tagId2] || null;
+
+                // Require both cameras for touch/hover; missing is treated as not-touch (cancels pinch).
+                if (!a || !b) {
+                  touchById[tagId2] = { isTouch: false, z: null };
+                  continue;
+                }
+
+                var wp = triangulatePoint(state.stereoProjectionMatrix1, state.stereoProjectionMatrix2, a.center, b.center);
+                if (!wp) {
+                  touchById[tagId2] = { isTouch: false, z: null };
+                  continue;
+                }
+
+                var isTouch = Math.abs(wp.z) < state.touchZThreshold;
+                touchById[tagId2] = { isTouch: isTouch, z: wp.z };
+              }
+            }
+
+            state.apriltagTouchById = touchById;
+          } catch (err2) {
+            state.apriltagTouchById = null;
+            updateApriltagHud(dom.apriltagHud2El, null, imageData2 ? imageData2.width : 0, imageData2 ? imageData2.height : 0);
+          }
+        } else {
+          state.lastApriltagDetections2 = null;
+          state.apriltagTouchById = null;
+          updateApriltagHud(dom.apriltagHud2El, null, imageData2 ? imageData2.width : 0, imageData2 ? imageData2.height : 0);
         }
       } catch (err) {
         console.error('AprilTag detection error:', err);
       }
+    } else {
+      if (state.viewMode === 'camera') {
+        updateApriltagHud(dom.apriltagHudEl, null, width, height);
+        updateApriltagHud(dom.apriltagHud2El, null, imageData2 ? imageData2.width : 0, imageData2 ? imageData2.height : 0);
+      }
+    }
+
+    // Map AprilTag debug dots for configured participant IDs
+    if (isMapViewWithHomography) {
+      updateMapApriltagDots(state.lastApriltagDetections || []);
+    } else {
+      setMapApriltagDotsVisible(false);
     }
 
     state.animationId = requestAnimationFrame(processFrame);
@@ -1093,5 +1205,119 @@ export function initApp() {
     }
 
     setMapFingerDotsVisible(anyVisible);
+  }
+
+  function setMapApriltagDotsVisible(visible) {
+    if (!dom.mapApriltagDotsEl) return;
+    dom.mapApriltagDotsEl.classList.toggle('hidden', !visible);
+    dom.mapApriltagDotsEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  }
+
+  function updateMapApriltagDots(detections) {
+    if (!dom.mapApriltagDotsEl) { return; }
+    if (!state.surfaceHomography) { setMapApriltagDotsVisible(false); return; }
+    if (state.stage3InputMode !== 'apriltag') { setMapApriltagDotsVisible(false); return; }
+    if (!Array.isArray(state.stage3ParticipantTagIds) || state.stage3ParticipantTagIds.length < 1) { setMapApriltagDotsVisible(false); return; }
+
+    var w = dom.mapWarpEl.offsetWidth;
+    var h = dom.mapWarpEl.offsetHeight;
+    if (!w || !h) { setMapApriltagDotsVisible(false); return; }
+
+    var required = state.stage3ParticipantTagIds.length;
+    while (dom.mapApriltagDotsEl.children.length < required) {
+      var dotEl = document.createElement('div');
+      dotEl.className = 'map-finger-dot';
+      dom.mapApriltagDotsEl.appendChild(dotEl);
+    }
+    while (dom.mapApriltagDotsEl.children.length > required) {
+      dom.mapApriltagDotsEl.removeChild(dom.mapApriltagDotsEl.lastChild);
+    }
+
+    // Index detections by id for quick lookup
+    var detById = {};
+    if (Array.isArray(detections)) {
+      for (var i = 0; i < detections.length; i++) {
+        var d = detections[i];
+        if (!d) continue;
+        var id = typeof d.id === 'number' ? d.id : parseInt(d.id, 10);
+        if (!isFinite(id)) continue;
+        detById[id] = d;
+      }
+    }
+
+    var anyVisible = false;
+    var maxExtrapolation = 1.5;
+
+    for (var j = 0; j < required; j++) {
+      var tagId = parseInt(state.stage3ParticipantTagIds[j], 10);
+      var dot = dom.mapApriltagDotsEl.children[j];
+      var det = isFinite(tagId) ? detById[tagId] : null;
+
+      if (!det || !det.center) {
+        dot.classList.add('hidden');
+        continue;
+      }
+
+      var uv = applyHomography(state.surfaceHomography, det.center.x, det.center.y);
+      if (!uv || uv.x < -maxExtrapolation || uv.x > 1 + maxExtrapolation || uv.y < -maxExtrapolation || uv.y > 1 + maxExtrapolation) {
+        dot.classList.add('hidden');
+        continue;
+      }
+
+      var x = uv.x * w;
+      var y = uv.y * h;
+      dot.style.transform = 'translate(' + (x - 7) + 'px, ' + (y - 7) + 'px)';
+      dot.classList.remove('hidden');
+      dot.dataset.tagId = String(tagId);
+      anyVisible = true;
+    }
+
+    setMapApriltagDotsVisible(anyVisible);
+  }
+
+  function updateApriltagHud(containerEl, detections, w, h) {
+    if (!containerEl) return;
+
+    var visible = state.viewMode === 'camera' && state.cameraReady && Array.isArray(detections) && detections.length > 0 && w > 0 && h > 0;
+    containerEl.classList.toggle('hidden', !visible);
+    containerEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+
+    if (!visible) {
+      containerEl.textContent = '';
+      return;
+    }
+
+    // Render as SVG so it overlays video reliably (canvas overlays can be flaky on some platforms).
+    var svg = containerEl.querySelector('svg');
+    if (!svg) {
+      svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      containerEl.textContent = '';
+      containerEl.appendChild(svg);
+    }
+
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    svg.setAttribute('preserveAspectRatio', 'none');
+
+    var parts = [];
+    for (var i = 0; i < detections.length; i++) {
+      var d = detections[i];
+      if (!d || !d.corners || d.corners.length < 4 || !d.center) continue;
+
+      var c = d.corners;
+      var path = 'M ' + c[0].x + ' ' + c[0].y +
+        ' L ' + c[1].x + ' ' + c[1].y +
+        ' L ' + c[2].x + ' ' + c[2].y +
+        ' L ' + c[3].x + ' ' + c[3].y + ' Z';
+
+      parts.push('<path d="' + path + '" fill="none" stroke="#00ff00" stroke-width="3"/>');
+      for (var j = 0; j < c.length; j++) {
+        parts.push('<circle cx="' + c[j].x + '" cy="' + c[j].y + '" r="5" fill="#ff0000"/>');
+      }
+
+      var id = (typeof d.id === 'number') ? d.id : String(d.id || '');
+      parts.push('<text x="' + d.center.x + '" y="' + d.center.y + '" text-anchor="middle" dominant-baseline="middle" font-size="24" font-weight="700" fill="#00ff00">ID: ' + id + '</text>');
+    }
+
+    svg.innerHTML = parts.join('');
   }
 }

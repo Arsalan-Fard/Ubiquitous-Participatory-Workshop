@@ -24,17 +24,21 @@ var nextPointerId = 100; // Start at 100 to avoid conflicts with real pointer ID
 // Get all visible finger dot positions in viewport coordinates
 export function getAllMapPointerViewportPoints() {
   var dom = state.dom;
-  if (!dom.mapFingerDotsEl || dom.mapFingerDotsEl.classList.contains('hidden')) return [];
-  if (!dom.mapFingerDotsEl.children || dom.mapFingerDotsEl.children.length < 1) return [];
+
+  var useApriltags = state.stage3InputMode === 'apriltag' && dom.mapApriltagDotsEl && !dom.mapApriltagDotsEl.classList.contains('hidden');
+  var dotsEl = useApriltags ? dom.mapApriltagDotsEl : dom.mapFingerDotsEl;
+
+  if (!dotsEl || dotsEl.classList.contains('hidden')) return [];
+  if (!dotsEl.children || dotsEl.children.length < 1) return [];
 
   var points = [];
-  for (var i = 0; i < dom.mapFingerDotsEl.children.length; i++) {
-    var dotEl = dom.mapFingerDotsEl.children[i];
+  for (var i = 0; i < dotsEl.children.length; i++) {
+    var dotEl = dotsEl.children[i];
     if (!dotEl || dotEl.classList.contains('hidden')) continue;
 
     var rect = dotEl.getBoundingClientRect();
     // Use handId from DOM element for stable identity across frames
-    var handId = dotEl.dataset.handId || ('hand' + i);
+    var handId = dotEl.dataset.handId || dotEl.dataset.tagId || ('hand' + i);
     points.push({
       index: i,
       handId: handId,
@@ -65,6 +69,8 @@ function getPointerState(handIndex) {
       dragTarget: null,
       dragPointerId: nextPointerId++,
       lastPointer: null,
+      prevPointer: null,
+      prevPointerTimeMs: 0,
       cursorEl: null,
       isDrawing: false  // Multi-hand drawing state
     };
@@ -143,13 +149,23 @@ export function handleStage3Gestures(usableIndexTipPoints) {
 // Process gestures for a single pointer
 function processPointerGesture(handIndex, pointer, handData) {
   var ps = getPointerState(handIndex);
+  ps.prevPointer = ps.lastPointer;
   ps.lastPointer = pointer;
 
   var pinchDistance = handData && typeof handData.pinchDistance === 'number' ? handData.pinchDistance : null;
   var pinchRatio = handData && typeof handData.pinchRatio === 'number' ? handData.pinchRatio : null;
+  var isApriltag = !!(handData && handData.isApriltag);
 
   var isPinching = false;
-  if (pinchDistance !== null) {
+  if (isApriltag) {
+    // AprilTags don't "pinch"; we emulate pinch-hold by requiring a stable, touching tag.
+    if (state.stereoMode && state.stereoCalibrationReady) {
+      isPinching = !!(handData && handData.isTouch === true);
+    } else {
+      // No touch/hover signal available; treat tracking as touch.
+      isPinching = true;
+    }
+  } else if (pinchDistance !== null) {
     isPinching = pinchDistance <= state.pinchDistanceThresholdPx;
   } else if (pinchRatio !== null) {
     isPinching = pinchRatio <= state.PINCH_RATIO_THRESHOLD;
@@ -157,6 +173,46 @@ function processPointerGesture(handIndex, pointer, handData) {
 
   var nowMs = performance.now();
   var threshold = state.holdStillThresholdPx;
+
+  if (isApriltag) {
+    // Cancel pinch on hover (not-touch) when stereo touch is available.
+    if (!isPinching) {
+      ps.pinchStartMs = 0;
+      ps.pinchAnchor = null;
+      ps.dwellStartMs = 0;
+      ps.dwellAnchor = null;
+      ps.dwellFired = false;
+
+      if (ps.dragActive) {
+        endDragForPointer(ps, pointer);
+      }
+      if (ps.isDrawing) {
+        ps.isDrawing = false;
+        stopDrawingForPointer(ps.dragPointerId);
+      }
+
+      updatePointerCursor(handIndex, pointer, 0, null);
+      ps.prevPointerTimeMs = nowMs;
+      return;
+    }
+
+    // Sudden movement cancels pinch/drag immediately.
+    if (ps.prevPointer && ps.prevPointerTimeMs) {
+      var dt = Math.max(1, nowMs - ps.prevPointerTimeMs);
+      var d = distance(pointer, ps.prevPointer);
+      if (dt <= 200 && d > threshold * 3) {
+        if (ps.dragActive) {
+          endDragForPointer(ps, pointer);
+        }
+        if (ps.isDrawing) {
+          ps.isDrawing = false;
+          stopDrawingForPointer(ps.dragPointerId);
+        }
+        ps.pinchAnchor = pointer;
+        ps.pinchStartMs = nowMs;
+      }
+    }
+  }
 
   // Pinch-to-drag (arm by holding pinch)
   if (isPinching) {
@@ -178,8 +234,9 @@ function processPointerGesture(handIndex, pointer, handData) {
           x: ps.pinchAnchor.x + (pointer.x - ps.pinchAnchor.x) * pullFactor,
           y: ps.pinchAnchor.y + (pointer.y - ps.pinchAnchor.y) * pullFactor
         };
-        // Only reset timer if movement is significantly beyond threshold
-        if (pinchDist > threshold * 2) {
+        // Only reset timer if movement is significantly beyond threshold (hands).
+        // For AprilTags, timer reset is handled by the "sudden movement" check above.
+        if (!isApriltag && pinchDist > threshold * 2) {
           ps.pinchStartMs = nowMs;
         }
       }
@@ -206,6 +263,7 @@ function processPointerGesture(handIndex, pointer, handData) {
     if (ps.isDrawing) {
       continueDrawingAtPoint(ps.dragPointerId, pointer.x, pointer.y);
     }
+    ps.prevPointerTimeMs = nowMs;
     return;
   }
 
@@ -215,6 +273,7 @@ function processPointerGesture(handIndex, pointer, handData) {
   if (ps.dragActive) {
     endDragForPointer(ps, pointer);
     updatePointerCursor(handIndex, pointer, 0, null);
+    ps.prevPointerTimeMs = nowMs;
     return;
   }
 
@@ -222,16 +281,25 @@ function processPointerGesture(handIndex, pointer, handData) {
     ps.isDrawing = false;
     stopDrawingForPointer(ps.dragPointerId);
     updatePointerCursor(handIndex, pointer, 0, null);
+    ps.prevPointerTimeMs = nowMs;
     return;
   }
 
   // Dwell-to-click with rolling anchor for jitter tolerance
+  if (isApriltag) {
+    // In AprilTag mode we don't dwell-click; only pinch-hold is used.
+    updatePointerCursor(handIndex, pointer, 0, null);
+    ps.prevPointerTimeMs = nowMs;
+    return;
+  }
+
   if (!ps.dwellAnchor) {
     // First frame - set anchor
     ps.dwellAnchor = pointer;
     ps.dwellStartMs = nowMs;
     ps.dwellFired = false;
     updatePointerCursor(handIndex, pointer, 0, null);
+    ps.prevPointerTimeMs = nowMs;
     return;
   }
 
@@ -248,6 +316,7 @@ function processPointerGesture(handIndex, pointer, handData) {
       ps.dwellStartMs = nowMs;
       ps.dwellFired = false;
       updatePointerCursor(handIndex, pointer, 0, null);
+      ps.prevPointerTimeMs = nowMs;
       return;
     }
   }
@@ -262,6 +331,7 @@ function processPointerGesture(handIndex, pointer, handData) {
       ps.dwellStartMs = nowMs;
     }
     updatePointerCursor(handIndex, pointer, 0, null);
+    ps.prevPointerTimeMs = nowMs;
     return;
   }
 
@@ -276,6 +346,8 @@ function processPointerGesture(handIndex, pointer, handData) {
       updatePointerCursor(handIndex, pointer, 0, null);
     }
   }
+
+  ps.prevPointerTimeMs = nowMs;
 }
 
 // Drag functions per pointer

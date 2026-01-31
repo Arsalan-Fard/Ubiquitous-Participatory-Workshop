@@ -159,6 +159,22 @@ h1 {
     z-index: 10;
 }
 
+.apriltag-hud {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 12;
+}
+
+.apriltag-hud svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+}
+
 .loading {
     position: absolute;
     display: flex;
@@ -914,6 +930,46 @@ h1 {
     color: #fff;
     outline: none;
     font-size: 14px;
+}
+
+.ui-setup-input.ui-setup-input--narrow {
+    flex: 0 0 auto;
+    width: 180px;
+}
+
+.ui-setup-row.ui-setup-row--wrap {
+    flex-wrap: wrap;
+    align-items: flex-start;
+}
+
+.ui-setup-select {
+    height: 44px;
+    padding: 0 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    outline: none;
+    font-size: 14px;
+}
+
+.ui-setup-participant {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ui-setup-participant__label {
+    font-size: 12px;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.85);
+    min-width: 22px;
+    text-align: right;
+}
+
+.ui-setup-detection-toggle {
+    margin-top: 0;
+    justify-content: flex-start;
 }
 
 .ui-setup-input::placeholder {

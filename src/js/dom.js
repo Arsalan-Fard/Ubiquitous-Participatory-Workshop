@@ -12,7 +12,9 @@ var DOM_IDS = [
   'cameraSourceModal', 'cameraSourceInput', 'cameraSourceSaveBtn', 'cameraSourceCancelBtn',
   'apriltagToggleContainer', 'apriltagToggle',
   'viewToggleContainer', 'viewToggle',
+  'apriltagHud', 'apriltagHud2',
   'mapView', 'mapWarp', 'leafletMap', 'mapFingerDots',
+  'mapApriltagDots',
   'hamburgerMenu', 'hamburgerBtn', 'hamburgerPanel', 'hamburgerContent',
   'uiSetupOverlay', 'uiSetupPanel', 'mapFingerCursor', 'edgeGuides', 'error'
 ];
@@ -55,10 +57,13 @@ var ID_TO_PROP = {
   'apriltagToggle': 'apriltagToggleEl',
   'viewToggleContainer': 'viewToggleContainerEl',
   'viewToggle': 'viewToggleEl',
+  'apriltagHud': 'apriltagHudEl',
+  'apriltagHud2': 'apriltagHud2El',
   'mapView': 'mapViewEl',
   'mapWarp': 'mapWarpEl',
   'leafletMap': 'leafletMapEl',
   'mapFingerDots': 'mapFingerDotsEl',
+  'mapApriltagDots': 'mapApriltagDotsEl',
   'hamburgerMenu': 'hamburgerMenuEl',
   'hamburgerBtn': 'hamburgerBtnEl',
   'hamburgerPanel': 'hamburgerPanelEl',

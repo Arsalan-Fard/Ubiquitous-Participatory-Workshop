@@ -98,6 +98,16 @@ export var state = {
   stage4ActiveStroke: null,
   stage4DrawLayer: null,
 
+  // Stage 3 participant setup (AprilTag mode)
+  stage3InputMode: 'hand', // 'hand' | 'apriltag'
+  stage3ParticipantCount: 0,
+  stage3ParticipantTagIds: [],
+
+  // AprilTag detections (latest frame)
+  lastApriltagDetections: null,
+  lastApriltagDetections2: null,
+  apriltagTouchById: null,
+
   // Leaflet/Maptastic
   leafletGlobal: null,
   leafletMap: null,

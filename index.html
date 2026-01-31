@@ -15,12 +15,14 @@
                 <div class="video-container-label">Camera 1</div>
                 <video id="video" autoplay playsinline></video>
                 <canvas id="overlay"></canvas>
+                <div id="apriltagHud" class="apriltag-hud hidden" aria-hidden="true"></div>
                 <div id="loading" class="loading hidden" role="status" aria-live="polite">Loading...</div>
             </div>
             <div class="video-container hidden" id="videoContainer2">
                 <div class="video-container-label">Camera 2</div>
                 <video id="video2" autoplay playsinline></video>
                 <canvas id="overlay2"></canvas>
+                <div id="apriltagHud2" class="apriltag-hud hidden" aria-hidden="true"></div>
             </div>
         </div>
         <div id="gestureControls" class="gesture-controls hidden" aria-hidden="true">
@@ -128,9 +130,10 @@
         <div class="edge-guide edge-guide--left" aria-hidden="true"></div>
     </div>
 
-    <div id="mapView" class="map-view hidden" aria-hidden="true">
-        <div id="mapWarp" class="map-warp">
+        <div id="mapView" class="map-view hidden" aria-hidden="true">
+            <div id="mapWarp" class="map-warp">
             <div id="leafletMap" class="leaflet-map" aria-label="Map"></div>
+            <div id="mapApriltagDots" class="map-finger-dots hidden" aria-hidden="true"></div>
             <div id="mapFingerDots" class="map-finger-dots hidden" aria-hidden="true"></div>
         </div>
         <div id="uiSetupOverlay" class="ui-setup-overlay hidden" aria-hidden="true"></div>
