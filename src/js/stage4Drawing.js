@@ -597,6 +597,8 @@ export function cloneSticker(templateEl) {
     if (templateIconEl && templateIconEl.textContent) iconEl.textContent = templateIconEl.textContent;
     noteEl.appendChild(iconEl);
 
+    noteEl.classList.toggle('ui-note--sticker', !!String(noteEl.dataset.noteText || '').trim());
+
     templateEl.parentElement.appendChild(noteEl);
     setupNoteSticker(noteEl);
     return noteEl;
@@ -638,6 +640,7 @@ function setupNoteSticker(noteEl) {
 
 function expandNoteSticker(noteEl) {
   if (noteEl.dataset.expanded === 'true') return;
+  noteEl.classList.remove('ui-note--sticker');
   noteEl.dataset.expanded = 'true';
   noteEl.classList.add('ui-note--expanded');
 
@@ -706,6 +709,9 @@ function collapseNoteSticker(noteEl, savedText) {
   if (iconEl && savedText) {
     iconEl.textContent = '📝✓';
   }
+
+  var hasText = !!String(noteEl.dataset.noteText || '').trim();
+  noteEl.classList.toggle('ui-note--sticker', hasText);
 }
 
 // Start dragging a sticker

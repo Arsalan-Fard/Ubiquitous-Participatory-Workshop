@@ -357,6 +357,7 @@ export function initUiSetup(options) {
 
   function expandNote(noteEl) {
     if (noteEl.dataset.expanded === 'true') return;
+    noteEl.classList.remove('ui-note--sticker');
     noteEl.dataset.expanded = 'true';
     noteEl.classList.add('ui-note--expanded');
 
@@ -428,6 +429,9 @@ export function initUiSetup(options) {
     if (iconEl && savedText) {
       iconEl.textContent = '📝✓';
     }
+
+    var hasText = !!String(noteEl.dataset.noteText || '').trim();
+    noteEl.classList.toggle('ui-note--sticker', hasText);
   }
 
   function exportToJson() {
