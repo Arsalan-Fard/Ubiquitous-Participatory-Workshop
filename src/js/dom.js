@@ -14,7 +14,7 @@ var DOM_IDS = [
   'viewToggleContainer', 'viewToggle',
   'mapView', 'mapWarp', 'leafletMap', 'mapFingerDots',
   'hamburgerMenu', 'hamburgerBtn', 'hamburgerPanel', 'hamburgerContent',
-  'mapHint', 'uiSetupOverlay', 'uiSetupPanel', 'mapFingerCursor', 'edgeGuides', 'error'
+  'uiSetupOverlay', 'uiSetupPanel', 'mapFingerCursor', 'edgeGuides', 'error'
 ];
 
 // Mapping from camelCase property names to element IDs
@@ -63,7 +63,6 @@ var ID_TO_PROP = {
   'hamburgerBtn': 'hamburgerBtnEl',
   'hamburgerPanel': 'hamburgerPanelEl',
   'hamburgerContent': 'hamburgerContentEl',
-  'mapHint': 'mapHintEl',
   'uiSetupOverlay': 'uiSetupOverlayEl',
   'uiSetupPanel': 'uiSetupPanelEl',
   'mapFingerCursor': 'mapFingerCursorEl',

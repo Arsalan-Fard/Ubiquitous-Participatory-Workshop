@@ -553,8 +553,6 @@ export function initMaptasticIfNeeded() {
 
   try {
     new maptasticGlobal.Maptastic(dom.mapWarpEl.id);
-    dom.mapHintEl.classList.remove('hidden');
-    dom.mapHintEl.setAttribute('aria-hidden', 'false');
   } catch (err) {
     console.error('Failed to initialize Maptastic:', err);
   }

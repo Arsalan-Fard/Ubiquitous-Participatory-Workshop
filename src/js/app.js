@@ -135,13 +135,8 @@ export function initApp() {
   state.viewToggleDockParent = dom.viewToggleContainerEl.parentNode;
   state.viewToggleDockNextSibling = dom.viewToggleContainerEl.nextSibling;
 
-  dom.hamburgerBtnEl.addEventListener('click', function() {
-    setHamburgerOpen(!state.hamburgerOpen);
-  });
-
   document.addEventListener('keydown', function(e) {
     if (e.key !== 'Escape') return;
-    if (state.hamburgerOpen) setHamburgerOpen(false);
     if (state.stage4DrawMode) setStage4DrawMode(false);
   });
 
@@ -341,12 +336,9 @@ export function initApp() {
     dom.pageTitleEl.textContent = titles[newStage] || '';
     document.title = titles[newStage] || '';
 
-    if (newStage === 2 || newStage === 3) {
+    if (newStage === 2 || newStage === 3 || newStage === 4) {
       dom.apriltagToggleContainerEl.classList.add('hidden');
       dom.viewToggleContainerEl.classList.remove('hidden');
-    } else if (newStage === 4) {
-      dom.apriltagToggleContainerEl.classList.add('hidden');
-      dom.viewToggleContainerEl.classList.add('hidden');
     } else {
       dom.apriltagToggleContainerEl.classList.remove('hidden');
       dom.viewToggleContainerEl.classList.add('hidden');
@@ -398,7 +390,7 @@ export function initApp() {
     if (state.viewMode === 'map') {
       dom.mapViewEl.classList.remove('hidden');
       dom.mapViewEl.setAttribute('aria-hidden', 'false');
-      dom.viewToggleContainerEl.classList.toggle('toggle-floating', state.stage !== 4);
+      dom.viewToggleContainerEl.classList.add('toggle-floating');
       initMaptasticIfNeeded();
       initLeafletIfNeeded();
       updateUiSetupPanelVisibility();
@@ -412,7 +404,7 @@ export function initApp() {
     } else {
       dom.mapViewEl.classList.add('hidden');
       dom.mapViewEl.setAttribute('aria-hidden', 'true');
-      dom.viewToggleContainerEl.classList.remove('toggle-floating');
+      dom.viewToggleContainerEl.classList.add('toggle-floating');
       setMapFingerDotsVisible(false);
       updateUiSetupPanelVisibility();
       updateEdgeGuidesVisibility();
@@ -464,21 +456,17 @@ export function initApp() {
   }
 
   function updateHamburgerMenuVisibility() {
-    var visible = state.stage === 4;
-    dom.hamburgerMenuEl.classList.toggle('hidden', !visible);
-    dom.hamburgerMenuEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    // Hamburger menu removed; keep DOM hidden and ensure view toggle is in its original place.
+    if (dom.hamburgerMenuEl) {
+      dom.hamburgerMenuEl.classList.add('hidden');
+      dom.hamburgerMenuEl.setAttribute('aria-hidden', 'true');
+    }
+    setHamburgerOpen(false);
+    undockViewToggle();
 
-    if (!visible) {
-      setHamburgerOpen(false);
-      undockViewToggle();
+    // Avoid sticky drawing mode outside Stage 4.
+    if (state.stage !== 4 && state.stage4DrawMode) {
       setStage4DrawMode(false);
-      updateStage4MapInteractivity();
-    } else {
-      dockViewToggle();
-      if (!state.hamburgerOpen) {
-        dom.viewToggleContainerEl.classList.add('hidden');
-        dom.viewToggleContainerEl.setAttribute('aria-hidden', 'true');
-      }
       updateStage4MapInteractivity();
     }
   }
@@ -500,11 +488,6 @@ export function initApp() {
     dom.hamburgerBtnEl.setAttribute('aria-expanded', state.hamburgerOpen ? 'true' : 'false');
     dom.hamburgerPanelEl.classList.toggle('hidden', !state.hamburgerOpen);
     dom.hamburgerPanelEl.setAttribute('aria-hidden', state.hamburgerOpen ? 'false' : 'true');
-
-    if (state.stage === 4) {
-      dom.viewToggleContainerEl.classList.toggle('hidden', !state.hamburgerOpen);
-      dom.viewToggleContainerEl.setAttribute('aria-hidden', state.hamburgerOpen ? 'false' : 'true');
-    }
   }
 
   // ============== Camera Management ==============

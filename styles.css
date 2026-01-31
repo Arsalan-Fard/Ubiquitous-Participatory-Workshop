@@ -1234,19 +1234,4 @@ h1 {
     border-width: 1px;
 }
 
-.map-hint {
-    position: fixed;
-    top: 16px;
-    right: 16px;
-    z-index: 70;
-    padding: 10px 12px;
-    border-radius: 999px;
-    background: rgba(0, 0, 0, 0.55);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    color: #ddd;
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.2px;
-    pointer-events: none;
-    backdrop-filter: blur(8px);
-}
+/* Removed: maptastic corner editing hint (mapHint). */
