@@ -11,6 +11,9 @@ import { state } from './state.js';
 // Each entry: { color, isDrawing, lastContainerPt, activeStroke, buttonEl }
 var handDrawStates = {};
 
+// Sticker mapping sync loop (Stage 3/4 map view)
+var stickerSyncRafId = 0;
+
 // Get or create drawing state for a pointer
 function getHandDrawState(pointerId) {
   if (!handDrawStates[pointerId]) {
@@ -165,6 +168,109 @@ export function stage4LatLngFromClientCoords(clientX, clientY) {
     return state.leafletMap.containerPointToLatLng(pt);
   } catch (err) {
     return null;
+  }
+}
+
+function stage4ClientCoordsFromLatLng(lat, lng) {
+  if (!state.leafletMap) return null;
+  var dom = state.dom;
+
+  try {
+    var ll = (state.leafletGlobal && state.leafletGlobal.latLng) ? state.leafletGlobal.latLng(lat, lng) : { lat: lat, lng: lng };
+    var pt = state.leafletMap.latLngToContainerPoint(ll);
+
+    var baseRect = dom.mapViewEl.getBoundingClientRect();
+    var transform = window.getComputedStyle(dom.mapWarpEl).transform;
+    var m = (transform && transform !== 'none') ? new DOMMatrixReadOnly(transform) : new DOMMatrixReadOnly();
+    var warped = new DOMPoint(pt.x, pt.y, 0, 1).matrixTransform(m);
+
+    if (warped && typeof warped.w === 'number' && warped.w && warped.w !== 1) {
+      warped = new DOMPoint(warped.x / warped.w, warped.y / warped.w, warped.z / warped.w, 1);
+    }
+
+    return { x: baseRect.left + warped.x, y: baseRect.top + warped.y };
+  } catch (err) {
+    return null;
+  }
+}
+
+function shouldSyncStickers() {
+  if (state.viewMode !== 'map') return false;
+  if (state.stage !== 3 && state.stage !== 4) return false;
+  if (!state.leafletMap || !state.dom) return false;
+  if (!state.dom.uiSetupOverlayEl || state.dom.uiSetupOverlayEl.classList.contains('hidden')) return false;
+  if (!state.dom.mapViewEl || !state.dom.mapWarpEl) return false;
+  return true;
+}
+
+function isStickerDragging(el) {
+  if (!el || !el.classList) return false;
+  return el.classList.contains('ui-dot--dragging') || el.classList.contains('ui-note--dragging') || el.classList.contains('ui-draw--dragging');
+}
+
+function bindStickerLatLngFromCurrentPosition(el) {
+  if (!el || !el.dataset) return null;
+  if (!(el.classList.contains('ui-dot') || el.classList.contains('ui-note'))) return null;
+  if (!el.classList.contains('ui-sticker-instance')) return null;
+
+  var rect = el.getBoundingClientRect();
+  var cx = rect.left + rect.width / 2;
+  var cy = rect.top + rect.height / 2;
+  var latlng = stage4LatLngFromClientCoords(cx, cy);
+  if (!latlng) return null;
+
+  el.dataset.mapLat = String(latlng.lat);
+  el.dataset.mapLng = String(latlng.lng);
+  return latlng;
+}
+
+function syncMappedStickersNow() {
+  if (!shouldSyncStickers()) return;
+
+  var overlayEl = state.dom.uiSetupOverlayEl;
+  var els = overlayEl.querySelectorAll('.ui-sticker-instance.ui-dot, .ui-sticker-instance.ui-note');
+
+  for (var i = 0; i < els.length; i++) {
+    var el = els[i];
+    if (!el || !el.dataset) continue;
+    if (isStickerDragging(el)) continue;
+
+    var lat = parseFloat(el.dataset.mapLat);
+    var lng = parseFloat(el.dataset.mapLng);
+
+    if (!isFinite(lat) || !isFinite(lng)) {
+      var ll = bindStickerLatLngFromCurrentPosition(el);
+      if (!ll) continue;
+      lat = ll.lat;
+      lng = ll.lng;
+    }
+
+    var client = stage4ClientCoordsFromLatLng(lat, lng);
+    if (!client) continue;
+
+    var w = el.offsetWidth || 0;
+    var h = el.offsetHeight || 0;
+    el.style.left = (client.x - w / 2) + 'px';
+    el.style.top = (client.y - h / 2) + 'px';
+  }
+}
+
+function stickerSyncTick() {
+  stickerSyncRafId = 0;
+  if (!shouldSyncStickers()) return;
+  syncMappedStickersNow();
+  stickerSyncRafId = requestAnimationFrame(stickerSyncTick);
+}
+
+export function updateStickerMappingForCurrentView() {
+  if (shouldSyncStickers()) {
+    if (!stickerSyncRafId) stickerSyncRafId = requestAnimationFrame(stickerSyncTick);
+    return;
+  }
+
+  if (stickerSyncRafId) {
+    cancelAnimationFrame(stickerSyncRafId);
+    stickerSyncRafId = 0;
   }
 }
 
@@ -400,6 +506,7 @@ export function initLeafletIfNeeded() {
 
   if (state.leafletMap) {
     if (state.leafletMap) state.leafletMap.invalidateSize();
+    updateStickerMappingForCurrentView();
     return;
   }
 
@@ -429,6 +536,7 @@ export function initLeafletIfNeeded() {
   }
 
   if (state.leafletMap) state.leafletMap.invalidateSize();
+  updateStickerMappingForCurrentView();
 }
 
 // Initialize Maptastic for corner dragging
@@ -632,6 +740,13 @@ export function startStickerDrag(el, startEvent) {
   function onEnd(e) {
     if (e.pointerId !== pointerId) return;
     el.classList.remove(draggingClass);
+
+    // Bind to map coordinates once dropped so it stays anchored like drawings.
+    if (state.viewMode === 'map' && (state.stage === 3 || state.stage === 4) && el.classList.contains('ui-sticker-instance')) {
+      bindStickerLatLngFromCurrentPosition(el);
+      updateStickerMappingForCurrentView();
+    }
+
     if (canCapture && el.releasePointerCapture) {
       try {
         el.releasePointerCapture(pointerId);

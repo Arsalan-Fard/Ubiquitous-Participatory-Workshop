@@ -50,6 +50,7 @@ import {
   updateStage4MapInteractivity,
   initLeafletIfNeeded,
   initMaptasticIfNeeded,
+  updateStickerMappingForCurrentView,
   cloneSticker,
   startStickerDrag
 } from './stage4Drawing.js';
@@ -407,6 +408,7 @@ export function initApp() {
       if (state.leafletMap) state.leafletMap.invalidateSize();
       setStage4DrawMode(state.stage4DrawMode);
       updateStage4MapInteractivity();
+      updateStickerMappingForCurrentView();
     } else {
       dom.mapViewEl.classList.add('hidden');
       dom.mapViewEl.setAttribute('aria-hidden', 'true');
@@ -418,6 +420,7 @@ export function initApp() {
       updateHamburgerMenuVisibility();
       setStage4DrawMode(false);
       updateStage4MapInteractivity();
+      updateStickerMappingForCurrentView();
       resetStage3Gestures();
       resumeProcessingIfReady();
     }
