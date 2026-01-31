@@ -281,6 +281,16 @@ export function initApp() {
     saveNumberSetting('fingerSmoothingFactor', state.fingerSmoothingFactor);
   });
 
+  dom.apriltagMoveWindowSliderEl.value = String(Math.round(state.apriltagSuddenMoveWindowMs));
+  dom.apriltagMoveWindowValueEl.textContent = String(Math.round(state.apriltagSuddenMoveWindowMs));
+  dom.apriltagMoveWindowSliderEl.addEventListener('input', function() {
+    var v = parseFloat(dom.apriltagMoveWindowSliderEl.value);
+    if (!isFinite(v)) return;
+    state.apriltagSuddenMoveWindowMs = clamp(v, 50, 1000);
+    dom.apriltagMoveWindowValueEl.textContent = String(Math.round(state.apriltagSuddenMoveWindowMs));
+    saveNumberSetting('apriltagSuddenMoveWindowMs', state.apriltagSuddenMoveWindowMs);
+  });
+
   // ============== Helper Functions ==============
 
   function showLoading(message) {

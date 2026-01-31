@@ -495,7 +495,8 @@ export function updateStage4MapInteractivity() {
     return;
   }
 
-  if (state.leafletMap.dragging) state.leafletMap.dragging.enable();
+  // Keep map panning disabled (non-draggable) across all stages.
+  if (state.leafletMap.dragging) state.leafletMap.dragging.disable();
   if (state.leafletMap.scrollWheelZoom) state.leafletMap.scrollWheelZoom.enable();
   if (state.leafletMap.doubleClickZoom) state.leafletMap.doubleClickZoom.enable();
 }
@@ -520,7 +521,8 @@ export function initLeafletIfNeeded() {
   state.leafletMap = L.map(dom.leafletMapEl, {
     zoomControl: false,
     attributionControl: false,
-    inertia: true
+    inertia: true,
+    dragging: false
   });
 
   state.leafletMap.setView([37.76, -122.44], 12);

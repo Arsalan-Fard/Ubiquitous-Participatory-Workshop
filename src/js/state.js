@@ -77,6 +77,7 @@ export var state = {
   holdStillThresholdPx: loadNumberSetting('holdStillThresholdPx', 14, 2, 80),
   dwellClickMs: loadNumberSetting('dwellClickMs', 3000, 250, 8000),
   pinchHoldMs: loadNumberSetting('pinchHoldMs', 3000, 250, 8000),
+  apriltagSuddenMoveWindowMs: loadNumberSetting('apriltagSuddenMoveWindowMs', 200, 50, 1000),
   PINCH_RATIO_THRESHOLD: 0.35,
   dwellAnchor: null,
   dwellStartMs: 0,

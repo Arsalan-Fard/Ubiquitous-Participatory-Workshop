@@ -200,7 +200,7 @@ function processPointerGesture(handIndex, pointer, handData) {
     if (ps.prevPointer && ps.prevPointerTimeMs) {
       var dt = Math.max(1, nowMs - ps.prevPointerTimeMs);
       var d = distance(pointer, ps.prevPointer);
-      if (dt <= 200 && d > threshold * 3) {
+      if (dt <= state.apriltagSuddenMoveWindowMs && d > threshold * 3) {
         if (ps.dragActive) {
           endDragForPointer(ps, pointer);
         }
