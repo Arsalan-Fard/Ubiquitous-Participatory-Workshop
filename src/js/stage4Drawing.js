@@ -583,13 +583,18 @@ export function cloneSticker(templateEl) {
     noteEl.className = 'ui-note ui-sticker-instance';
     noteEl.dataset.uiType = 'note';
     noteEl.dataset.expanded = 'false';
-    noteEl.dataset.noteText = '';
+    noteEl.dataset.noteText = (templateEl.dataset && templateEl.dataset.noteText) ? templateEl.dataset.noteText : '';
+    noteEl.dataset.color = templateEl.dataset && templateEl.dataset.color ? templateEl.dataset.color : (templateEl.style.background || '#ffc857');
+    noteEl.style.background = noteEl.dataset.color;
     noteEl.style.left = templateEl.style.left || '0px';
     noteEl.style.top = templateEl.style.top || '0px';
 
     var iconEl = document.createElement('div');
     iconEl.className = 'ui-note__icon';
     iconEl.textContent = '📝';
+    // Preserve template icon state (e.g. a "saved" checkmark) when cloning.
+    var templateIconEl = templateEl.querySelector ? templateEl.querySelector('.ui-note__icon') : null;
+    if (templateIconEl && templateIconEl.textContent) iconEl.textContent = templateIconEl.textContent;
     noteEl.appendChild(iconEl);
 
     templateEl.parentElement.appendChild(noteEl);

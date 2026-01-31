@@ -13,6 +13,7 @@ export function initUiSetup(options) {
 
   var currentColor = '#ff3b30';
   var currentDrawColor = '#2bb8ff';
+  var currentNoteColor = '#ffc857';
 
   var row = document.createElement('div');
   row.className = 'ui-setup-row';
@@ -93,15 +94,22 @@ export function initUiSetup(options) {
   addDrawBtn.textContent = '+';
   addDrawBtn.setAttribute('aria-label', 'Add drawing');
 
-  var addNoteBtn = document.createElement('button');
-  addNoteBtn.className = 'ui-setup-note-btn';
-  addNoteBtn.type = 'button';
-  addNoteBtn.textContent = 'Note';
-  addNoteBtn.setAttribute('aria-label', 'Add note annotation');
+  var noteColorInputEl = document.createElement('input');
+  noteColorInputEl.type = 'color';
+  noteColorInputEl.className = 'ui-color-input';
+  noteColorInputEl.value = currentNoteColor;
+  noteColorInputEl.setAttribute('aria-label', 'Pick annotation color');
 
-  addNoteBtn.addEventListener('click', function () {
-    createNote();
-  });
+  var noteSwatchEl = document.createElement('div');
+  noteSwatchEl.className = 'ui-color-swatch';
+  noteSwatchEl.style.background = currentNoteColor;
+  noteSwatchEl.appendChild(noteColorInputEl);
+
+  var addNoteBtn = document.createElement('button');
+  addNoteBtn.className = 'ui-setup-add-btn';
+  addNoteBtn.type = 'button';
+  addNoteBtn.textContent = '+';
+  addNoteBtn.setAttribute('aria-label', 'Add note annotation');
 
   var controlsRow = document.createElement('div');
   controlsRow.className = 'ui-setup-row';
@@ -109,6 +117,7 @@ export function initUiSetup(options) {
   controlsRow.appendChild(addDotBtn);
   controlsRow.appendChild(drawSwatchEl);
   controlsRow.appendChild(addDrawBtn);
+  controlsRow.appendChild(noteSwatchEl);
   controlsRow.appendChild(addNoteBtn);
   panelEl.appendChild(controlsRow);
 
@@ -156,8 +165,17 @@ export function initUiSetup(options) {
     redrawDrawPreview();
   });
 
+  noteColorInputEl.addEventListener('input', function () {
+    currentNoteColor = noteColorInputEl.value;
+    noteSwatchEl.style.background = currentNoteColor;
+  });
+
   addDrawBtn.addEventListener('click', function () {
     createDraw();
+  });
+
+  addNoteBtn.addEventListener('click', function () {
+    createNote();
   });
 
   exportBtn.addEventListener('click', function () {
@@ -288,6 +306,8 @@ export function initUiSetup(options) {
     noteEl.className = 'ui-note';
     noteEl.dataset.uiType = 'note';
     noteEl.dataset.expanded = 'false';
+    noteEl.dataset.color = currentNoteColor;
+    noteEl.style.background = currentNoteColor;
 
     var iconEl = document.createElement('div');
     iconEl.className = 'ui-note__icon';
@@ -429,7 +449,7 @@ export function initUiSetup(options) {
       } else if (type === 'draw') {
         items.push({ type: 'draw', color: el.dataset.color || '#2bb8ff', x: left, y: top });
       } else if (type === 'note') {
-        items.push({ type: 'note', text: el.dataset.noteText || '', x: left, y: top });
+        items.push({ type: 'note', text: el.dataset.noteText || '', color: el.dataset.color || '#ffc857', x: left, y: top });
       }
     }
 
@@ -511,6 +531,8 @@ export function initUiSetup(options) {
         noteEl.dataset.uiType = 'note';
         noteEl.dataset.expanded = 'false';
         noteEl.dataset.noteText = String(item.text || '');
+        noteEl.dataset.color = String(item.color || '#ffc857');
+        noteEl.style.background = noteEl.dataset.color;
         noteEl.style.left = String(item.x || 0) + 'px';
         noteEl.style.top = String(item.y || 0) + 'px';
 
