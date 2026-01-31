@@ -116,6 +116,20 @@ h1 {
     margin-top: 10px;
 }
 
+.gesture-controls__group {
+    margin-bottom: 8px;
+}
+
+/* Hide hand-only settings when in AprilTag mode */
+.gesture-controls--apriltag .gesture-controls__group--hand-only {
+    display: none;
+}
+
+/* Hide AprilTag-only settings when in hand mode */
+.gesture-controls:not(.gesture-controls--apriltag) .gesture-controls__group--apriltag-only {
+    display: none;
+}
+
 .video-container {
     position: relative;
     display: inline-block;

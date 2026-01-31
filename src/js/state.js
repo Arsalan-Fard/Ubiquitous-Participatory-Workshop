@@ -79,6 +79,7 @@ export var state = {
   pinchHoldMs: loadNumberSetting('pinchHoldMs', 3000, 250, 8000),
   apriltagSuddenMoveWindowMs: loadNumberSetting('apriltagSuddenMoveWindowMs', 200, 50, 1000),
   apriltagSuddenMoveThresholdPx: loadNumberSetting('apriltagSuddenMoveThresholdPx', 60, 10, 300),
+  strokeStopDelayMs: loadNumberSetting('strokeStopDelayMs', 50, 0, 500),
   pointerLostTimeoutMs: loadNumberSetting('pointerLostTimeoutMs', 300, 0, 1000),
   drawingDeselectTimeoutMs: loadNumberSetting('drawingDeselectTimeoutMs', 3000, 500, 10000),
   PINCH_RATIO_THRESHOLD: 0.35,

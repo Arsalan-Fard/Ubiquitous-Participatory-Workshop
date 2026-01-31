@@ -26,51 +26,63 @@
             </div>
         </div>
         <div id="gestureControls" class="gesture-controls hidden" aria-hidden="true">
-            <div class="gesture-controls__row">
-                <span class="gesture-controls__label">Pinch distance threshold (px)</span>
-                <span id="pinchThresholdValue" class="gesture-controls__value">45</span>
+            <!-- Hand tracking only -->
+            <div class="gesture-controls__group gesture-controls__group--hand-only">
+                <div class="gesture-controls__row">
+                    <span class="gesture-controls__label">Pinch distance threshold (px)</span>
+                    <span id="pinchThresholdValue" class="gesture-controls__value">45</span>
+                </div>
+                <input id="pinchThresholdSlider" class="gesture-controls__slider" type="range" min="10" max="120" step="1" value="45" aria-label="Pinch distance threshold in pixels" />
+                <div class="gesture-controls__row">
+                    <span class="gesture-controls__label">Dwell time (sec)</span>
+                    <span id="dwellTimeValue" class="gesture-controls__value">3.0</span>
+                </div>
+                <input id="dwellTimeSlider" class="gesture-controls__slider" type="range" min="0.5" max="8.0" step="0.1" value="3.0" aria-label="Dwell time in seconds" />
+                <div class="gesture-controls__row">
+                    <span class="gesture-controls__label">Finger smoothing</span>
+                    <span id="fingerSmoothingValue" class="gesture-controls__value">0.4</span>
+                </div>
+                <input id="fingerSmoothingSlider" class="gesture-controls__slider" type="range" min="0.1" max="1.0" step="0.05" value="0.4" aria-label="Finger position smoothing factor" />
             </div>
-            <input id="pinchThresholdSlider" class="gesture-controls__slider" type="range" min="10" max="120" step="1" value="45" aria-label="Pinch distance threshold in pixels" />
+            <!-- AprilTag only -->
+            <div class="gesture-controls__group gesture-controls__group--apriltag-only">
+                <div class="gesture-controls__row">
+                    <span class="gesture-controls__label">Sudden-move window (ms)</span>
+                    <span id="apriltagMoveWindowValue" class="gesture-controls__value">200</span>
+                </div>
+                <input id="apriltagMoveWindowSlider" class="gesture-controls__slider" type="range" min="50" max="1000" step="10" value="200" aria-label="AprilTag sudden-move time window in milliseconds" />
+                <div class="gesture-controls__row">
+                    <span class="gesture-controls__label">Sudden-move distance (px)</span>
+                    <span id="apriltagMoveDistanceValue" class="gesture-controls__value">60</span>
+                </div>
+                <input id="apriltagMoveDistanceSlider" class="gesture-controls__slider" type="range" min="10" max="300" step="1" value="60" aria-label="AprilTag sudden-move distance threshold in pixels" />
+                <div class="gesture-controls__row">
+                    <span class="gesture-controls__label">Stroke stop delay (ms)</span>
+                    <span id="strokeStopDelayValue" class="gesture-controls__value">50</span>
+                </div>
+                <input id="strokeStopDelaySlider" class="gesture-controls__slider" type="range" min="0" max="500" step="10" value="50" aria-label="Delay before stopping stroke when tag disappears" />
+                <div class="gesture-controls__row">
+                    <span class="gesture-controls__label">Drawing deselect timeout (ms)</span>
+                    <span id="drawingDeselectTimeoutValue" class="gesture-controls__value">3000</span>
+                </div>
+                <input id="drawingDeselectTimeoutSlider" class="gesture-controls__slider" type="range" min="500" max="10000" step="100" value="3000" aria-label="Time before drawing mode is deselected when tag is lost" />
+            </div>
+            <!-- Shared settings -->
             <div class="gesture-controls__row">
                 <span class="gesture-controls__label">Hold-still threshold (px)</span>
                 <span id="holdStillThresholdValue" class="gesture-controls__value">14</span>
             </div>
             <input id="holdStillThresholdSlider" class="gesture-controls__slider" type="range" min="2" max="80" step="1" value="14" aria-label="Hold-still movement threshold in pixels" />
             <div class="gesture-controls__row">
-                <span class="gesture-controls__label">Dwell time (sec)</span>
-                <span id="dwellTimeValue" class="gesture-controls__value">3.0</span>
-            </div>
-            <input id="dwellTimeSlider" class="gesture-controls__slider" type="range" min="0.5" max="8.0" step="0.1" value="3.0" aria-label="Dwell time in seconds" />
-            <div class="gesture-controls__row">
                 <span class="gesture-controls__label">Pinch-hold time (sec)</span>
                 <span id="pinchHoldTimeValue" class="gesture-controls__value">3.0</span>
             </div>
             <input id="pinchHoldTimeSlider" class="gesture-controls__slider" type="range" min="0.5" max="8.0" step="0.1" value="3.0" aria-label="Pinch-hold time in seconds" />
             <div class="gesture-controls__row">
-                <span class="gesture-controls__label">Finger smoothing</span>
-                <span id="fingerSmoothingValue" class="gesture-controls__value">0.4</span>
-            </div>
-            <input id="fingerSmoothingSlider" class="gesture-controls__slider" type="range" min="0.1" max="1.0" step="0.05" value="0.4" aria-label="Finger position smoothing factor" />
-            <div class="gesture-controls__row">
-                <span class="gesture-controls__label">AprilTag sudden-move window (ms)</span>
-                <span id="apriltagMoveWindowValue" class="gesture-controls__value">200</span>
-            </div>
-            <input id="apriltagMoveWindowSlider" class="gesture-controls__slider" type="range" min="50" max="1000" step="10" value="200" aria-label="AprilTag sudden-move time window in milliseconds" />
-            <div class="gesture-controls__row">
-                <span class="gesture-controls__label">AprilTag sudden-move distance (px)</span>
-                <span id="apriltagMoveDistanceValue" class="gesture-controls__value">60</span>
-            </div>
-            <input id="apriltagMoveDistanceSlider" class="gesture-controls__slider" type="range" min="10" max="300" step="1" value="60" aria-label="AprilTag sudden-move distance threshold in pixels" />
-            <div class="gesture-controls__row">
                 <span class="gesture-controls__label">Lost tracking grace (ms)</span>
                 <span id="pointerLostTimeoutValue" class="gesture-controls__value">300</span>
             </div>
             <input id="pointerLostTimeoutSlider" class="gesture-controls__slider" type="range" min="0" max="1000" step="10" value="300" aria-label="Lost tracking grace period in milliseconds before canceling drag" />
-            <div class="gesture-controls__row">
-                <span class="gesture-controls__label">Drawing deselect timeout (ms)</span>
-                <span id="drawingDeselectTimeoutValue" class="gesture-controls__value">3000</span>
-            </div>
-            <input id="drawingDeselectTimeoutSlider" class="gesture-controls__slider" type="range" min="500" max="10000" step="100" value="3000" aria-label="Time before drawing mode is deselected when tag is lost" />
         </div>
         <div id="surfaceButtons" class="surface-buttons hidden" aria-label="Surface setup tools">
             <button id="surfaceBtn1" class="surface-btn" type="button">1</button>

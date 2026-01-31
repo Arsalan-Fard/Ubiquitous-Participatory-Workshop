@@ -231,6 +231,11 @@ export function initApp() {
   updateStereoUIVisibility(videoContainer2);
 
   // Gesture control sliders
+  // Set initial visibility based on input mode
+  if (state.stage3InputMode === 'apriltag') {
+    dom.gestureControlsEl.classList.add('gesture-controls--apriltag');
+  }
+
   dom.pinchThresholdSliderEl.value = String(Math.round(state.pinchDistanceThresholdPx));
   dom.pinchThresholdValueEl.textContent = String(Math.round(state.pinchDistanceThresholdPx));
   dom.pinchThresholdSliderEl.addEventListener('input', function() {
@@ -299,6 +304,16 @@ export function initApp() {
     state.apriltagSuddenMoveThresholdPx = clamp(v, 10, 300);
     dom.apriltagMoveDistanceValueEl.textContent = String(Math.round(state.apriltagSuddenMoveThresholdPx));
     saveNumberSetting('apriltagSuddenMoveThresholdPx', state.apriltagSuddenMoveThresholdPx);
+  });
+
+  dom.strokeStopDelaySliderEl.value = String(Math.round(state.strokeStopDelayMs));
+  dom.strokeStopDelayValueEl.textContent = String(Math.round(state.strokeStopDelayMs));
+  dom.strokeStopDelaySliderEl.addEventListener('input', function() {
+    var v = parseFloat(dom.strokeStopDelaySliderEl.value);
+    if (!isFinite(v)) return;
+    state.strokeStopDelayMs = clamp(v, 0, 500);
+    dom.strokeStopDelayValueEl.textContent = String(Math.round(state.strokeStopDelayMs));
+    saveNumberSetting('strokeStopDelayMs', state.strokeStopDelayMs);
   });
 
   dom.pointerLostTimeoutSliderEl.value = String(Math.round(state.pointerLostTimeoutMs));

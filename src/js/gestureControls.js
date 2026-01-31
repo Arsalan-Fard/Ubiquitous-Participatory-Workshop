@@ -245,7 +245,16 @@ export function handleStage3Gestures(usableIndexTipPoints) {
         endDragForPointer(ps, ps.lastPointer);
       }
 
-      // Deactivate drawing after longer timeout (3 seconds default)
+      // Stop current stroke after brief delay when tag disappears
+      // This prevents connecting old position to new position when tag reappears
+      // but tolerates momentary tracking glitches
+      var strokeStopDelay = typeof state.strokeStopDelayMs === 'number' ? state.strokeStopDelayMs : 50;
+      if (ps.isDrawing && missingDuration >= strokeStopDelay) {
+        ps.isDrawing = false;
+        stopDrawingForPointer(ps.dragPointerId);
+      }
+
+      // Deactivate drawing mode (deselect the button) after longer timeout
       var hasDrawingActive = getDrawColorForPointer(ps.dragPointerId);
       if (hasDrawingActive && missingDuration >= drawingTimeoutMs) {
         deactivateDrawingForPointer(ps.dragPointerId);

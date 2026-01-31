@@ -105,6 +105,11 @@ export function initUiSetup(options) {
     } else {
       state.apriltagEnabled = !!enabled;
     }
+
+    // Toggle gesture controls visibility based on mode
+    if (state.dom && state.dom.gestureControlsEl) {
+      state.dom.gestureControlsEl.classList.toggle('gesture-controls--apriltag', !!enabled);
+    }
   }
 
   function sanitizeParticipantCount(v) {
