@@ -715,8 +715,10 @@ function collapseNoteSticker(noteEl, savedText) {
 }
 
 // Start dragging a sticker
-export function startStickerDrag(el, startEvent) {
+// Options: { expandNoteOnDrop: boolean } - if true, expand note sticker after dropping
+export function startStickerDrag(el, startEvent, options) {
   if (!el || !startEvent) return;
+  options = options || {};
   var draggingClass = 'ui-dot--dragging';
   if (el.classList.contains('ui-draw')) draggingClass = 'ui-draw--dragging';
   if (el.classList.contains('ui-note')) draggingClass = 'ui-note--dragging';
@@ -756,6 +758,13 @@ export function startStickerDrag(el, startEvent) {
     if (state.viewMode === 'map' && (state.stage === 3 || state.stage === 4) && el.classList.contains('ui-sticker-instance')) {
       bindStickerLatLngFromCurrentPosition(el);
       updateStickerMappingForCurrentView();
+    }
+
+    // Auto-expand note stickers after dropping (for newly cloned notes)
+    if (options.expandNoteOnDrop && el.classList.contains('ui-note') && el.classList.contains('ui-sticker-instance')) {
+      setTimeout(function() {
+        expandNoteSticker(el);
+      }, 50);
     }
 
     if (canCapture && el.releasePointerCapture) {

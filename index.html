@@ -56,6 +56,21 @@
                 <span id="apriltagMoveWindowValue" class="gesture-controls__value">200</span>
             </div>
             <input id="apriltagMoveWindowSlider" class="gesture-controls__slider" type="range" min="50" max="1000" step="10" value="200" aria-label="AprilTag sudden-move time window in milliseconds" />
+            <div class="gesture-controls__row">
+                <span class="gesture-controls__label">AprilTag sudden-move distance (px)</span>
+                <span id="apriltagMoveDistanceValue" class="gesture-controls__value">60</span>
+            </div>
+            <input id="apriltagMoveDistanceSlider" class="gesture-controls__slider" type="range" min="10" max="300" step="1" value="60" aria-label="AprilTag sudden-move distance threshold in pixels" />
+            <div class="gesture-controls__row">
+                <span class="gesture-controls__label">Lost tracking grace (ms)</span>
+                <span id="pointerLostTimeoutValue" class="gesture-controls__value">300</span>
+            </div>
+            <input id="pointerLostTimeoutSlider" class="gesture-controls__slider" type="range" min="0" max="1000" step="10" value="300" aria-label="Lost tracking grace period in milliseconds before canceling drag" />
+            <div class="gesture-controls__row">
+                <span class="gesture-controls__label">Drawing deselect timeout (ms)</span>
+                <span id="drawingDeselectTimeoutValue" class="gesture-controls__value">3000</span>
+            </div>
+            <input id="drawingDeselectTimeoutSlider" class="gesture-controls__slider" type="range" min="500" max="10000" step="100" value="3000" aria-label="Time before drawing mode is deselected when tag is lost" />
         </div>
         <div id="surfaceButtons" class="surface-buttons hidden" aria-label="Surface setup tools">
             <button id="surfaceBtn1" class="surface-btn" type="button">1</button>

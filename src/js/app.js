@@ -291,6 +291,36 @@ export function initApp() {
     saveNumberSetting('apriltagSuddenMoveWindowMs', state.apriltagSuddenMoveWindowMs);
   });
 
+  dom.apriltagMoveDistanceSliderEl.value = String(Math.round(state.apriltagSuddenMoveThresholdPx));
+  dom.apriltagMoveDistanceValueEl.textContent = String(Math.round(state.apriltagSuddenMoveThresholdPx));
+  dom.apriltagMoveDistanceSliderEl.addEventListener('input', function() {
+    var v = parseFloat(dom.apriltagMoveDistanceSliderEl.value);
+    if (!isFinite(v)) return;
+    state.apriltagSuddenMoveThresholdPx = clamp(v, 10, 300);
+    dom.apriltagMoveDistanceValueEl.textContent = String(Math.round(state.apriltagSuddenMoveThresholdPx));
+    saveNumberSetting('apriltagSuddenMoveThresholdPx', state.apriltagSuddenMoveThresholdPx);
+  });
+
+  dom.pointerLostTimeoutSliderEl.value = String(Math.round(state.pointerLostTimeoutMs));
+  dom.pointerLostTimeoutValueEl.textContent = String(Math.round(state.pointerLostTimeoutMs));
+  dom.pointerLostTimeoutSliderEl.addEventListener('input', function() {
+    var v = parseFloat(dom.pointerLostTimeoutSliderEl.value);
+    if (!isFinite(v)) return;
+    state.pointerLostTimeoutMs = clamp(v, 0, 1000);
+    dom.pointerLostTimeoutValueEl.textContent = String(Math.round(state.pointerLostTimeoutMs));
+    saveNumberSetting('pointerLostTimeoutMs', state.pointerLostTimeoutMs);
+  });
+
+  dom.drawingDeselectTimeoutSliderEl.value = String(Math.round(state.drawingDeselectTimeoutMs));
+  dom.drawingDeselectTimeoutValueEl.textContent = String(Math.round(state.drawingDeselectTimeoutMs));
+  dom.drawingDeselectTimeoutSliderEl.addEventListener('input', function() {
+    var v = parseFloat(dom.drawingDeselectTimeoutSliderEl.value);
+    if (!isFinite(v)) return;
+    state.drawingDeselectTimeoutMs = clamp(v, 500, 10000);
+    dom.drawingDeselectTimeoutValueEl.textContent = String(Math.round(state.drawingDeselectTimeoutMs));
+    saveNumberSetting('drawingDeselectTimeoutMs', state.drawingDeselectTimeoutMs);
+  });
+
   // ============== Helper Functions ==============
 
   function showLoading(message) {

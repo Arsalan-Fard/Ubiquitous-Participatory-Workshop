@@ -13,7 +13,9 @@ import {
   getDrawColorForPointer,
   startDrawingAtPoint,
   continueDrawingAtPoint,
-  stopDrawingForPointer
+  stopDrawingForPointer,
+  cloneSticker,
+  startStickerDrag
 } from './stage4Drawing.js';
 
 // Multi-pointer tracking: keyed by hand index
@@ -65,6 +67,9 @@ function getPointerState(handIndex) {
       dwellClickTimeMs: 0,
       pinchStartMs: 0,
       pinchAnchor: null,
+      pinchFired: false,
+      pinchFiredAt: null,
+      missingSinceMs: null,
       dragActive: false,
       dragTarget: null,
       dragPointerId: nextPointerId++,
@@ -72,14 +77,133 @@ function getPointerState(handIndex) {
       prevPointer: null,
       prevPointerTimeMs: 0,
       cursorEl: null,
-      isDrawing: false  // Multi-hand drawing state
+      isDrawing: false,  // Multi-hand drawing state
+      currentInteractionTarget: null  // Track current target to detect changes
     };
   }
   return pointerStates[handIndex];
 }
 
+function shouldPinchClickTarget(target) {
+  if (!target || !target.closest) return false;
+
+  // Native interactive elements
+  if (target.closest('input, textarea, select, button, a, [contenteditable="true"], [contenteditable=""], [role="button"]')) return true;
+
+  // Stage 4 draw tool buttons should be clickable (not draggable)
+  if (state.stage === 4) {
+    var drawButton = target.closest('.ui-draw');
+    if (drawButton && !drawButton.classList.contains('ui-sticker-instance')) return true;
+
+    // Note form elements (textarea, save button) should be clickable
+    if (target.closest('.ui-note__form')) return true;
+
+    // Saved note stickers (with text) should be clickable to edit them
+    var noteSticker = target.closest('.ui-sticker-instance.ui-note.ui-note--sticker');
+    if (noteSticker) return true;
+  }
+
+  return false;
+}
+
+function getDraggableRoot(target) {
+  if (!target || !target.closest) return null;
+
+  // Never drag inside an expanded note form (should allow focusing text inputs)
+  if (target.closest('.ui-note__form')) return null;
+
+  if (state.stage === 4) {
+    // Stage 4: draw tool button is clickable only (not draggable)
+    var drawButton = target.closest('.ui-draw');
+    if (drawButton && !drawButton.classList.contains('ui-sticker-instance')) return null;
+
+    // Dot sticker instances are draggable
+    var dotInstance = target.closest('.ui-sticker-instance.ui-dot');
+    if (dotInstance) return dotInstance;
+
+    // Note sticker instances: saved notes (with text) are clickable, unsaved are draggable
+    var noteInstance = target.closest('.ui-sticker-instance.ui-note');
+    if (noteInstance) {
+      // Saved note stickers should be clickable to edit, not draggable
+      if (noteInstance.classList.contains('ui-note--sticker')) {
+        return null; // Will be handled as clickable
+      }
+      return noteInstance;
+    }
+
+    // Template buttons (dots/notes in setup panel) are also draggable to clone them
+    var templateEl = target.closest('.ui-dot, .ui-note');
+    if (templateEl && !templateEl.classList.contains('ui-sticker-instance')) {
+      // Check if it's in the setup overlay (template area)
+      var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
+      if (overlayEl && overlayEl.contains(templateEl)) {
+        return templateEl;
+      }
+    }
+
+    return null;
+  }
+
+  // Stage 3: templates are draggable during UI setup
+  var setupEl = target.closest('.ui-dot, .ui-note, .ui-draw');
+  return setupEl || null;
+}
+
+function getInteractionCandidate(pointer, radiusPx) {
+  var r = Math.max(0, radiusPx || 0);
+  var offsets = [{ dx: 0, dy: 0 }];
+  if (r > 0) {
+    var step = Math.max(4, Math.round(r / 3));
+    var dirs = [
+      { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 },
+      { x: 1, y: 1 }, { x: -1, y: 1 }, { x: 1, y: -1 }, { x: -1, y: -1 }
+    ];
+
+    for (var rad = step; rad <= r; rad += step) {
+      for (var d = 0; d < dirs.length; d++) {
+        var v = dirs[d];
+        var mag = Math.sqrt(v.x * v.x + v.y * v.y) || 1;
+        offsets.push({ dx: (v.x / mag) * rad, dy: (v.y / mag) * rad });
+      }
+    }
+  }
+
+  var bestDrag = null;
+  var bestDragDist = Infinity;
+  var bestClick = null;
+  var bestClickDist = Infinity;
+
+  for (var i = 0; i < offsets.length; i++) {
+    var off = offsets[i];
+    var p = { x: pointer.x + off.dx, y: pointer.y + off.dy };
+    var hit = getEventTargetAt(p);
+    var el = hit && hit.target ? hit.target : null;
+    if (!el) continue;
+
+    var dragRoot = getDraggableRoot(el);
+    var clickOk = shouldPinchClickTarget(el);
+
+    if (!dragRoot && !clickOk) continue;
+
+    var dist = Math.sqrt(off.dx * off.dx + off.dy * off.dy);
+    if (dragRoot && dist < bestDragDist) {
+      bestDragDist = dist;
+      bestDrag = dragRoot;
+    }
+    if (!dragRoot && clickOk && dist < bestClickDist) {
+      bestClickDist = dist;
+      bestClick = el;
+    }
+  }
+
+  if (bestDrag) return { action: 'drag', target: bestDrag };
+  if (bestClick) return { action: 'click', target: bestClick };
+  return null;
+}
+
 // Main gesture handling function called each frame - handles multiple pointers
 export function handleStage3Gestures(usableIndexTipPoints) {
+  var nowMs = performance.now();
   var viewportPoints = getAllMapPointerViewportPoints();
 
   // Build a map from handId to hand data for quick lookup
@@ -103,26 +227,44 @@ export function handleStage3Gestures(usableIndexTipPoints) {
   for (var handId in pointerStates) {
     if (!activeHandIds[handId]) {
       var ps = pointerStates[handId];
-      if (ps.dragActive) {
+      if (ps.missingSinceMs === null) ps.missingSinceMs = nowMs;
+
+      // Hide cursor while missing (keep DOM/state so we can resume if it reappears).
+      if (ps.cursorEl) {
+        ps.cursorEl.classList.add('hidden');
+        ps.cursorEl.setAttribute('aria-hidden', 'true');
+        ps.cursorEl.style.transform = 'translate(-9999px, -9999px)';
+      }
+
+      var missingDuration = nowMs - ps.missingSinceMs;
+      var pointerTimeoutMs = typeof state.pointerLostTimeoutMs === 'number' ? state.pointerLostTimeoutMs : 300;
+      var drawingTimeoutMs = typeof state.drawingDeselectTimeoutMs === 'number' ? state.drawingDeselectTimeoutMs : 3000;
+
+      // End drag after short timeout
+      if (ps.dragActive && missingDuration >= pointerTimeoutMs) {
         endDragForPointer(ps, ps.lastPointer);
       }
-      // Deactivate drawing for this hand
-      deactivateDrawingForPointer(ps.dragPointerId);
+
+      // Deactivate drawing after longer timeout (3 seconds default)
+      var hasDrawingActive = getDrawColorForPointer(ps.dragPointerId);
+      if (hasDrawingActive && missingDuration >= drawingTimeoutMs) {
+        deactivateDrawingForPointer(ps.dragPointerId);
+      }
+
+      // Only fully clean up pointer state after both timeouts have passed
+      var maxTimeout = Math.max(pointerTimeoutMs, hasDrawingActive ? drawingTimeoutMs : pointerTimeoutMs);
+      if (missingDuration < maxTimeout) continue;
+
       // Reset primary cursor assignment if this was the primary hand
       if (handId === primaryCursorHandId) {
         primaryCursorHandId = null;
       }
+
       // Clean up secondary cursors (don't remove the primary cursor, just hide it)
-      if (ps.cursorEl) {
-        if (ps.cursorEl === state.dom.mapFingerCursorEl) {
-          // Primary cursor - just hide it, don't remove
-          ps.cursorEl.classList.add('hidden');
-          ps.cursorEl.setAttribute('aria-hidden', 'true');
-        } else if (ps.cursorEl.parentNode) {
-          // Secondary cursor - remove from DOM
-          ps.cursorEl.parentNode.removeChild(ps.cursorEl);
-        }
+      if (ps.cursorEl && ps.cursorEl !== state.dom.mapFingerCursorEl && ps.cursorEl.parentNode) {
+        ps.cursorEl.parentNode.removeChild(ps.cursorEl);
       }
+
       delete pointerStates[handId];
     }
   }
@@ -149,6 +291,7 @@ export function handleStage3Gestures(usableIndexTipPoints) {
 // Process gestures for a single pointer
 function processPointerGesture(handIndex, pointer, handData) {
   var ps = getPointerState(handIndex);
+  ps.missingSinceMs = null;
   ps.prevPointer = ps.lastPointer;
   ps.lastPointer = pointer;
 
@@ -158,13 +301,9 @@ function processPointerGesture(handIndex, pointer, handData) {
 
   var isPinching = false;
   if (isApriltag) {
-    // AprilTags don't "pinch"; we emulate pinch-hold by requiring a stable, touching tag.
-    if (state.stereoMode && state.stereoCalibrationReady) {
-      isPinching = !!(handData && handData.isTouch === true);
-    } else {
-      // No touch/hover signal available; treat tracking as touch.
-      isPinching = true;
-    }
+    // AprilTags don't "pinch"; we emulate pinch-hold by being tracked.
+    // Proximity gating (within ~20px of an interactable) prevents the ring from appearing when nothing is under the pointer.
+    isPinching = true;
   } else if (pinchDistance !== null) {
     isPinching = pinchDistance <= state.pinchDistanceThresholdPx;
   } else if (pinchRatio !== null) {
@@ -175,32 +314,11 @@ function processPointerGesture(handIndex, pointer, handData) {
   var threshold = state.holdStillThresholdPx;
 
   if (isApriltag) {
-    // Cancel pinch on hover (not-touch) when stereo touch is available.
-    if (!isPinching) {
-      ps.pinchStartMs = 0;
-      ps.pinchAnchor = null;
-      ps.dwellStartMs = 0;
-      ps.dwellAnchor = null;
-      ps.dwellFired = false;
-
-      if (ps.dragActive) {
-        endDragForPointer(ps, pointer);
-      }
-      if (ps.isDrawing) {
-        ps.isDrawing = false;
-        stopDrawingForPointer(ps.dragPointerId);
-      }
-
-      updatePointerCursor(handIndex, pointer, 0, null);
-      ps.prevPointerTimeMs = nowMs;
-      return;
-    }
-
     // Sudden movement cancels pinch/drag immediately.
     if (ps.prevPointer && ps.prevPointerTimeMs) {
       var dt = Math.max(1, nowMs - ps.prevPointerTimeMs);
       var d = distance(pointer, ps.prevPointer);
-      if (dt <= state.apriltagSuddenMoveWindowMs && d > threshold * 3) {
+      if (dt <= state.apriltagSuddenMoveWindowMs && d > state.apriltagSuddenMoveThresholdPx) {
         if (ps.dragActive) {
           endDragForPointer(ps, pointer);
         }
@@ -210,6 +328,8 @@ function processPointerGesture(handIndex, pointer, handData) {
         }
         ps.pinchAnchor = pointer;
         ps.pinchStartMs = nowMs;
+        ps.pinchFired = false;
+        ps.pinchFiredAt = null;
       }
     }
   }
@@ -219,6 +339,34 @@ function processPointerGesture(handIndex, pointer, handData) {
     ps.dwellStartMs = 0;
     ps.dwellAnchor = null;
     ps.dwellFired = false;
+
+    var isDrawingMode = state.stage === 4 && getDrawColorForPointer(ps.dragPointerId);
+    var interaction = null;
+    if (!ps.dragActive && !ps.isDrawing && !isDrawingMode) {
+      interaction = getInteractionCandidate(pointer, 20);
+      if (!interaction) {
+        // Not near anything clickable/draggable; don't show pinch ring or arm gestures.
+        ps.pinchStartMs = 0;
+        ps.pinchAnchor = null;
+        ps.pinchFired = false;
+        ps.pinchFiredAt = null;
+        ps.currentInteractionTarget = null;
+        updatePointerCursor(handIndex, pointer, 0, null);
+        ps.prevPointerTimeMs = nowMs;
+        return;
+      }
+
+      // Check if interaction target changed - reset circle filling for new target
+      var newTarget = interaction.target;
+      if (ps.currentInteractionTarget && ps.currentInteractionTarget !== newTarget) {
+        // Target changed - reset pinch progress for the new item
+        ps.pinchAnchor = pointer;
+        ps.pinchStartMs = nowMs;
+        ps.pinchFired = false;
+        ps.pinchFiredAt = null;
+      }
+      ps.currentInteractionTarget = newTarget;
+    }
 
     if (!ps.pinchAnchor) {
       // First pinch frame - set anchor
@@ -243,17 +391,33 @@ function processPointerGesture(handIndex, pointer, handData) {
     }
 
     var pinchProgress = Math.min(1, (nowMs - ps.pinchStartMs) / state.pinchHoldMs);
-    var isDrawingMode = state.stage === 4 && getDrawColorForPointer(ps.dragPointerId);
     var mode = ps.dragActive || ps.isDrawing ? (isDrawingMode ? 'draw' : 'drag') : 'pinch';
     updatePointerCursor(handIndex, pointer, (ps.dragActive || ps.isDrawing) ? 1 : pinchProgress, mode);
 
-    if (!ps.dragActive && !ps.isDrawing && nowMs - ps.pinchStartMs >= state.pinchHoldMs) {
+    // In AprilTag mode (especially without touch sensing), allow repeated click/drag by re-arming once moved away.
+    if (isApriltag && ps.pinchFired && !ps.dragActive && !ps.isDrawing) {
+      var rearmDist = Math.max(24, threshold * 2);
+      if (ps.pinchFiredAt && distance(pointer, ps.pinchFiredAt) > rearmDist) {
+        ps.pinchFired = false;
+        ps.pinchFiredAt = null;
+        ps.pinchAnchor = pointer;
+        ps.pinchStartMs = nowMs;
+      }
+    }
+
+    if (!ps.dragActive && !ps.isDrawing && !ps.pinchFired && nowMs - ps.pinchStartMs >= state.pinchHoldMs) {
       if (isDrawingMode) {
         // Start drawing instead of dragging
         ps.isDrawing = true;
         startDrawingAtPoint(ps.dragPointerId, pointer.x, pointer.y);
       } else {
-        startDragForPointer(ps, pointer);
+        if (interaction && interaction.action === 'click') {
+          dispatchClickAt(pointer, ps.dragPointerId);
+          ps.pinchFired = true;
+          ps.pinchFiredAt = { x: pointer.x, y: pointer.y };
+        } else {
+          startDragForPointer(ps, pointer, interaction ? interaction.target : null);
+        }
       }
     }
 
@@ -269,6 +433,8 @@ function processPointerGesture(handIndex, pointer, handData) {
 
   ps.pinchStartMs = 0;
   ps.pinchAnchor = null;
+  ps.pinchFired = false;
+  ps.pinchFiredAt = null;
 
   if (ps.dragActive) {
     endDragForPointer(ps, pointer);
@@ -351,9 +517,43 @@ function processPointerGesture(handIndex, pointer, handData) {
 }
 
 // Drag functions per pointer
-function startDragForPointer(ps, pointer) {
-  var hit = getEventTargetAt(pointer);
-  ps.dragTarget = hit.target || document.body;
+function startDragForPointer(ps, pointer, forcedTarget) {
+  var target = forcedTarget;
+  if (!target) {
+    var hit = getEventTargetAt(pointer);
+    target = hit.target || document.body;
+  }
+
+  // Stage 4: Handle sticker template cloning and direct drag
+  if (state.stage === 4) {
+    var isNoteTemplate = target.classList.contains('ui-note') && !target.classList.contains('ui-sticker-instance');
+    var isDotTemplate = target.classList.contains('ui-dot') && !target.classList.contains('ui-sticker-instance');
+    var isTemplate = isNoteTemplate || isDotTemplate;
+    var isInstance = target.classList.contains('ui-sticker-instance');
+
+    if (isTemplate || isInstance) {
+      // Clone template or use existing instance
+      var dragEl = isTemplate ? cloneSticker(target) : target;
+      if (dragEl) {
+        // Use stage4Drawing's startStickerDrag for proper handling
+        var syntheticEvent = {
+          clientX: pointer.x,
+          clientY: pointer.y,
+          pointerId: ps.dragPointerId
+        };
+        // For note templates, expand the form after dropping
+        var dragOptions = isNoteTemplate ? { expandNoteOnDrop: true } : {};
+        startStickerDrag(dragEl, syntheticEvent, dragOptions);
+        ps.dragTarget = dragEl;
+        ps.dragActive = true;
+        ps.pinchFired = true;
+        ps.pinchFiredAt = { x: pointer.x, y: pointer.y };
+        return;
+      }
+    }
+  }
+
+  ps.dragTarget = target;
   ps.dragActive = true;
 
   dispatchPointerMouse(ps.dragTarget, 'pointerdown', 'mousedown', pointer, {
