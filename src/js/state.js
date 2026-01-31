@@ -67,6 +67,11 @@ export var state = {
   lastIndexTipPoints: null,
   lastIndexTipTimeMs: 0,
 
+  // Finger smoothing (exponential moving average)
+  // Higher value = more smoothing (0-1, where 1 = no smoothing, 0.1 = heavy smoothing)
+  fingerSmoothingFactor: loadNumberSetting('fingerSmoothingFactor', 0.4, 0.1, 1.0),
+  smoothedFingerPositions: {}, // keyed by handId: { x, y }
+
   // Gesture controls (stage 3)
   pinchDistanceThresholdPx: loadNumberSetting('pinchDistanceThresholdPx', 45, 10, 120),
   holdStillThresholdPx: loadNumberSetting('holdStillThresholdPx', 14, 2, 80),

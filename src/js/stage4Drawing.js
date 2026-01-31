@@ -2,9 +2,119 @@
  * Stage 4 drawing tool
  * - Draw strokes on Leaflet map with finger
  * - Sticker cloning and dragging
+ * - Multi-hand drawing support
  */
 
 import { state } from './state.js';
+
+// Multi-hand drawing state: keyed by pointerId
+// Each entry: { color, isDrawing, lastContainerPt, activeStroke, buttonEl }
+var handDrawStates = {};
+
+// Get or create drawing state for a pointer
+function getHandDrawState(pointerId) {
+  if (!handDrawStates[pointerId]) {
+    handDrawStates[pointerId] = {
+      color: null,
+      isDrawing: false,
+      lastContainerPt: null,
+      activeStroke: null,
+      buttonEl: null
+    };
+  }
+  return handDrawStates[pointerId];
+}
+
+// Activate drawing mode for a specific pointer/hand
+export function activateDrawingForPointer(pointerId, color, buttonEl) {
+  var hs = getHandDrawState(pointerId);
+
+  // Remove active class from previous button if different
+  if (hs.buttonEl && hs.buttonEl !== buttonEl) {
+    hs.buttonEl.classList.remove('ui-draw--active');
+  }
+
+  hs.color = color;
+  hs.buttonEl = buttonEl || null;
+
+  // Add active class to the new button
+  if (hs.buttonEl) {
+    hs.buttonEl.classList.add('ui-draw--active');
+  }
+
+  updateDrawModeVisuals();
+}
+
+// Deactivate drawing mode for a specific pointer/hand
+export function deactivateDrawingForPointer(pointerId) {
+  var hs = handDrawStates[pointerId];
+  if (hs) {
+    if (hs.isDrawing) {
+      hs.isDrawing = false;
+      hs.activeStroke = null;
+    }
+    // Remove active class from button
+    if (hs.buttonEl) {
+      hs.buttonEl.classList.remove('ui-draw--active');
+    }
+    delete handDrawStates[pointerId];
+  }
+  updateDrawModeVisuals();
+}
+
+// Check if any hand has drawing active
+export function isAnyDrawingActive() {
+  for (var pid in handDrawStates) {
+    if (handDrawStates[pid].color) return true;
+  }
+  return false;
+}
+
+// Get the drawing color for a pointer (or null if not drawing)
+export function getDrawColorForPointer(pointerId) {
+  var hs = handDrawStates[pointerId];
+  return hs ? hs.color : null;
+}
+
+// Get all active drawing pointer IDs
+export function getActiveDrawingPointerIds() {
+  var ids = [];
+  for (var pid in handDrawStates) {
+    if (handDrawStates[pid].color) {
+      ids.push(parseInt(pid, 10));
+    }
+  }
+  return ids;
+}
+
+// Clean up drawing states for pointers that no longer exist
+export function cleanupDrawingForMissingPointers(activePointerIds) {
+  var activeSet = {};
+  for (var i = 0; i < activePointerIds.length; i++) {
+    activeSet[activePointerIds[i]] = true;
+  }
+
+  for (var pid in handDrawStates) {
+    if (!activeSet[pid]) {
+      deactivateDrawingForPointer(parseInt(pid, 10));
+    }
+  }
+}
+
+// Update visuals based on drawing state
+function updateDrawModeVisuals() {
+  var anyActive = isAnyDrawingActive();
+  var dom = state.dom;
+
+  // Legacy state for backward compatibility
+  state.stage4DrawMode = anyActive;
+
+  if (dom.leafletMapEl) {
+    dom.leafletMapEl.classList.toggle('leaflet-map--draw-active', anyActive && state.stage === 4 && state.viewMode === 'map');
+  }
+
+  updateStage4MapInteractivity();
+}
 
 // Convert pointer event to Leaflet lat/lng accounting for Maptastic transform
 export function stage4LatLngFromPointerEvent(e) {
@@ -32,13 +142,44 @@ export function stage4LatLngFromPointerEvent(e) {
   }
 }
 
-// Handle pointer down to start drawing
+// Convert clientX/clientY to Leaflet lat/lng
+export function stage4LatLngFromClientCoords(clientX, clientY) {
+  if (!state.leafletMap) return null;
+  var dom = state.dom;
+
+  try {
+    var baseRect = dom.mapViewEl.getBoundingClientRect();
+    var x = clientX - baseRect.left;
+    var y = clientY - baseRect.top;
+
+    var transform = window.getComputedStyle(dom.mapWarpEl).transform;
+    var m = (transform && transform !== 'none') ? new DOMMatrixReadOnly(transform) : new DOMMatrixReadOnly();
+    var inv = m.inverse();
+    var local = new DOMPoint(x, y, 0, 1).matrixTransform(inv);
+
+    if (local && typeof local.w === 'number' && local.w && local.w !== 1) {
+      local = new DOMPoint(local.x / local.w, local.y / local.w, local.z / local.w, 1);
+    }
+
+    var pt = state.leafletGlobal && state.leafletGlobal.point ? state.leafletGlobal.point(local.x, local.y) : { x: local.x, y: local.y };
+    return state.leafletMap.containerPointToLatLng(pt);
+  } catch (err) {
+    return null;
+  }
+}
+
+// Handle pointer down to start drawing (multi-hand)
 export function stage4PointerdownOnMap(e) {
-  if (!state.stage4DrawMode) return;
   if (state.stage !== 4 || state.viewMode !== 'map') return;
   if (!state.leafletMap || !state.stage4DrawLayer || !state.leafletGlobal) return;
   if (e.button !== 0) return;
   if (e.target && e.target.closest && e.target.closest('.hamburger-menu')) return;
+
+  var pointerId = e.pointerId;
+  var hs = handDrawStates[pointerId];
+
+  // Only start drawing if this pointer has drawing activated
+  if (!hs || !hs.color) return;
 
   var latlng = stage4LatLngFromPointerEvent(e);
   if (!latlng) return;
@@ -46,13 +187,13 @@ export function stage4PointerdownOnMap(e) {
   e.preventDefault();
   e.stopPropagation();
 
-  state.stage4IsDrawing = true;
-  state.stage4LastDrawContainerPt = null;
+  hs.isDrawing = true;
+  hs.lastContainerPt = null;
   var latlngs = [latlng];
 
   var L = state.leafletGlobal;
   var glow = L.polyline(latlngs, {
-    color: state.stage4DrawColor,
+    color: hs.color,
     weight: 14,
     opacity: 0.25,
     lineCap: 'round',
@@ -61,7 +202,7 @@ export function stage4PointerdownOnMap(e) {
   }).addTo(state.stage4DrawLayer);
 
   var main = L.polyline(latlngs, {
-    color: state.stage4DrawColor,
+    color: hs.color,
     weight: 7,
     opacity: 0.95,
     lineCap: 'round',
@@ -69,17 +210,28 @@ export function stage4PointerdownOnMap(e) {
     interactive: false
   }).addTo(state.stage4DrawLayer);
 
-  state.stage4ActiveStroke = { latlngs: latlngs, glow: glow, main: main };
+  hs.activeStroke = { latlngs: latlngs, glow: glow, main: main };
 
-  var dom = state.dom;
-  if (dom.leafletMapEl.setPointerCapture) dom.leafletMapEl.setPointerCapture(e.pointerId);
+  // Don't capture synthetic pointers
+  if (pointerId < 100) {
+    var dom = state.dom;
+    if (dom.leafletMapEl.setPointerCapture) {
+      try {
+        dom.leafletMapEl.setPointerCapture(pointerId);
+      } catch (err) { /* ignore */ }
+    }
+  }
 }
 
-// Handle pointer move to continue drawing
+// Handle pointer move to continue drawing (multi-hand)
 export function stage4PointermoveOnMap(e) {
-  if (!state.stage4DrawMode) return;
-  if (!state.stage4IsDrawing || !state.stage4ActiveStroke) return;
+  if (state.stage !== 4 || state.viewMode !== 'map') return;
   if (!state.leafletMap) return;
+
+  var pointerId = e.pointerId;
+  var hs = handDrawStates[pointerId];
+
+  if (!hs || !hs.isDrawing || !hs.activeStroke) return;
 
   e.preventDefault();
   e.stopPropagation();
@@ -96,53 +248,141 @@ export function stage4PointermoveOnMap(e) {
     pt = null;
   }
 
-  if (pt && state.stage4LastDrawContainerPt) {
-    var dx = pt.x - state.stage4LastDrawContainerPt.x;
-    var dy = pt.y - state.stage4LastDrawContainerPt.y;
+  if (pt && hs.lastContainerPt) {
+    var dx = pt.x - hs.lastContainerPt.x;
+    var dy = pt.y - hs.lastContainerPt.y;
     if ((dx * dx + dy * dy) < 4) return;
   }
 
   var latlng = stage4LatLngFromPointerEvent(e);
   if (!latlng) return;
 
-  if (pt) state.stage4LastDrawContainerPt = pt;
-  state.stage4ActiveStroke.latlngs.push(latlng);
+  if (pt) hs.lastContainerPt = pt;
+  hs.activeStroke.latlngs.push(latlng);
 
-  if (state.stage4ActiveStroke.glow) state.stage4ActiveStroke.glow.setLatLngs(state.stage4ActiveStroke.latlngs);
-  if (state.stage4ActiveStroke.main) state.stage4ActiveStroke.main.setLatLngs(state.stage4ActiveStroke.latlngs);
+  if (hs.activeStroke.glow) hs.activeStroke.glow.setLatLngs(hs.activeStroke.latlngs);
+  if (hs.activeStroke.main) hs.activeStroke.main.setLatLngs(hs.activeStroke.latlngs);
 }
 
-// Handle pointer up to stop drawing
+// Handle pointer up to stop drawing (multi-hand)
 export function stage4StopDrawing(e) {
-  if (!state.stage4IsDrawing) return;
-  state.stage4IsDrawing = false;
-  state.stage4LastDrawContainerPt = null;
-  state.stage4ActiveStroke = null;
+  var pointerId = e.pointerId;
+  var hs = handDrawStates[pointerId];
 
-  var dom = state.dom;
-  if (dom.leafletMapEl.releasePointerCapture) dom.leafletMapEl.releasePointerCapture(e.pointerId);
+  if (!hs || !hs.isDrawing) return;
+
+  hs.isDrawing = false;
+  hs.lastContainerPt = null;
+  hs.activeStroke = null;
+
+  if (pointerId < 100) {
+    var dom = state.dom;
+    if (dom.leafletMapEl && dom.leafletMapEl.releasePointerCapture) {
+      try {
+        dom.leafletMapEl.releasePointerCapture(pointerId);
+      } catch (err) { /* ignore */ }
+    }
+  }
 }
 
-// Set draw mode on/off
-export function setStage4DrawMode(enabled) {
-  state.stage4DrawMode = !!enabled;
-  state.stage4IsDrawing = false;
-  state.stage4LastDrawContainerPt = null;
-  state.stage4ActiveStroke = null;
+// Start drawing for a hand at given coordinates (called from gesture system)
+export function startDrawingAtPoint(pointerId, clientX, clientY) {
+  if (state.stage !== 4 || state.viewMode !== 'map') return;
+  if (!state.leafletMap || !state.stage4DrawLayer || !state.leafletGlobal) return;
 
-  var active = state.stage4DrawMode && state.stage === 4 && state.viewMode === 'map';
-  var dom = state.dom;
-  if (dom.leafletMapEl) {
-    dom.leafletMapEl.classList.toggle('leaflet-map--draw-active', active);
+  var hs = handDrawStates[pointerId];
+  if (!hs || !hs.color) return;
+
+  var latlng = stage4LatLngFromClientCoords(clientX, clientY);
+  if (!latlng) return;
+
+  hs.isDrawing = true;
+  hs.lastContainerPt = null;
+  var latlngs = [latlng];
+
+  var L = state.leafletGlobal;
+  var glow = L.polyline(latlngs, {
+    color: hs.color,
+    weight: 14,
+    opacity: 0.25,
+    lineCap: 'round',
+    lineJoin: 'round',
+    interactive: false
+  }).addTo(state.stage4DrawLayer);
+
+  var main = L.polyline(latlngs, {
+    color: hs.color,
+    weight: 7,
+    opacity: 0.95,
+    lineCap: 'round',
+    lineJoin: 'round',
+    interactive: false
+  }).addTo(state.stage4DrawLayer);
+
+  hs.activeStroke = { latlngs: latlngs, glow: glow, main: main };
+}
+
+// Continue drawing for a hand at given coordinates
+export function continueDrawingAtPoint(pointerId, clientX, clientY) {
+  if (!state.leafletMap) return;
+
+  var hs = handDrawStates[pointerId];
+  if (!hs || !hs.isDrawing || !hs.activeStroke) return;
+
+  var latlng = stage4LatLngFromClientCoords(clientX, clientY);
+  if (!latlng) return;
+
+  var pt;
+  try {
+    pt = state.leafletMap.latLngToContainerPoint(latlng);
+  } catch (err) {
+    pt = null;
   }
-  updateStage4MapInteractivity();
+
+  if (pt && hs.lastContainerPt) {
+    var dx = pt.x - hs.lastContainerPt.x;
+    var dy = pt.y - hs.lastContainerPt.y;
+    if ((dx * dx + dy * dy) < 4) return;
+  }
+
+  if (pt) hs.lastContainerPt = pt;
+  hs.activeStroke.latlngs.push(latlng);
+
+  if (hs.activeStroke.glow) hs.activeStroke.glow.setLatLngs(hs.activeStroke.latlngs);
+  if (hs.activeStroke.main) hs.activeStroke.main.setLatLngs(hs.activeStroke.latlngs);
+}
+
+// Stop drawing for a hand
+export function stopDrawingForPointer(pointerId) {
+  var hs = handDrawStates[pointerId];
+  if (!hs) return;
+
+  hs.isDrawing = false;
+  hs.lastContainerPt = null;
+  hs.activeStroke = null;
+}
+
+// Legacy function - set draw mode for all (backward compatibility)
+export function setStage4DrawMode(enabled, color) {
+  if (!enabled) {
+    // Disable all drawing
+    for (var pid in handDrawStates) {
+      deactivateDrawingForPointer(parseInt(pid, 10));
+    }
+  }
+  state.stage4DrawMode = !!enabled;
+  if (color) state.stage4DrawColor = color;
+
+  updateDrawModeVisuals();
 }
 
 // Enable/disable Leaflet interactivity based on draw mode
 export function updateStage4MapInteractivity() {
   if (!state.leafletMap) return;
 
-  if (state.stage === 4 && state.viewMode === 'map' && state.stage4DrawMode) {
+  var anyDrawing = isAnyDrawingActive();
+
+  if (state.stage === 4 && state.viewMode === 'map' && anyDrawing) {
     if (state.leafletMap.dragging) state.leafletMap.dragging.disable();
     if (state.leafletMap.scrollWheelZoom) state.leafletMap.scrollWheelZoom.disable();
     if (state.leafletMap.doubleClickZoom) state.leafletMap.doubleClickZoom.disable();
@@ -216,7 +456,7 @@ export function initMaptasticIfNeeded() {
 export function cloneSticker(templateEl) {
   if (!templateEl) return null;
   var type = templateEl.dataset && templateEl.dataset.uiType ? templateEl.dataset.uiType : null;
-  if (type !== 'dot' && type !== 'draw') return null;
+  if (type !== 'dot' && type !== 'draw' && type !== 'note') return null;
 
   if (type === 'dot') {
     var dotEl = document.createElement('div');
@@ -228,6 +468,25 @@ export function cloneSticker(templateEl) {
     dotEl.style.top = templateEl.style.top || '0px';
     templateEl.parentElement.appendChild(dotEl);
     return dotEl;
+  }
+
+  if (type === 'note') {
+    var noteEl = document.createElement('div');
+    noteEl.className = 'ui-note ui-sticker-instance';
+    noteEl.dataset.uiType = 'note';
+    noteEl.dataset.expanded = 'false';
+    noteEl.dataset.noteText = '';
+    noteEl.style.left = templateEl.style.left || '0px';
+    noteEl.style.top = templateEl.style.top || '0px';
+
+    var iconEl = document.createElement('div');
+    iconEl.className = 'ui-note__icon';
+    iconEl.textContent = '📝';
+    noteEl.appendChild(iconEl);
+
+    templateEl.parentElement.appendChild(noteEl);
+    setupNoteSticker(noteEl);
+    return noteEl;
   }
 
   var drawEl = document.createElement('canvas');
@@ -251,10 +510,97 @@ export function cloneSticker(templateEl) {
   return drawEl;
 }
 
+// Setup note sticker interaction for Stage 4
+function setupNoteSticker(noteEl) {
+  noteEl.addEventListener('click', function (e) {
+    if (state.stage !== 4) return;
+    if (e.target.closest('.ui-note__form')) return;
+
+    var isExpanded = noteEl.dataset.expanded === 'true';
+    if (!isExpanded) {
+      expandNoteSticker(noteEl);
+    }
+  });
+}
+
+function expandNoteSticker(noteEl) {
+  if (noteEl.dataset.expanded === 'true') return;
+  noteEl.dataset.expanded = 'true';
+  noteEl.classList.add('ui-note--expanded');
+
+  var formEl = noteEl.querySelector('.ui-note__form');
+  if (!formEl) {
+    formEl = document.createElement('div');
+    formEl.className = 'ui-note__form';
+
+    var textareaEl = document.createElement('textarea');
+    textareaEl.className = 'ui-note__textarea';
+    textareaEl.placeholder = 'Enter your note...';
+    textareaEl.rows = 3;
+
+    var submitBtn = document.createElement('button');
+    submitBtn.className = 'ui-note__submit';
+    submitBtn.type = 'button';
+    submitBtn.textContent = 'Save';
+
+    submitBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var text = textareaEl.value.trim();
+      if (text) {
+        noteEl.dataset.noteText = text;
+        collapseNoteSticker(noteEl, text);
+      }
+    });
+
+    textareaEl.addEventListener('click', function (e) {
+      e.stopPropagation();
+    });
+
+    textareaEl.addEventListener('keydown', function (e) {
+      e.stopPropagation();
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        submitBtn.click();
+      }
+      if (e.key === 'Escape') {
+        collapseNoteSticker(noteEl);
+      }
+    });
+
+    formEl.appendChild(textareaEl);
+    formEl.appendChild(submitBtn);
+    noteEl.appendChild(formEl);
+
+    setTimeout(function () {
+      textareaEl.focus();
+    }, 50);
+  } else {
+    var textarea = formEl.querySelector('.ui-note__textarea');
+    if (textarea) {
+      textarea.value = noteEl.dataset.noteText || '';
+      setTimeout(function () {
+        textarea.focus();
+      }, 50);
+    }
+  }
+}
+
+function collapseNoteSticker(noteEl, savedText) {
+  noteEl.dataset.expanded = 'false';
+  noteEl.classList.remove('ui-note--expanded');
+
+  var iconEl = noteEl.querySelector('.ui-note__icon');
+  if (iconEl && savedText) {
+    iconEl.textContent = '📝✓';
+  }
+}
+
 // Start dragging a sticker
 export function startStickerDrag(el, startEvent) {
   if (!el || !startEvent) return;
-  var draggingClass = el.classList.contains('ui-dot') ? 'ui-dot--dragging' : 'ui-draw--dragging';
+  var draggingClass = 'ui-dot--dragging';
+  if (el.classList.contains('ui-draw')) draggingClass = 'ui-draw--dragging';
+  if (el.classList.contains('ui-note')) draggingClass = 'ui-note--dragging';
 
   var rect = el.getBoundingClientRect();
   var offsetX = startEvent.clientX - rect.left;
@@ -262,7 +608,17 @@ export function startStickerDrag(el, startEvent) {
   var pointerId = startEvent.pointerId;
 
   el.classList.add(draggingClass);
-  if (el.setPointerCapture) el.setPointerCapture(pointerId);
+
+  // Only capture pointer if it's a real browser pointer (ID < 100)
+  // Synthetic pointers from gesture system use IDs >= 100
+  var canCapture = pointerId < 100;
+  if (canCapture && el.setPointerCapture) {
+    try {
+      el.setPointerCapture(pointerId);
+    } catch (e) {
+      canCapture = false;
+    }
+  }
 
   function onMove(e) {
     if (e.pointerId !== pointerId) return;
@@ -276,7 +632,11 @@ export function startStickerDrag(el, startEvent) {
   function onEnd(e) {
     if (e.pointerId !== pointerId) return;
     el.classList.remove(draggingClass);
-    if (el.releasePointerCapture) el.releasePointerCapture(pointerId);
+    if (canCapture && el.releasePointerCapture) {
+      try {
+        el.releasePointerCapture(pointerId);
+      } catch (e) { /* ignore */ }
+    }
     document.removeEventListener('pointermove', onMove, true);
     document.removeEventListener('pointerup', onEnd, true);
     document.removeEventListener('pointercancel', onEnd, true);

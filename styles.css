@@ -893,6 +893,16 @@ h1 {
     transform: translateY(0);
 }
 
+.ui-setup-action-btn--primary {
+    background: rgba(76, 175, 80, 0.85);
+    border-color: rgba(76, 175, 80, 0.9);
+}
+
+.ui-setup-action-btn--primary:hover {
+    background: rgba(76, 175, 80, 1);
+    border-color: rgba(76, 175, 80, 1);
+}
+
 .ui-setup-input {
     flex: 1 1 auto;
     min-width: 0;
@@ -1060,6 +1070,141 @@ h1 {
 
 .ui-draw--dragging {
     opacity: 0.95;
+}
+
+.ui-draw--active {
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.85), 0 14px 30px rgba(0, 0, 0, 0.35);
+    transform: scale(1.1);
+    transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+/* Note button in setup panel */
+.ui-setup-note-btn {
+    height: 44px;
+    padding: 0 16px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 200, 87, 0.25);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.ui-setup-note-btn:hover {
+    background: rgba(255, 200, 87, 0.35);
+    border-color: rgba(255, 200, 87, 0.5);
+    transform: translateY(-1px);
+}
+
+.ui-setup-note-btn:active {
+    transform: translateY(0);
+}
+
+/* Note sticker element */
+.ui-note {
+    position: absolute;
+    left: 0;
+    top: 0;
+    min-width: 48px;
+    min-height: 48px;
+    border-radius: 12px;
+    background: rgba(255, 200, 87, 0.9);
+    border: 2px solid rgba(255, 255, 255, 0.85);
+    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35);
+    pointer-events: auto;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+    will-change: transform;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    transition: width 200ms ease, height 200ms ease, min-width 200ms ease;
+}
+
+.ui-note:active {
+    cursor: grabbing;
+}
+
+.ui-note--dragging {
+    opacity: 0.95;
+}
+
+.ui-note__icon {
+    font-size: 20px;
+    line-height: 1;
+}
+
+.ui-note--expanded {
+    min-width: 200px;
+    min-height: auto;
+    cursor: default;
+    padding: 12px;
+}
+
+.ui-note--expanded .ui-note__icon {
+    display: none;
+}
+
+.ui-note__form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+}
+
+.ui-note__textarea {
+    width: 100%;
+    min-height: 60px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    background: rgba(255, 255, 255, 0.95);
+    color: #333;
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    outline: none;
+}
+
+.ui-note__textarea:focus {
+    border-color: rgba(43, 184, 255, 0.9);
+    box-shadow: 0 0 0 2px rgba(43, 184, 255, 0.22);
+}
+
+.ui-note__textarea::placeholder {
+    color: #999;
+}
+
+.ui-note__submit {
+    align-self: flex-end;
+    padding: 6px 16px;
+    border-radius: 6px;
+    border: none;
+    background: rgba(76, 175, 80, 0.9);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 120ms ease;
+}
+
+.ui-note__submit:hover {
+    background: rgba(76, 175, 80, 1);
+}
+
+.ui-note.ui-sticker-instance {
+    min-width: 36px;
+    min-height: 36px;
+    padding: 6px;
+}
+
+.ui-note.ui-sticker-instance .ui-note__icon {
+    font-size: 16px;
 }
 
 .map-hint {

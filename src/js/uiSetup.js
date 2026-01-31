@@ -1,7 +1,10 @@
+import { state } from './state.js';
+
 export function initUiSetup(options) {
   options = options || {};
   var panelEl = options.panelEl;
   var overlayEl = options.overlayEl;
+  var onNextStage = options.onNextStage || null;
 
   if (!panelEl) throw new Error('initUiSetup: missing panelEl');
   if (!overlayEl) throw new Error('initUiSetup: missing overlayEl');
@@ -90,12 +93,23 @@ export function initUiSetup(options) {
   addDrawBtn.textContent = '+';
   addDrawBtn.setAttribute('aria-label', 'Add drawing');
 
+  var addNoteBtn = document.createElement('button');
+  addNoteBtn.className = 'ui-setup-note-btn';
+  addNoteBtn.type = 'button';
+  addNoteBtn.textContent = 'Note';
+  addNoteBtn.setAttribute('aria-label', 'Add note annotation');
+
+  addNoteBtn.addEventListener('click', function () {
+    createNote();
+  });
+
   var controlsRow = document.createElement('div');
   controlsRow.className = 'ui-setup-row';
   controlsRow.appendChild(colorSwatchBtn);
   controlsRow.appendChild(addDotBtn);
   controlsRow.appendChild(drawSwatchEl);
   controlsRow.appendChild(addDrawBtn);
+  controlsRow.appendChild(addNoteBtn);
   panelEl.appendChild(controlsRow);
 
   var footer = document.createElement('div');
@@ -111,6 +125,11 @@ export function initUiSetup(options) {
   importBtn.type = 'button';
   importBtn.textContent = 'Import';
 
+  var nextBtn = document.createElement('button');
+  nextBtn.className = 'ui-setup-action-btn ui-setup-action-btn--primary';
+  nextBtn.type = 'button';
+  nextBtn.textContent = 'Next →';
+
   var importFileEl = document.createElement('input');
   importFileEl.type = 'file';
   importFileEl.accept = 'application/json,.json';
@@ -122,8 +141,13 @@ export function initUiSetup(options) {
 
   footer.appendChild(exportBtn);
   footer.appendChild(importBtn);
+  footer.appendChild(nextBtn);
   panelEl.appendChild(footer);
   panelEl.appendChild(importFileEl);
+
+  nextBtn.addEventListener('click', function () {
+    if (onNextStage) onNextStage();
+  });
 
   redrawDrawPreview();
 
@@ -259,6 +283,133 @@ export function initUiSetup(options) {
     });
   }
 
+  function createNote() {
+    var noteEl = document.createElement('div');
+    noteEl.className = 'ui-note';
+    noteEl.dataset.uiType = 'note';
+    noteEl.dataset.expanded = 'false';
+
+    var iconEl = document.createElement('div');
+    iconEl.className = 'ui-note__icon';
+    iconEl.textContent = '📝';
+    noteEl.appendChild(iconEl);
+
+    overlayEl.appendChild(noteEl);
+
+    positionNoteAboveButton(noteEl);
+    makeDraggable(noteEl, { draggingClass: 'ui-note--dragging' });
+    setupNoteInteraction(noteEl);
+  }
+
+  function positionNoteAboveButton(noteEl) {
+    var btnRect = addNoteBtn.getBoundingClientRect();
+    var x = btnRect.left + btnRect.width / 2;
+    var y = btnRect.top;
+
+    noteEl.style.left = '0px';
+    noteEl.style.top = '0px';
+    noteEl.style.visibility = 'hidden';
+
+    requestAnimationFrame(function () {
+      var rect = noteEl.getBoundingClientRect();
+      var left = Math.max(8, Math.min(window.innerWidth - rect.width - 8, x - rect.width / 2));
+      var top = Math.max(8, y - 10 - rect.height);
+      noteEl.style.left = left + 'px';
+      noteEl.style.top = top + 'px';
+      noteEl.style.visibility = 'visible';
+    });
+  }
+
+  function setupNoteInteraction(noteEl) {
+    // Click to expand/collapse in Stage 4
+    // Only sticker instances (cloned notes) should expand - not the template
+    noteEl.addEventListener('click', function (e) {
+      if (state.stage !== 4) return;
+      if (!noteEl.classList.contains('ui-sticker-instance')) return; // Only expand cloned instances
+      if (e.target.closest('.ui-note__form')) return; // Don't toggle when clicking form elements
+
+      var isExpanded = noteEl.dataset.expanded === 'true';
+      if (!isExpanded) {
+        expandNote(noteEl);
+      }
+    });
+  }
+
+  function expandNote(noteEl) {
+    if (noteEl.dataset.expanded === 'true') return;
+    noteEl.dataset.expanded = 'true';
+    noteEl.classList.add('ui-note--expanded');
+
+    // Create form if not exists
+    var formEl = noteEl.querySelector('.ui-note__form');
+    if (!formEl) {
+      formEl = document.createElement('div');
+      formEl.className = 'ui-note__form';
+
+      var textareaEl = document.createElement('textarea');
+      textareaEl.className = 'ui-note__textarea';
+      textareaEl.placeholder = 'Enter your note...';
+      textareaEl.rows = 3;
+
+      var submitBtn = document.createElement('button');
+      submitBtn.className = 'ui-note__submit';
+      submitBtn.type = 'button';
+      submitBtn.textContent = 'Save';
+
+      submitBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var text = textareaEl.value.trim();
+        if (text) {
+          noteEl.dataset.noteText = text;
+          collapseNote(noteEl, text);
+        }
+      });
+
+      textareaEl.addEventListener('click', function (e) {
+        e.stopPropagation();
+      });
+
+      textareaEl.addEventListener('keydown', function (e) {
+        e.stopPropagation();
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          submitBtn.click();
+        }
+        if (e.key === 'Escape') {
+          collapseNote(noteEl);
+        }
+      });
+
+      formEl.appendChild(textareaEl);
+      formEl.appendChild(submitBtn);
+      noteEl.appendChild(formEl);
+
+      // Focus textarea
+      setTimeout(function () {
+        textareaEl.focus();
+      }, 50);
+    } else {
+      var textarea = formEl.querySelector('.ui-note__textarea');
+      if (textarea) {
+        textarea.value = noteEl.dataset.noteText || '';
+        setTimeout(function () {
+          textarea.focus();
+        }, 50);
+      }
+    }
+  }
+
+  function collapseNote(noteEl, savedText) {
+    noteEl.dataset.expanded = 'false';
+    noteEl.classList.remove('ui-note--expanded');
+
+    // Update icon to show it has content
+    var iconEl = noteEl.querySelector('.ui-note__icon');
+    if (iconEl && savedText) {
+      iconEl.textContent = '📝✓';
+    }
+  }
+
   function exportToJson() {
     var items = [];
     var children = overlayEl.children;
@@ -277,6 +428,8 @@ export function initUiSetup(options) {
         items.push({ type: 'dot', color: el.dataset.color || '#ff3b30', x: left, y: top });
       } else if (type === 'draw') {
         items.push({ type: 'draw', color: el.dataset.color || '#2bb8ff', x: left, y: top });
+      } else if (type === 'note') {
+        items.push({ type: 'note', text: el.dataset.noteText || '', x: left, y: top });
       }
     }
 
@@ -351,6 +504,26 @@ export function initUiSetup(options) {
         makeDraggable(drawEl, { draggingClass: 'ui-draw--dragging' });
         continue;
       }
+
+      if (item.type === 'note') {
+        var noteEl = document.createElement('div');
+        noteEl.className = 'ui-note';
+        noteEl.dataset.uiType = 'note';
+        noteEl.dataset.expanded = 'false';
+        noteEl.dataset.noteText = String(item.text || '');
+        noteEl.style.left = String(item.x || 0) + 'px';
+        noteEl.style.top = String(item.y || 0) + 'px';
+
+        var iconEl = document.createElement('div');
+        iconEl.className = 'ui-note__icon';
+        iconEl.textContent = item.text ? '📝✓' : '📝';
+        noteEl.appendChild(iconEl);
+
+        overlayEl.appendChild(noteEl);
+        makeDraggable(noteEl, { draggingClass: 'ui-note--dragging' });
+        setupNoteInteraction(noteEl);
+        continue;
+      }
     }
   }
 }
@@ -396,6 +569,14 @@ function makeDraggable(el, options) {
 
   el.addEventListener('pointerup', stopDrag);
   el.addEventListener('pointercancel', stopDrag);
+
+  // Right-click to remove element (only in Stage 3)
+  el.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    if (state.stage === 3 && el.parentNode) {
+      el.parentNode.removeChild(el);
+    }
+  });
 }
 
 function renderDrawIcon(canvasEl, color) {

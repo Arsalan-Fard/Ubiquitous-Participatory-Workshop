@@ -74,7 +74,13 @@ export function initApp() {
     updateLoadingMessage();
   });
 
-  initUiSetup({ panelEl: dom.uiSetupPanelEl, overlayEl: dom.uiSetupOverlayEl });
+  initUiSetup({
+    panelEl: dom.uiSetupPanelEl,
+    overlayEl: dom.uiSetupOverlayEl,
+    onNextStage: function () {
+      if (state.stage === 3) setStage(4);
+    }
+  });
 
   // Event listeners
   dom.startBtn.addEventListener('click', startCamera);
@@ -156,9 +162,13 @@ export function initApp() {
       return;
     }
 
-    var stickerEl = e.target.closest('.ui-dot');
+    // Handle dot and note stickers
+    var stickerEl = e.target.closest('.ui-dot, .ui-note');
     if (!stickerEl || !dom.uiSetupOverlayEl.contains(stickerEl)) return;
     if (e.button !== 0) return;
+
+    // Don't start drag if clicking inside expanded note form
+    if (stickerEl.classList.contains('ui-note') && e.target.closest('.ui-note__form')) return;
 
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -263,6 +273,16 @@ export function initApp() {
     state.pinchHoldMs = clamp(v, 0.25, 8.0) * 1000;
     dom.pinchHoldTimeValueEl.textContent = (state.pinchHoldMs / 1000).toFixed(1);
     saveNumberSetting('pinchHoldMs', state.pinchHoldMs);
+  });
+
+  dom.fingerSmoothingSliderEl.value = String(state.fingerSmoothingFactor.toFixed(2));
+  dom.fingerSmoothingValueEl.textContent = state.fingerSmoothingFactor.toFixed(2);
+  dom.fingerSmoothingSliderEl.addEventListener('input', function() {
+    var v = parseFloat(dom.fingerSmoothingSliderEl.value);
+    if (!isFinite(v)) return;
+    state.fingerSmoothingFactor = clamp(v, 0.1, 1.0);
+    dom.fingerSmoothingValueEl.textContent = state.fingerSmoothingFactor.toFixed(2);
+    saveNumberSetting('fingerSmoothingFactor', state.fingerSmoothingFactor);
   });
 
   // ============== Helper Functions ==============
@@ -910,12 +930,29 @@ export function initApp() {
 
         var pinchRatio = (pinchDistance !== null && handScale && handScale > 1e-6) ? pinchDistance / handScale : null;
 
+        // Use handedness as stable identifier, fallback to index if not available
+        var handId = hand.handedness || ('hand' + i);
+
+        // Apply exponential smoothing to reduce jitter
+        var smoothedX = tip.x;
+        var smoothedY = tip.y;
+        var smoothingFactor = state.fingerSmoothingFactor;
+
+        if (state.smoothedFingerPositions[handId]) {
+          var prev = state.smoothedFingerPositions[handId];
+          smoothedX = prev.x + smoothingFactor * (tip.x - prev.x);
+          smoothedY = prev.y + smoothingFactor * (tip.y - prev.y);
+        }
+
+        state.smoothedFingerPositions[handId] = { x: smoothedX, y: smoothedY };
+
         indexTipPoints.push({
-          x: tip.x,
-          y: tip.y,
+          x: smoothedX,
+          y: smoothedY,
           pinchDistance: pinchDistance,
           pinchRatio: pinchRatio,
-          handedness: hand.handedness || null
+          handedness: hand.handedness || null,
+          handId: handId
         });
       }
 
@@ -924,6 +961,17 @@ export function initApp() {
         state.lastIndexTipPoint = indexTipPoint;
         state.lastIndexTipPoints = indexTipPoints;
         state.lastIndexTipTimeMs = performance.now();
+      }
+
+      // Clean up smoothed positions for hands no longer visible
+      var activeHandIds = {};
+      for (var j = 0; j < indexTipPoints.length; j++) {
+        activeHandIds[indexTipPoints[j].handId] = true;
+      }
+      for (var hid in state.smoothedFingerPositions) {
+        if (!activeHandIds[hid]) {
+          delete state.smoothedFingerPositions[hid];
+        }
       }
     }
 
@@ -984,16 +1032,16 @@ export function initApp() {
       }
     }
 
-    // Map finger dots
-    var isSurfaceSetupMapView = (state.stage === 2 || state.stage === 3) && state.viewMode === 'map';
-    if (isSurfaceSetupMapView && state.surfaceHomography && usableIndexTipPoints && usableIndexTipPoints.length > 0) {
+    // Map finger dots (show in Stage 2, 3, and 4)
+    var isMapViewWithHomography = (state.stage === 2 || state.stage === 3 || state.stage === 4) && state.viewMode === 'map';
+    if (isMapViewWithHomography && state.surfaceHomography && usableIndexTipPoints && usableIndexTipPoints.length > 0) {
       updateMapFingerDots(usableIndexTipPoints);
     } else {
       setMapFingerDotsVisible(false);
     }
 
-    // Gesture handling
-    if (state.stage === 3 && state.viewMode === 'map') {
+    // Gesture handling (dwell-to-click and pinch-to-drag for Stage 3 and 4)
+    if ((state.stage === 3 || state.stage === 4) && state.viewMode === 'map') {
       handleStage3Gestures(usableIndexTipPoints);
     } else {
       resetStage3Gestures();
@@ -1033,25 +1081,28 @@ export function initApp() {
     }
 
     var anyVisible = false;
-    var tolerance = 0.12;
+    // Allow extrapolation beyond surface bounds to reach UI outside maptastic
+    // Limit to reasonable range to avoid dots going too far off screen
+    var maxExtrapolation = 1.5; // Allow up to 150% beyond surface in any direction
 
     for (var i = 0; i < required; i++) {
       var point = cameraPoints[i];
       var dotEl = dom.mapFingerDotsEl.children[i];
       var uv = applyHomography(state.surfaceHomography, point.x, point.y);
 
-      if (!uv || uv.x < -tolerance || uv.x > 1 + tolerance || uv.y < -tolerance || uv.y > 1 + tolerance) {
+      if (!uv || uv.x < -maxExtrapolation || uv.x > 1 + maxExtrapolation || uv.y < -maxExtrapolation || uv.y > 1 + maxExtrapolation) {
         dotEl.classList.add('hidden');
         continue;
       }
 
-      var u = clamp(uv.x, 0, 1);
-      var v = clamp(uv.y, 0, 1);
-      var x = u * w;
-      var y = v * h;
+      // Don't clamp - allow extrapolation beyond maptastic bounds
+      var x = uv.x * w;
+      var y = uv.y * h;
 
       dotEl.style.transform = 'translate(' + (x - 7) + 'px, ' + (y - 7) + 'px)';
       dotEl.classList.remove('hidden');
+      // Store handId on the DOM element for gesture tracking
+      dotEl.dataset.handId = point.handId || ('hand' + i);
       anyVisible = true;
     }
 
