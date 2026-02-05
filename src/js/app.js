@@ -448,6 +448,10 @@ export function initApp() {
   // Map Session functionality
   var mapSessions = [];
   var mapSessionCounter = 0;
+  var currentMapSessionIndex = -1;
+
+  // Tool tag detection state (for edge-triggered actions)
+  var toolTagInSurface = {}; // tagId -> boolean (was in surface last frame)
 
   dom.mapSessionAddBtnEl.addEventListener('click', function(e) {
     e.preventDefault();
@@ -528,7 +532,92 @@ export function initApp() {
         break;
       }
     }
+    // Adjust current index if needed
+    if (currentMapSessionIndex >= mapSessions.length) {
+      currentMapSessionIndex = mapSessions.length - 1;
+    }
     renderMapSessionList();
+  }
+
+  function goToNextMapSession() {
+    if (mapSessions.length === 0) return;
+    currentMapSessionIndex++;
+    if (currentMapSessionIndex >= mapSessions.length) {
+      currentMapSessionIndex = 0; // Wrap around
+    }
+    var session = mapSessions[currentMapSessionIndex];
+    if (session && state.leafletMap) {
+      state.leafletMap.setView([session.lat, session.lng], session.zoom);
+    }
+  }
+
+  function goToPrevMapSession() {
+    if (mapSessions.length === 0) return;
+    currentMapSessionIndex--;
+    if (currentMapSessionIndex < 0) {
+      currentMapSessionIndex = mapSessions.length - 1; // Wrap around
+    }
+    var session = mapSessions[currentMapSessionIndex];
+    if (session && state.leafletMap) {
+      state.leafletMap.setView([session.lat, session.lng], session.zoom);
+    }
+  }
+
+  // Check if a point (in camera coordinates) is within the calibrated surface
+  function isPointInSurface(x, y) {
+    if (!state.surfaceHomography) return false;
+    var uv = applyHomography(state.surfaceHomography, x, y);
+    if (!uv) return false;
+    // Point is in surface if UV coordinates are between 0 and 1
+    return uv.x >= 0 && uv.x <= 1 && uv.y >= 0 && uv.y <= 1;
+  }
+
+  // Process tool tags for edge-triggered actions (called each frame)
+  function processToolTagActions(detections) {
+    if (!detections || !Array.isArray(detections)) return;
+    if (state.stage !== 3 && state.stage !== 4) return;
+    if (state.viewMode !== 'map') return;
+
+    // Build detection lookup by ID
+    var detById = {};
+    for (var i = 0; i < detections.length; i++) {
+      var d = detections[i];
+      if (!d || !d.center) continue;
+      var id = typeof d.id === 'number' ? d.id : parseInt(d.id, 10);
+      if (isFinite(id)) detById[id] = d;
+    }
+
+    // Get selected tag IDs for next/back
+    var nextTagId = dom.nextTagSelectEl.value ? parseInt(dom.nextTagSelectEl.value, 10) : null;
+    var backTagId = dom.backTagSelectEl.value ? parseInt(dom.backTagSelectEl.value, 10) : null;
+
+    // Process Next tag
+    if (nextTagId && isFinite(nextTagId)) {
+      var nextDet = detById[nextTagId];
+      var nextInSurface = nextDet ? isPointInSurface(nextDet.center.x, nextDet.center.y) : false;
+      var nextWasInSurface = !!toolTagInSurface[nextTagId];
+
+      // Edge trigger: just entered surface
+      if (nextInSurface && !nextWasInSurface) {
+        goToNextMapSession();
+      }
+
+      toolTagInSurface[nextTagId] = nextInSurface;
+    }
+
+    // Process Back tag
+    if (backTagId && isFinite(backTagId)) {
+      var backDet = detById[backTagId];
+      var backInSurface = backDet ? isPointInSurface(backDet.center.x, backDet.center.y) : false;
+      var backWasInSurface = !!toolTagInSurface[backTagId];
+
+      // Edge trigger: just entered surface
+      if (backInSurface && !backWasInSurface) {
+        goToPrevMapSession();
+      }
+
+      toolTagInSurface[backTagId] = backInSurface;
+    }
   }
 
   // Tracking offset sliders (for AprilTags 11-20)
@@ -1522,6 +1611,9 @@ export function initApp() {
     } else {
       setMapApriltagDotsVisible(false);
     }
+
+    // Process tool tag actions (next/back, etc.)
+    processToolTagActions(state.lastApriltagDetections || []);
 
     state.animationId = requestAnimationFrame(processFrame);
   }
