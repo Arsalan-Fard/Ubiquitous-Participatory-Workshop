@@ -209,6 +209,18 @@
                     </select>
                 </div>
                 <div class="tool-tag-controls__item">
+                    <span class="tool-tag-controls__label">Next</span>
+                    <select id="nextTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Next">
+                        <option value="">None</option>
+                    </select>
+                </div>
+                <div class="tool-tag-controls__item">
+                    <span class="tool-tag-controls__label">Back</span>
+                    <select id="backTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Back">
+                        <option value="">None</option>
+                    </select>
+                </div>
+                <div class="tool-tag-controls__item">
                     <span class="tool-tag-controls__label">Import</span>
                     <button id="geojsonImportBtn" class="tool-tag-controls__import-btn" type="button" aria-label="Import GeoJSON file">+</button>
                 </div>
@@ -217,6 +229,13 @@
         </div>
         <div id="uiSetupOverlay" class="ui-setup-overlay hidden" aria-hidden="true"></div>
         <div id="uiSetupPanel" class="ui-setup-panel hidden" aria-hidden="true"></div>
+        <div id="mapSessionPanel" class="map-session-panel hidden" aria-hidden="true">
+            <div class="map-session-panel__header">
+                <span class="map-session-panel__title">Map Session</span>
+                <button id="mapSessionAddBtn" class="map-session-panel__add-btn" type="button" aria-label="Save current map view">+</button>
+            </div>
+            <div id="mapSessionList" class="map-session-panel__list"></div>
+        </div>
         <div id="mapFingerCursor" class="map-finger-cursor hidden" aria-hidden="true">
             <svg class="map-finger-cursor__ring" viewBox="0 0 36 36" aria-hidden="true">
                 <circle class="map-finger-cursor__track" cx="18" cy="18" r="15.915" />

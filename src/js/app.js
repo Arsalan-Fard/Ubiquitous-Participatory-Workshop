@@ -334,7 +334,9 @@ export function initApp() {
     dom.shortestPathTagSelectEl,
     dom.panTagSelectEl,
     dom.zoomTagSelectEl,
-    dom.eraserTagSelectEl
+    dom.eraserTagSelectEl,
+    dom.nextTagSelectEl,
+    dom.backTagSelectEl
   ];
   for (var si = 0; si < toolTagSelects.length; si++) {
     var sel = toolTagSelects[si];
@@ -441,6 +443,92 @@ export function initApp() {
     dom.geojsonFilesListEl.appendChild(row);
 
     updateToolTagSelectsDisabled();
+  }
+
+  // Map Session functionality
+  var mapSessions = [];
+  var mapSessionCounter = 0;
+
+  dom.mapSessionAddBtnEl.addEventListener('click', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!state.leafletMap) return;
+
+    var center = state.leafletMap.getCenter();
+    var zoom = state.leafletMap.getZoom();
+    mapSessionCounter++;
+
+    var session = {
+      id: mapSessionCounter,
+      name: 'View ' + mapSessionCounter,
+      lat: center.lat,
+      lng: center.lng,
+      zoom: zoom
+    };
+
+    mapSessions.push(session);
+    renderMapSessionList();
+  });
+
+  function renderMapSessionList() {
+    dom.mapSessionListEl.textContent = '';
+
+    for (var i = 0; i < mapSessions.length; i++) {
+      var session = mapSessions[i];
+      var item = document.createElement('div');
+      item.className = 'map-session-item';
+      item.dataset.sessionId = String(session.id);
+
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'map-session-item__name';
+      nameSpan.textContent = session.name;
+
+      var deleteBtn = document.createElement('button');
+      deleteBtn.className = 'map-session-item__delete';
+      deleteBtn.type = 'button';
+      deleteBtn.textContent = '×';
+      deleteBtn.setAttribute('aria-label', 'Delete ' + session.name);
+
+      (function(sessionId) {
+        item.addEventListener('click', function(e) {
+          if (e.target === deleteBtn) return;
+          restoreMapSession(sessionId);
+        });
+
+        deleteBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          deleteMapSession(sessionId);
+        });
+      })(session.id);
+
+      item.appendChild(nameSpan);
+      item.appendChild(deleteBtn);
+      dom.mapSessionListEl.appendChild(item);
+    }
+  }
+
+  function restoreMapSession(sessionId) {
+    var session = null;
+    for (var i = 0; i < mapSessions.length; i++) {
+      if (mapSessions[i].id === sessionId) {
+        session = mapSessions[i];
+        break;
+      }
+    }
+    if (!session || !state.leafletMap) return;
+
+    state.leafletMap.setView([session.lat, session.lng], session.zoom);
+  }
+
+  function deleteMapSession(sessionId) {
+    for (var i = 0; i < mapSessions.length; i++) {
+      if (mapSessions[i].id === sessionId) {
+        mapSessions.splice(i, 1);
+        break;
+      }
+    }
+    renderMapSessionList();
   }
 
   // Tracking offset sliders (for AprilTags 11-20)
@@ -626,6 +714,9 @@ export function initApp() {
 
     dom.uiSetupPanelEl.classList.toggle('hidden', !panelVisible);
     dom.uiSetupPanelEl.setAttribute('aria-hidden', panelVisible ? 'false' : 'true');
+
+    dom.mapSessionPanelEl.classList.toggle('hidden', !panelVisible);
+    dom.mapSessionPanelEl.setAttribute('aria-hidden', panelVisible ? 'false' : 'true');
 
     if (!overlayVisible) resetStage3Gestures();
   }

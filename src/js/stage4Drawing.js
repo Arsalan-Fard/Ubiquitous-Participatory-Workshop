@@ -495,8 +495,8 @@ export function updateStage4MapInteractivity() {
     return;
   }
 
-  // Keep map panning disabled (non-draggable) across all stages.
-  if (state.leafletMap.dragging) state.leafletMap.dragging.disable();
+  // Enable map panning for mouse interactions
+  if (state.leafletMap.dragging) state.leafletMap.dragging.enable();
   if (state.leafletMap.scrollWheelZoom) state.leafletMap.scrollWheelZoom.enable();
   if (state.leafletMap.doubleClickZoom) state.leafletMap.doubleClickZoom.enable();
 }
@@ -522,7 +522,7 @@ export function initLeafletIfNeeded() {
     zoomControl: false,
     attributionControl: false,
     inertia: true,
-    dragging: false
+    dragging: true
   });
 
   // IP Paris campus, Palaiseau
