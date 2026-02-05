@@ -107,6 +107,9 @@ export var state = {
   leafletTileLayer: null,
   maptasticInitialized: false,
 
+  // Map session state
+  currentMapSessionId: null,
+
   // UI state
   hamburgerOpen: false,
   viewToggleDockParent: null,

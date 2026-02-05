@@ -1141,6 +1141,15 @@ h1 {
     border-color: rgba(255, 255, 255, 0.2);
 }
 
+.map-session-item--active {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.35);
+}
+
+.map-session-item--active:hover {
+    background: rgba(255, 255, 255, 0.18);
+}
+
 .map-session-item__name {
     flex: 1;
     font-size: 12px;

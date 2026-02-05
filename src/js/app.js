@@ -50,7 +50,8 @@ import {
   initMaptasticIfNeeded,
   updateStickerMappingForCurrentView,
   cloneSticker,
-  startStickerDrag
+  startStickerDrag,
+  filterPolylinesBySession
 } from './stage4Drawing.js';
 
 export function initApp() {
@@ -472,6 +473,8 @@ export function initApp() {
 
     mapSessions.push(session);
     renderMapSessionList();
+    // Activate the newly created session
+    activateMapSession(mapSessions.length - 1);
   });
 
   function renderMapSessionList() {
@@ -513,16 +516,12 @@ export function initApp() {
   }
 
   function restoreMapSession(sessionId) {
-    var session = null;
     for (var i = 0; i < mapSessions.length; i++) {
       if (mapSessions[i].id === sessionId) {
-        session = mapSessions[i];
-        break;
+        activateMapSession(i);
+        return;
       }
     }
-    if (!session || !state.leafletMap) return;
-
-    state.leafletMap.setView([session.lat, session.lng], session.zoom);
   }
 
   function deleteMapSession(sessionId) {
@@ -545,10 +544,7 @@ export function initApp() {
     if (currentMapSessionIndex >= mapSessions.length) {
       currentMapSessionIndex = 0; // Wrap around
     }
-    var session = mapSessions[currentMapSessionIndex];
-    if (session && state.leafletMap) {
-      state.leafletMap.setView([session.lat, session.lng], session.zoom);
-    }
+    activateMapSession(currentMapSessionIndex);
   }
 
   function goToPrevMapSession() {
@@ -557,9 +553,64 @@ export function initApp() {
     if (currentMapSessionIndex < 0) {
       currentMapSessionIndex = mapSessions.length - 1; // Wrap around
     }
-    var session = mapSessions[currentMapSessionIndex];
-    if (session && state.leafletMap) {
+    activateMapSession(currentMapSessionIndex);
+  }
+
+  function activateMapSession(index) {
+    if (index < 0 || index >= mapSessions.length) {
+      state.currentMapSessionId = null;
+      filterElementsBySession(null);
+      return;
+    }
+    var session = mapSessions[index];
+    if (!session) return;
+
+    state.currentMapSessionId = session.id;
+    currentMapSessionIndex = index;
+
+    if (state.leafletMap) {
       state.leafletMap.setView([session.lat, session.lng], session.zoom);
+    }
+
+    filterElementsBySession(session.id);
+    updateMapSessionListHighlight();
+  }
+
+  function filterElementsBySession(sessionId) {
+    if (!dom.uiSetupOverlayEl) return;
+
+    // Filter sticker instances and labels
+    var elements = dom.uiSetupOverlayEl.querySelectorAll('.ui-sticker-instance, .ui-label');
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      var elSessionId = el.dataset.sessionId;
+
+      if (!sessionId) {
+        // No active session - show all elements
+        el.classList.remove('hidden');
+      } else if (elSessionId === String(sessionId)) {
+        // Element belongs to current session - show it
+        el.classList.remove('hidden');
+      } else if (elSessionId) {
+        // Element belongs to different session - hide it
+        el.classList.add('hidden');
+      } else {
+        // Element has no session (created before sessions) - show it
+        el.classList.remove('hidden');
+      }
+    }
+
+    // Filter Leaflet polyline drawings
+    filterPolylinesBySession(sessionId);
+  }
+
+  function updateMapSessionListHighlight() {
+    var items = dom.mapSessionListEl.querySelectorAll('.map-session-item');
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      var itemId = parseInt(item.dataset.sessionId, 10);
+      var isActive = mapSessions[currentMapSessionIndex] && mapSessions[currentMapSessionIndex].id === itemId;
+      item.classList.toggle('map-session-item--active', isActive);
     }
   }
 

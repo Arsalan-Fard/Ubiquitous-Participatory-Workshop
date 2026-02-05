@@ -316,6 +316,13 @@ export function stage4PointerdownOnMap(e) {
     interactive: false
   }).addTo(state.stage4DrawLayer);
 
+  // Tag polylines with session ID
+  var sessionId = state.currentMapSessionId;
+  if (sessionId) {
+    glow.sessionId = sessionId;
+    main.sessionId = sessionId;
+  }
+
   hs.activeStroke = { latlngs: latlngs, glow: glow, main: main };
 
   // Don't capture synthetic pointers
@@ -424,6 +431,13 @@ export function startDrawingAtPoint(pointerId, clientX, clientY) {
     lineJoin: 'round',
     interactive: false
   }).addTo(state.stage4DrawLayer);
+
+  // Tag polylines with session ID
+  var sessionId = state.currentMapSessionId;
+  if (sessionId) {
+    glow.sessionId = sessionId;
+    main.sessionId = sessionId;
+  }
 
   hs.activeStroke = { latlngs: latlngs, glow: glow, main: main };
 }
@@ -567,11 +581,15 @@ export function cloneSticker(templateEl) {
   var type = templateEl.dataset && templateEl.dataset.uiType ? templateEl.dataset.uiType : null;
   if (type !== 'dot' && type !== 'draw' && type !== 'note') return null;
 
+  // Get current session ID for tagging
+  var sessionId = state.currentMapSessionId;
+
   if (type === 'dot') {
     var dotEl = document.createElement('div');
     dotEl.className = 'ui-dot ui-sticker-instance';
     dotEl.dataset.uiType = 'dot';
     dotEl.dataset.color = templateEl.dataset && templateEl.dataset.color ? templateEl.dataset.color : (templateEl.style.background || '#ff3b30');
+    if (sessionId) dotEl.dataset.sessionId = String(sessionId);
     dotEl.style.background = dotEl.dataset.color;
     dotEl.style.left = templateEl.style.left || '0px';
     dotEl.style.top = templateEl.style.top || '0px';
@@ -586,6 +604,7 @@ export function cloneSticker(templateEl) {
     noteEl.dataset.expanded = 'false';
     noteEl.dataset.noteText = (templateEl.dataset && templateEl.dataset.noteText) ? templateEl.dataset.noteText : '';
     noteEl.dataset.color = templateEl.dataset && templateEl.dataset.color ? templateEl.dataset.color : (templateEl.style.background || '#ffc857');
+    if (sessionId) noteEl.dataset.sessionId = String(sessionId);
     noteEl.style.background = noteEl.dataset.color;
     noteEl.style.left = templateEl.style.left || '0px';
     noteEl.style.top = templateEl.style.top || '0px';
@@ -609,6 +628,7 @@ export function cloneSticker(templateEl) {
   drawEl.className = 'ui-draw ui-sticker-instance';
   drawEl.dataset.uiType = 'draw';
   drawEl.dataset.color = templateEl.dataset && templateEl.dataset.color ? templateEl.dataset.color : '#2bb8ff';
+  if (sessionId) drawEl.dataset.sessionId = String(sessionId);
   drawEl.width = 24;
   drawEl.height = 24;
   drawEl.style.left = templateEl.style.left || '0px';
@@ -713,6 +733,35 @@ function collapseNoteSticker(noteEl, savedText) {
 
   var hasText = !!String(noteEl.dataset.noteText || '').trim();
   noteEl.classList.toggle('ui-note--sticker', hasText);
+}
+
+// Filter polylines by session ID
+export function filterPolylinesBySession(sessionId) {
+  if (!state.stage4DrawLayer) return;
+
+  state.stage4DrawLayer.eachLayer(function(layer) {
+    // Check if this is a polyline with a sessionId property
+    if (!layer.setStyle) return; // Not a polyline
+
+    var layerSessionId = layer.sessionId;
+
+    if (!sessionId) {
+      // No active session - show all polylines
+      layer.setStyle({ opacity: layer._originalOpacity || (layer.options.weight === 14 ? 0.25 : 0.95) });
+    } else if (layerSessionId === sessionId) {
+      // Polyline belongs to current session - show it
+      layer.setStyle({ opacity: layer._originalOpacity || (layer.options.weight === 14 ? 0.25 : 0.95) });
+    } else if (layerSessionId) {
+      // Polyline belongs to different session - hide it
+      if (!layer._originalOpacity) {
+        layer._originalOpacity = layer.options.opacity;
+      }
+      layer.setStyle({ opacity: 0 });
+    } else {
+      // Polyline has no session (created before sessions) - show it
+      layer.setStyle({ opacity: layer._originalOpacity || (layer.options.weight === 14 ? 0.25 : 0.95) });
+    }
+  });
 }
 
 // Start dragging a sticker

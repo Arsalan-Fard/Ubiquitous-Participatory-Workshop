@@ -306,6 +306,9 @@ export function initUiSetup(options) {
     labelEl.className = 'ui-label';
     labelEl.textContent = text;
     labelEl.dataset.uiType = 'label';
+    // Tag with current session ID
+    var sessionId = state.currentMapSessionId;
+    if (sessionId) labelEl.dataset.sessionId = String(sessionId);
     overlayEl.appendChild(labelEl);
 
     positionLabelAboveInput(labelEl);
