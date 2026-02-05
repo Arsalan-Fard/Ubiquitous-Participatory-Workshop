@@ -92,6 +92,10 @@ export var state = {
   stage3ParticipantCount: 0,
   stage3ParticipantTagIds: [],
 
+  // AprilTag tracking offset (for tags 11-20)
+  apriltagTrackingOffsetX: loadNumberSetting('apriltagTrackingOffsetX', 0, -200, 200),
+  apriltagTrackingOffsetY: loadNumberSetting('apriltagTrackingOffsetY', 0, -200, 200),
+
   // AprilTag detections (latest frame)
   lastApriltagDetections: null,
   lastApriltagDetections2: null,

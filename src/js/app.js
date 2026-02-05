@@ -228,6 +228,8 @@ export function initApp() {
   updateUiSetupPanelVisibility();
   updateEdgeGuidesVisibility();
   updateGestureControlsVisibility();
+  updateTrackingOffsetControlsVisibility();
+  updateToolTagControlsVisibility();
   updateHamburgerMenuVisibility();
   updateBackState();
   updateCameraSelectVisibility();
@@ -326,6 +328,142 @@ export function initApp() {
     saveNumberSetting('drawingDeselectTimeoutMs', state.drawingDeselectTimeoutMs);
   });
 
+  // Populate tool tag selects with AprilTags 21-40
+  var toolTagSelects = [
+    dom.isovistTagSelectEl,
+    dom.shortestPathTagSelectEl,
+    dom.panTagSelectEl,
+    dom.zoomTagSelectEl,
+    dom.eraserTagSelectEl
+  ];
+  for (var si = 0; si < toolTagSelects.length; si++) {
+    var sel = toolTagSelects[si];
+    for (var tagNum = 21; tagNum <= 40; tagNum++) {
+      var opt = document.createElement('option');
+      opt.value = String(tagNum);
+      opt.textContent = String(tagNum);
+      sel.appendChild(opt);
+    }
+  }
+
+  // Track all tag selects including dynamically added ones for geojson files
+  var geojsonFileSelects = [];
+
+  // Update disabled state of options when selection changes
+  function updateToolTagSelectsDisabled() {
+    var allSelects = toolTagSelects.concat(geojsonFileSelects);
+    var selectedValues = [];
+    for (var i = 0; i < allSelects.length; i++) {
+      var val = allSelects[i].value;
+      if (val) selectedValues.push(val);
+    }
+    for (var i = 0; i < allSelects.length; i++) {
+      var sel = allSelects[i];
+      var options = sel.querySelectorAll('option');
+      for (var j = 0; j < options.length; j++) {
+        var opt = options[j];
+        if (!opt.value) continue; // Skip "None" option
+        var isSelectedElsewhere = selectedValues.indexOf(opt.value) !== -1 && sel.value !== opt.value;
+        opt.disabled = isSelectedElsewhere;
+      }
+    }
+  }
+
+  for (var si = 0; si < toolTagSelects.length; si++) {
+    toolTagSelects[si].addEventListener('change', updateToolTagSelectsDisabled);
+  }
+
+  // GeoJSON file import
+  dom.geojsonImportBtnEl.addEventListener('click', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    dom.geojsonFileInputEl.click();
+  });
+
+  dom.geojsonFileInputEl.addEventListener('change', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    var files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      addGeojsonFileRow(file);
+    }
+
+    // Reset input so same file can be selected again
+    dom.geojsonFileInputEl.value = '';
+  });
+
+  function addGeojsonFileRow(file) {
+    var row = document.createElement('div');
+    row.className = 'tool-tag-controls__file-row';
+
+    var nameSpan = document.createElement('span');
+    nameSpan.className = 'tool-tag-controls__file-name';
+    nameSpan.textContent = file.name;
+    nameSpan.title = file.name;
+
+    var sel = document.createElement('select');
+    sel.className = 'tool-tag-controls__select';
+    sel.setAttribute('aria-label', 'Select AprilTag for ' + file.name);
+
+    var noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = 'None';
+    sel.appendChild(noneOpt);
+
+    for (var tagNum = 21; tagNum <= 40; tagNum++) {
+      var opt = document.createElement('option');
+      opt.value = String(tagNum);
+      opt.textContent = String(tagNum);
+      sel.appendChild(opt);
+    }
+
+    sel.addEventListener('change', updateToolTagSelectsDisabled);
+    geojsonFileSelects.push(sel);
+
+    var removeBtn = document.createElement('button');
+    removeBtn.className = 'tool-tag-controls__file-remove';
+    removeBtn.type = 'button';
+    removeBtn.textContent = '×';
+    removeBtn.setAttribute('aria-label', 'Remove ' + file.name);
+    removeBtn.addEventListener('click', function() {
+      var idx = geojsonFileSelects.indexOf(sel);
+      if (idx !== -1) geojsonFileSelects.splice(idx, 1);
+      row.parentNode.removeChild(row);
+      updateToolTagSelectsDisabled();
+    });
+
+    row.appendChild(nameSpan);
+    row.appendChild(sel);
+    row.appendChild(removeBtn);
+    dom.geojsonFilesListEl.appendChild(row);
+
+    updateToolTagSelectsDisabled();
+  }
+
+  // Tracking offset sliders (for AprilTags 11-20)
+  dom.trackingOffsetXSliderEl.value = String(Math.round(state.apriltagTrackingOffsetX));
+  dom.trackingOffsetXValueEl.textContent = String(Math.round(state.apriltagTrackingOffsetX));
+  dom.trackingOffsetXSliderEl.addEventListener('input', function() {
+    var v = parseFloat(dom.trackingOffsetXSliderEl.value);
+    if (!isFinite(v)) return;
+    state.apriltagTrackingOffsetX = clamp(v, -200, 200);
+    dom.trackingOffsetXValueEl.textContent = String(Math.round(state.apriltagTrackingOffsetX));
+    saveNumberSetting('apriltagTrackingOffsetX', state.apriltagTrackingOffsetX);
+  });
+
+  dom.trackingOffsetYSliderEl.value = String(Math.round(state.apriltagTrackingOffsetY));
+  dom.trackingOffsetYValueEl.textContent = String(Math.round(state.apriltagTrackingOffsetY));
+  dom.trackingOffsetYSliderEl.addEventListener('input', function() {
+    var v = parseFloat(dom.trackingOffsetYSliderEl.value);
+    if (!isFinite(v)) return;
+    state.apriltagTrackingOffsetY = clamp(v, -200, 200);
+    dom.trackingOffsetYValueEl.textContent = String(Math.round(state.apriltagTrackingOffsetY));
+    saveNumberSetting('apriltagTrackingOffsetY', state.apriltagTrackingOffsetY);
+  });
+
   // ============== Helper Functions ==============
 
   function showLoading(message) {
@@ -404,6 +542,8 @@ export function initApp() {
     updateUiSetupPanelVisibility();
     updateEdgeGuidesVisibility();
     updateGestureControlsVisibility();
+    updateTrackingOffsetControlsVisibility();
+    updateToolTagControlsVisibility();
     updateStereoUIVisibility(videoContainer2);
     updateHamburgerMenuVisibility();
     updateBackState();
@@ -441,6 +581,8 @@ export function initApp() {
       updateUiSetupPanelVisibility();
       updateEdgeGuidesVisibility();
       updateGestureControlsVisibility();
+      updateTrackingOffsetControlsVisibility();
+      updateToolTagControlsVisibility();
       updateHamburgerMenuVisibility();
       if (state.leafletMap) state.leafletMap.invalidateSize();
       setStage4DrawMode(state.stage4DrawMode);
@@ -454,6 +596,8 @@ export function initApp() {
       updateUiSetupPanelVisibility();
       updateEdgeGuidesVisibility();
       updateGestureControlsVisibility();
+      updateTrackingOffsetControlsVisibility();
+      updateToolTagControlsVisibility();
       updateHamburgerMenuVisibility();
       setStage4DrawMode(false);
       updateStage4MapInteractivity();
@@ -496,6 +640,18 @@ export function initApp() {
     var visible = state.stage === 3 && state.viewMode === 'camera';
     dom.gestureControlsEl.classList.toggle('hidden', !visible);
     dom.gestureControlsEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  }
+
+  function updateTrackingOffsetControlsVisibility() {
+    var visible = state.stage === 3 && state.viewMode === 'map';
+    dom.trackingOffsetControlsEl.classList.toggle('hidden', !visible);
+    dom.trackingOffsetControlsEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  }
+
+  function updateToolTagControlsVisibility() {
+    var visible = state.stage === 3 && state.viewMode === 'map';
+    dom.toolTagControlsEl.classList.toggle('hidden', !visible);
+    dom.toolTagControlsEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
   }
 
   function updateHamburgerMenuVisibility() {
@@ -1383,6 +1539,12 @@ export function initApp() {
 
       var x = uv.x * w;
       var y = uv.y * h;
+
+      // Apply tracking offset for participant tags (11-20) in screen coordinates
+      if (tagId >= 11 && tagId <= 20) {
+        x += state.apriltagTrackingOffsetX;
+        y += state.apriltagTrackingOffsetY;
+      }
       dot.style.transform = 'translate(' + (x - 7) + 'px, ' + (y - 7) + 'px)';
       dot.classList.remove('hidden');
       dot.dataset.tagId = String(tagId);

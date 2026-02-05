@@ -160,6 +160,61 @@
             <div id="mapApriltagDots" class="map-finger-dots hidden" aria-hidden="true"></div>
             <div id="mapFingerDots" class="map-finger-dots hidden" aria-hidden="true"></div>
         </div>
+        <div id="trackingOffsetControls" class="tracking-offset-controls hidden" aria-hidden="true">
+            <div class="tracking-offset-controls__item">
+                <div class="tracking-offset-controls__header">
+                    <span class="tracking-offset-controls__label">Offset X</span>
+                    <span id="trackingOffsetXValue" class="tracking-offset-controls__value">0</span>
+                </div>
+                <input id="trackingOffsetXSlider" class="tracking-offset-controls__slider" type="range" min="-200" max="200" step="1" value="0" aria-label="AprilTag tracking horizontal offset in pixels" />
+            </div>
+            <div class="tracking-offset-controls__item">
+                <div class="tracking-offset-controls__header">
+                    <span class="tracking-offset-controls__label">Offset Y</span>
+                    <span id="trackingOffsetYValue" class="tracking-offset-controls__value">0</span>
+                </div>
+                <input id="trackingOffsetYSlider" class="tracking-offset-controls__slider" type="range" min="-200" max="200" step="1" value="0" aria-label="AprilTag tracking vertical offset in pixels" />
+            </div>
+        </div>
+        <div id="toolTagControls" class="tool-tag-controls hidden" aria-hidden="true">
+            <div class="tool-tag-controls__row">
+                <div class="tool-tag-controls__item">
+                    <span class="tool-tag-controls__label">Isovist</span>
+                    <select id="isovistTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Isovist">
+                        <option value="">None</option>
+                    </select>
+                </div>
+                <div class="tool-tag-controls__item">
+                    <span class="tool-tag-controls__label">Shortest-path</span>
+                    <select id="shortestPathTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Shortest-path">
+                        <option value="">None</option>
+                    </select>
+                </div>
+                <div class="tool-tag-controls__item">
+                    <span class="tool-tag-controls__label">Pan</span>
+                    <select id="panTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Pan">
+                        <option value="">None</option>
+                    </select>
+                </div>
+                <div class="tool-tag-controls__item">
+                    <span class="tool-tag-controls__label">Zoom</span>
+                    <select id="zoomTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Zoom">
+                        <option value="">None</option>
+                    </select>
+                </div>
+                <div class="tool-tag-controls__item">
+                    <span class="tool-tag-controls__label">Eraser</span>
+                    <select id="eraserTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Eraser">
+                        <option value="">None</option>
+                    </select>
+                </div>
+                <div class="tool-tag-controls__item">
+                    <span class="tool-tag-controls__label">Import</span>
+                    <button id="geojsonImportBtn" class="tool-tag-controls__import-btn" type="button" aria-label="Import GeoJSON file">+</button>
+                </div>
+            </div>
+            <div id="geojsonFilesList" class="tool-tag-controls__files"></div>
+        </div>
         <div id="uiSetupOverlay" class="ui-setup-overlay hidden" aria-hidden="true"></div>
         <div id="uiSetupPanel" class="ui-setup-panel hidden" aria-hidden="true"></div>
         <div id="mapFingerCursor" class="map-finger-cursor hidden" aria-hidden="true">
@@ -185,6 +240,8 @@
     <script src="https://cdn.jsdelivr.net/npm/maptastic@3.0.0/dist/maptastic.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script type="module" src="src/js/main.js"></script>
+
+    <input id="geojsonFileInput" type="file" accept=".geojson,.json" style="display:none" aria-hidden="true" />
 
     <div id="cameraSourceModal" class="modal hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Add camera source">
         <div class="modal-backdrop"></div>
