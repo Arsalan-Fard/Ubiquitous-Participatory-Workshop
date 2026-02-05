@@ -15,46 +15,14 @@ export function initUiSetup(options) {
   var currentDrawColor = '#2bb8ff';
   var currentNoteColor = '#ffc857';
 
-  // Stage 3 input mode / participants (AprilTag mode)
-  if (state.stage3InputMode !== 'hand' && state.stage3InputMode !== 'apriltag') {
-    state.stage3InputMode = state.apriltagEnabled ? 'apriltag' : 'hand';
+  // AprilTags only (hand tracking removed)
+  state.apriltagEnabled = true;
+  if (state.dom && state.dom.apriltagToggleEl) {
+    state.dom.apriltagToggleEl.checked = true;
   }
 
-  var inputModeToggleLabel = document.createElement('label');
-  inputModeToggleLabel.className = 'toggle-inline ui-setup-detection-toggle';
-  inputModeToggleLabel.setAttribute('aria-label', 'Select input mode: Hand gestures or AprilTag');
-
-  var handModeLabelEl = document.createElement('span');
-  handModeLabelEl.className = 'toggle-inline-label';
-  handModeLabelEl.textContent = 'Hand';
-
-  var switchEl = document.createElement('span');
-  switchEl.className = 'switch';
-
-  var inputModeToggleEl = document.createElement('input');
-  inputModeToggleEl.type = 'checkbox';
-  inputModeToggleEl.checked = state.stage3InputMode === 'apriltag';
-  inputModeToggleEl.setAttribute('aria-label', 'Toggle AprilTag mode');
-
-  var sliderEl = document.createElement('span');
-  sliderEl.className = 'slider';
-  sliderEl.setAttribute('aria-hidden', 'true');
-
-  switchEl.appendChild(inputModeToggleEl);
-  switchEl.appendChild(sliderEl);
-
-  var apriltagModeLabelEl = document.createElement('span');
-  apriltagModeLabelEl.className = 'toggle-inline-label';
-  apriltagModeLabelEl.textContent = 'AprilTag';
-
-  inputModeToggleLabel.appendChild(handModeLabelEl);
-  inputModeToggleLabel.appendChild(switchEl);
-  inputModeToggleLabel.appendChild(apriltagModeLabelEl);
-  panelEl.appendChild(inputModeToggleLabel);
-
   var participantsRowEl = document.createElement('div');
-  participantsRowEl.className = 'ui-setup-row hidden';
-  participantsRowEl.setAttribute('aria-hidden', 'true');
+  participantsRowEl.className = 'ui-setup-row';
 
   var participantsInputEl = document.createElement('input');
   participantsInputEl.className = 'ui-setup-input ui-setup-input--narrow';
@@ -69,8 +37,7 @@ export function initUiSetup(options) {
   panelEl.appendChild(participantsRowEl);
 
   var participantSelectsRowEl = document.createElement('div');
-  participantSelectsRowEl.className = 'ui-setup-row ui-setup-row--wrap hidden';
-  participantSelectsRowEl.setAttribute('aria-hidden', 'true');
+  participantSelectsRowEl.className = 'ui-setup-row ui-setup-row--wrap';
   panelEl.appendChild(participantSelectsRowEl);
 
   var row = document.createElement('div');
@@ -92,25 +59,6 @@ export function initUiSetup(options) {
   row.appendChild(inputEl);
   row.appendChild(addBtn);
   panelEl.appendChild(row);
-
-  function setApriltagEnabled(enabled) {
-    state.stage3InputMode = enabled ? 'apriltag' : 'hand';
-
-    // Keep global Apriltag toggle in sync (used by app processing).
-    if (state.dom && state.dom.apriltagToggleEl) {
-      state.dom.apriltagToggleEl.checked = !!enabled;
-      try {
-        state.dom.apriltagToggleEl.dispatchEvent(new Event('change', { bubbles: true }));
-      } catch (e) { /* ignore */ }
-    } else {
-      state.apriltagEnabled = !!enabled;
-    }
-
-    // Toggle gesture controls visibility based on mode
-    if (state.dom && state.dom.gestureControlsEl) {
-      state.dom.gestureControlsEl.classList.toggle('gesture-controls--apriltag', !!enabled);
-    }
-  }
 
   function sanitizeParticipantCount(v) {
     var n = parseInt(v, 10);
@@ -172,41 +120,25 @@ export function initUiSetup(options) {
     }
   }
 
-  function updateApriltagUiVisibility() {
-    var apriltagOn = !!inputModeToggleEl.checked;
-    participantsRowEl.classList.toggle('hidden', !apriltagOn);
-    participantsRowEl.setAttribute('aria-hidden', apriltagOn ? 'false' : 'true');
-    participantSelectsRowEl.classList.toggle('hidden', !apriltagOn);
-    participantSelectsRowEl.setAttribute('aria-hidden', apriltagOn ? 'false' : 'true');
-
-    if (!apriltagOn) return;
-
+  function updateParticipantsUi() {
     var count = sanitizeParticipantCount(participantsInputEl.value);
     state.stage3ParticipantCount = count;
     renderParticipantSelects(count);
+
+    var showSelects = count > 0;
+    participantSelectsRowEl.classList.toggle('hidden', !showSelects);
+    participantSelectsRowEl.setAttribute('aria-hidden', showSelects ? 'false' : 'true');
   }
 
-  inputModeToggleEl.addEventListener('change', function () {
-    var enabled = !!inputModeToggleEl.checked;
-    setApriltagEnabled(enabled);
-
-    // If enabling and count isn't set, default to 1 to show the selects immediately.
-    if (enabled && !sanitizeParticipantCount(participantsInputEl.value)) {
-      participantsInputEl.value = String(state.stage3ParticipantCount || 1);
-    }
-
-    updateApriltagUiVisibility();
-  });
-
   participantsInputEl.addEventListener('input', function () {
-    var count = sanitizeParticipantCount(participantsInputEl.value);
-    state.stage3ParticipantCount = count;
-    renderParticipantSelects(count);
+    updateParticipantsUi();
   });
 
-  // Initialize visibility on first render
-  setApriltagEnabled(inputModeToggleEl.checked);
-  updateApriltagUiVisibility();
+  // Initialize on first render
+  if (!sanitizeParticipantCount(participantsInputEl.value)) {
+    participantsInputEl.value = String(state.stage3ParticipantCount || 1);
+  }
+  updateParticipantsUi();
 
   var colorInputEl = document.createElement('input');
   colorInputEl.type = 'color';

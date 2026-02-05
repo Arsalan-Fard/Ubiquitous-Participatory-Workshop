@@ -27,8 +27,7 @@ var nextPointerId = 100; // Start at 100 to avoid conflicts with real pointer ID
 export function getAllMapPointerViewportPoints() {
   var dom = state.dom;
 
-  var useApriltags = state.stage3InputMode === 'apriltag' && dom.mapApriltagDotsEl && !dom.mapApriltagDotsEl.classList.contains('hidden');
-  var dotsEl = useApriltags ? dom.mapApriltagDotsEl : dom.mapFingerDotsEl;
+  var dotsEl = dom.mapApriltagDotsEl || dom.mapFingerDotsEl;
 
   if (!dotsEl || dotsEl.classList.contains('hidden')) return [];
   if (!dotsEl.children || dotsEl.children.length < 1) return [];
@@ -304,23 +303,32 @@ function processPointerGesture(handIndex, pointer, handData) {
   ps.prevPointer = ps.lastPointer;
   ps.lastPointer = pointer;
 
-  var pinchDistance = handData && typeof handData.pinchDistance === 'number' ? handData.pinchDistance : null;
-  var pinchRatio = handData && typeof handData.pinchRatio === 'number' ? handData.pinchRatio : null;
   var isApriltag = !!(handData && handData.isApriltag);
-
-  var isPinching = false;
-  if (isApriltag) {
-    // AprilTags don't "pinch"; we emulate pinch-hold by being tracked.
-    // Proximity gating (within ~20px of an interactable) prevents the ring from appearing when nothing is under the pointer.
-    isPinching = true;
-  } else if (pinchDistance !== null) {
-    isPinching = pinchDistance <= state.pinchDistanceThresholdPx;
-  } else if (pinchRatio !== null) {
-    isPinching = pinchRatio <= state.PINCH_RATIO_THRESHOLD;
-  }
+  var isTouch = (handData && typeof handData.isTouch === 'boolean') ? handData.isTouch : null;
 
   var nowMs = performance.now();
   var threshold = state.holdStillThresholdPx;
+
+  // In AprilTag mode with stereo touch sensing, hovering should not trigger dwell-clicks or pinch-hold interactions.
+  if (isApriltag && isTouch === false) {
+    if (ps.dragActive) endDragForPointer(ps, pointer);
+    if (ps.isDrawing) {
+      ps.isDrawing = false;
+      stopDrawingForPointer(ps.dragPointerId);
+    }
+    ps.dwellStartMs = 0;
+    ps.dwellAnchor = null;
+    ps.dwellFired = false;
+    ps.pinchStartMs = 0;
+    ps.pinchAnchor = null;
+    ps.pinchFired = false;
+    ps.pinchFiredAt = null;
+    updatePointerCursor(handIndex, pointer, 0, null);
+    ps.prevPointerTimeMs = nowMs;
+    return;
+  }
+
+  var isPinching = isApriltag ? true : false;
 
   if (isApriltag) {
     // Sudden movement cancels pinch/drag immediately.

@@ -120,16 +120,6 @@ h1 {
     margin-bottom: 8px;
 }
 
-/* Hide hand-only settings when in AprilTag mode */
-.gesture-controls--apriltag .gesture-controls__group--hand-only {
-    display: none;
-}
-
-/* Hide AprilTag-only settings when in hand mode */
-.gesture-controls:not(.gesture-controls--apriltag) .gesture-controls__group--apriltag-only {
-    display: none;
-}
-
 .video-container {
     position: relative;
     display: inline-block;
@@ -331,6 +321,19 @@ h1 {
     animation: surfaceBtnFlash 220ms ease-out;
 }
 
+.surface-btn--apriltag {
+    background: rgba(0, 255, 0, 0.12);
+    border-color: rgba(0, 255, 0, 0.55);
+    color: #00ff00;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.surface-btn--apriltag:hover {
+    background: rgba(0, 255, 0, 0.20);
+    border-color: rgba(0, 255, 0, 0.75);
+}
+
 /* ============== Stereo Calibration Buttons ============== */
 
 .stereo-calib-buttons {
@@ -406,6 +409,31 @@ h1 {
     align-items: center;
     gap: 12px;
     margin-top: 4px;
+}
+
+.stereo-calib-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.stereo-calib-tag__label {
+    font-size: 12px;
+    color: #aaa;
+    font-weight: 600;
+}
+
+.stereo-calib-tag__input {
+    width: 72px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(0, 0, 0, 0.25);
+    color: #fff;
 }
 
 .stereo-calib-status {

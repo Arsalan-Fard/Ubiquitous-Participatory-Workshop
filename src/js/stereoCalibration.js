@@ -134,7 +134,7 @@ export function updateStereoCalibButtonsUI() {
       statusEl.textContent = 'Calibrated!';
       statusEl.className = 'stereo-calib-status stereo-calib-status--success';
     } else if (state.stereoArmedPointIndex !== null) {
-      statusEl.textContent = 'Touch point ' + (state.stereoArmedPointIndex + 1) + ' with both cameras seeing your finger...';
+      statusEl.textContent = 'Move your calibration AprilTag to point ' + (state.stereoArmedPointIndex + 1) + ' (visible in both cameras)...';
       statusEl.className = 'stereo-calib-status stereo-calib-status--armed';
     } else {
       statusEl.textContent = '';
@@ -156,16 +156,16 @@ export function countValidStereoPoints() {
 }
 
 // Capture a stereo calibration point from both cameras
-export function captureStereoCalibPoint(fingertip1, fingertip2) {
+export function captureStereoCalibPoint(point1, point2) {
   if (state.stereoArmedPointIndex === null) return;
-  if (!fingertip1 || !fingertip2) return;
+  if (!point1 || !point2) return;
 
   var index = state.stereoArmedPointIndex;
   state.stereoCalibrationPoints[index] = {
     index: index,
     worldPos: state.STEREO_WORLD_POSITIONS[index],
-    camera1Pixel: { x: fingertip1.x, y: fingertip1.y },
-    camera2Pixel: { x: fingertip2.x, y: fingertip2.y },
+    camera1Pixel: { x: point1.x, y: point1.y },
+    camera2Pixel: { x: point2.x, y: point2.y },
     timestamp: Date.now()
   };
 

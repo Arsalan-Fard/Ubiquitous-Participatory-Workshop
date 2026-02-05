@@ -3,3 +3,4 @@
 3- Setup UI
 4- Drawing guides
 5- Touch detection
+6- not mapping to maptastic

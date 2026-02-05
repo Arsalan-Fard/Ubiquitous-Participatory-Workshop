@@ -30,11 +30,7 @@ export var state = {
   // Detection state
   detector: null,
   detectorLoading: false,
-  apriltagEnabled: false,
-  handDetector: null,
-  handDetectorReady: false,
-  handDetector2: null,
-  handDetectorReady2: false,
+  apriltagEnabled: true,
 
   // Canvas state
   overlayCtx: null,
@@ -52,6 +48,7 @@ export var state = {
 
   // Stereo calibration
   stereoMode: false,
+  stereoCalibTagId: loadNumberSetting('stereoCalibTagId', 5, 0, 9999),
   stereoCalibrationPoints: [],
   stereoProjectionMatrix1: null,
   stereoProjectionMatrix2: null,
@@ -62,18 +59,7 @@ export var state = {
   ELEVATED_Z: 0.1,
   STEREO_WORLD_POSITIONS: null, // Set during init
 
-  // Finger tracking
-  lastIndexTipPoint: null,
-  lastIndexTipPoints: null,
-  lastIndexTipTimeMs: 0,
-
-  // Finger smoothing (exponential moving average)
-  // Higher value = more smoothing (0-1, where 1 = no smoothing, 0.1 = heavy smoothing)
-  fingerSmoothingFactor: loadNumberSetting('fingerSmoothingFactor', 0.4, 0.1, 1.0),
-  smoothedFingerPositions: {}, // keyed by handId: { x, y }
-
   // Gesture controls (stage 3)
-  pinchDistanceThresholdPx: loadNumberSetting('pinchDistanceThresholdPx', 45, 10, 120),
   holdStillThresholdPx: loadNumberSetting('holdStillThresholdPx', 14, 2, 80),
   dwellClickMs: loadNumberSetting('dwellClickMs', 3000, 250, 8000),
   pinchHoldMs: loadNumberSetting('pinchHoldMs', 3000, 250, 8000),
@@ -82,7 +68,6 @@ export var state = {
   strokeStopDelayMs: loadNumberSetting('strokeStopDelayMs', 50, 0, 500),
   pointerLostTimeoutMs: loadNumberSetting('pointerLostTimeoutMs', 300, 0, 1000),
   drawingDeselectTimeoutMs: loadNumberSetting('drawingDeselectTimeoutMs', 3000, 500, 10000),
-  PINCH_RATIO_THRESHOLD: 0.35,
   dwellAnchor: null,
   dwellStartMs: 0,
   dwellFired: false,
@@ -103,8 +88,7 @@ export var state = {
   stage4ActiveStroke: null,
   stage4DrawLayer: null,
 
-  // Stage 3 participant setup (AprilTag mode)
-  stage3InputMode: 'hand', // 'hand' | 'apriltag'
+  // Stage 3 participant setup (AprilTags)
   stage3ParticipantCount: 0,
   stage3ParticipantTagIds: [],
 

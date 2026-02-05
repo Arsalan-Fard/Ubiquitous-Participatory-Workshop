@@ -6,8 +6,6 @@
 import { getDom } from './dom.js';
 import { startCameraStream, stopCameraStream, waitForVideoMetadata, startCameraById } from './camera.js';
 import { initDetector } from './detector.js';
-import { initHandDetector } from './handDetector.js';
-import { rgbaToGrayscale } from './grayscale.js';
 import { clearOverlay, drawDetections, drawSurface, drawStereoCalibPoints } from './render.js';
 import { initUiSetup } from './uiSetup.js';
 import { triangulatePoint } from './stereo.js';
@@ -63,17 +61,16 @@ export function initApp() {
   state.overlayCtx = dom.overlay.getContext('2d');
   state.captureCanvas = document.createElement('canvas');
   state.captureCtx = state.captureCanvas.getContext('2d', { willReadFrequently: true });
-  state.apriltagEnabled = dom.apriltagToggleEl.checked;
+  state.apriltagEnabled = true;
+  dom.apriltagToggleEl.checked = true;
+
+  // AprilTag-based surface calibration (Stage 2, single-camera)
+  var apriltagSurfaceStableCount = 0;
+  var apriltagSurfaceLastCorners = null;
+  var apriltagSurfaceSmoothedCorners = null;
 
   var videoContainer = document.getElementById('videoContainer1');
   var videoContainer2 = document.getElementById('videoContainer2');
-
-  // Initialize hand detector
-  initHandDetector({ videoContainer: videoContainer }).then(function(h) {
-    state.handDetector = h;
-    state.handDetectorReady = true;
-    updateLoadingMessage();
-  });
 
   initUiSetup({
     panelEl: dom.uiSetupPanelEl,
@@ -88,7 +85,6 @@ export function initApp() {
   dom.nextBtn.addEventListener('click', onNextClicked);
   dom.backBtn.addEventListener('click', onBackClicked);
   dom.stopBtn.addEventListener('click', stopCamera);
-  dom.apriltagToggleEl.addEventListener('change', onApriltagToggleChanged);
   dom.viewToggleEl.addEventListener('change', onViewToggleChanged);
 
   dom.cameraCountSelectEl.addEventListener('change', function() {
@@ -127,6 +123,16 @@ export function initApp() {
   dom.surfaceBtn2.addEventListener('click', function() { armCorner(1, setViewMode); });
   dom.surfaceBtn3.addEventListener('click', function() { armCorner(2, setViewMode); });
   dom.surfaceBtn4.addEventListener('click', function() { armCorner(3, setViewMode); });
+
+  // AprilTag calibration button - captures all 4 corners at once from visible AprilTags
+  dom.apriltagCalibBtn.addEventListener('click', function() {
+    if (state.stage !== 2) return;
+    if (state.viewMode !== 'camera') {
+      dom.viewToggleEl.checked = false;
+      setViewMode('camera');
+    }
+    triggerApriltagCalibration();
+  });
 
   // Stereo calibration
   setupStereoCalibButtonListeners(setError);
@@ -231,21 +237,6 @@ export function initApp() {
   updateStereoUIVisibility(videoContainer2);
 
   // Gesture control sliders
-  // Set initial visibility based on input mode
-  if (state.stage3InputMode === 'apriltag') {
-    dom.gestureControlsEl.classList.add('gesture-controls--apriltag');
-  }
-
-  dom.pinchThresholdSliderEl.value = String(Math.round(state.pinchDistanceThresholdPx));
-  dom.pinchThresholdValueEl.textContent = String(Math.round(state.pinchDistanceThresholdPx));
-  dom.pinchThresholdSliderEl.addEventListener('input', function() {
-    var v = parseFloat(dom.pinchThresholdSliderEl.value);
-    if (!isFinite(v)) return;
-    state.pinchDistanceThresholdPx = clamp(v, 10, 120);
-    dom.pinchThresholdValueEl.textContent = String(Math.round(state.pinchDistanceThresholdPx));
-    saveNumberSetting('pinchDistanceThresholdPx', state.pinchDistanceThresholdPx);
-  });
-
   dom.holdStillThresholdSliderEl.value = String(Math.round(state.holdStillThresholdPx));
   dom.holdStillThresholdValueEl.textContent = String(Math.round(state.holdStillThresholdPx));
   dom.holdStillThresholdSliderEl.addEventListener('input', function() {
@@ -276,14 +267,13 @@ export function initApp() {
     saveNumberSetting('pinchHoldMs', state.pinchHoldMs);
   });
 
-  dom.fingerSmoothingSliderEl.value = String(state.fingerSmoothingFactor.toFixed(2));
-  dom.fingerSmoothingValueEl.textContent = state.fingerSmoothingFactor.toFixed(2);
-  dom.fingerSmoothingSliderEl.addEventListener('input', function() {
-    var v = parseFloat(dom.fingerSmoothingSliderEl.value);
+  dom.stereoCalibTagIdEl.value = String(Math.round(state.stereoCalibTagId));
+  dom.stereoCalibTagIdEl.addEventListener('input', function () {
+    var v = parseFloat(dom.stereoCalibTagIdEl.value);
     if (!isFinite(v)) return;
-    state.fingerSmoothingFactor = clamp(v, 0.1, 1.0);
-    dom.fingerSmoothingValueEl.textContent = state.fingerSmoothingFactor.toFixed(2);
-    saveNumberSetting('fingerSmoothingFactor', state.fingerSmoothingFactor);
+    state.stereoCalibTagId = clamp(Math.round(v), 0, 9999);
+    dom.stereoCalibTagIdEl.value = String(state.stereoCalibTagId);
+    saveNumberSetting('stereoCalibTagId', state.stereoCalibTagId);
   });
 
   dom.apriltagMoveWindowSliderEl.value = String(Math.round(state.apriltagSuddenMoveWindowMs));
@@ -350,8 +340,8 @@ export function initApp() {
   function updateLoadingMessage() {
     if (state.cameraStarting) {
       showLoading('Starting camera...');
-    } else if (state.cameraReady && !state.handDetectorReady) {
-      showLoading('Loading hand detection...');
+    } else if (state.cameraReady && state.detectorLoading) {
+      showLoading('Loading AprilTag detection...');
     } else {
       hideLoading();
     }
@@ -474,12 +464,10 @@ export function initApp() {
   }
 
   function onApriltagToggleChanged() {
-    state.apriltagEnabled = dom.apriltagToggleEl.checked;
-    if (!state.apriltagEnabled) {
-      clearOverlay(state.overlayCtx, dom.overlay);
-    } else {
-      loadDetectorIfNeeded();
-    }
+    // AprilTag detection is required (hand tracking removed).
+    state.apriltagEnabled = true;
+    dom.apriltagToggleEl.checked = true;
+    loadDetectorIfNeeded();
   }
 
   // ============== UI Visibility ==============
@@ -550,12 +538,15 @@ export function initApp() {
   function loadDetectorIfNeeded() {
     if (!state.apriltagEnabled || state.detector || state.detectorLoading) return;
     state.detectorLoading = true;
+    updateLoadingMessage();
     initDetector().then(function(d) {
       state.detector = d;
       state.detectorLoading = false;
+      updateLoadingMessage();
     }, function(err) {
       console.error('Failed to initialize detector:', err);
       state.detectorLoading = false;
+      updateLoadingMessage();
     });
   }
 
@@ -600,7 +591,7 @@ export function initApp() {
       updateLoadingMessage();
       setNextEnabled(true);
 
-      if (state.apriltagEnabled) loadDetectorIfNeeded();
+      loadDetectorIfNeeded();
 
       var cameraCount = parseInt(dom.cameraCountSelectEl.value, 10);
       state.stereoMode = cameraCount === 2;
@@ -665,8 +656,6 @@ export function initApp() {
       var overlay2 = document.getElementById('overlay2');
       if (overlay2) { overlay2.width = video2.videoWidth; overlay2.height = video2.videoHeight; }
 
-      state.handDetector2 = await initHandDetector({ videoContainer: videoContainer2, instanceId: 'camera2' });
-      state.handDetectorReady2 = !!state.handDetector2;
       return true;
     } catch (err) {
       console.error('Failed to start second camera:', err);
@@ -676,7 +665,6 @@ export function initApp() {
 
   function stopSecondCamera() {
     if (state.currentStream2) { stopCameraStream(state.currentStream2); state.currentStream2 = null; }
-    if (state.handDetector2 && state.handDetector2.destroy) { state.handDetector2.destroy(); state.handDetector2 = null; state.handDetectorReady2 = false; }
     state.captureCanvas2 = null;
     state.captureCtx2 = null;
   }
@@ -728,7 +716,7 @@ export function initApp() {
     updateLoadingMessage();
     setNextEnabled(true);
 
-    if (state.apriltagEnabled) loadDetectorIfNeeded();
+    loadDetectorIfNeeded();
 
     var cameraCount = parseInt(dom.cameraCountSelectEl.value, 10);
     state.stereoMode = cameraCount === 2;
@@ -868,6 +856,137 @@ export function initApp() {
     processFrame();
   }
 
+  function getApriltagDetectionById(detections, tagId) {
+    if (!Array.isArray(detections) || !detections.length) return null;
+    var wanted = parseInt(tagId, 10);
+    if (!isFinite(wanted)) return null;
+
+    for (var i = 0; i < detections.length; i++) {
+      var d = detections[i];
+      if (!d) continue;
+      var id = typeof d.id === 'number' ? d.id : parseInt(d.id, 10);
+      if (id === wanted) return d;
+    }
+    return null;
+  }
+
+  function getApriltagInnerCorner(det, cornerIndex) {
+    // Get the inner corner of an AprilTag based on its position in the surface layout.
+    // AprilTag corners order varies by library. We find the corner closest to the tag center
+    // that is in the direction toward the surface center.
+    //
+    // For a 4-tag calibration setup, we want the corner pointing toward the surface center:
+    // - Tag at top-left (cornerIndex 0): inner corner is toward bottom-right
+    // - Tag at top-right (cornerIndex 1): inner corner is toward bottom-left
+    // - Tag at bottom-right (cornerIndex 2): inner corner is toward top-left
+    // - Tag at bottom-left (cornerIndex 3): inner corner is toward top-right
+    if (!det || !Array.isArray(det.corners) || det.corners.length < 4) return null;
+
+    // Calculate tag center from corners
+    var cx = 0, cy = 0;
+    for (var i = 0; i < 4; i++) {
+      cx += det.corners[i].x;
+      cy += det.corners[i].y;
+    }
+    cx /= 4;
+    cy /= 4;
+
+    // Determine which direction the inner corner should be relative to tag center
+    // cornerIndex: 0=top-left tag, 1=top-right tag, 2=bottom-right tag, 3=bottom-left tag
+    // Inner direction: 0->bottom-right, 1->bottom-left, 2->top-left, 3->top-right
+    var dirX = (cornerIndex === 0 || cornerIndex === 3) ? 1 : -1;  // right for 0,3; left for 1,2
+    var dirY = (cornerIndex === 0 || cornerIndex === 1) ? 1 : -1;  // down for 0,1; up for 2,3
+
+    // Find the corner that is in the inner direction from the tag center
+    var best = null;
+    var bestScore = -Infinity;
+    for (var j = 0; j < 4; j++) {
+      var c = det.corners[j];
+      var dx = c.x - cx;
+      var dy = c.y - cy;
+      var score = dx * dirX + dy * dirY;
+      if (score > bestScore) {
+        bestScore = score;
+        best = c;
+      }
+    }
+
+    return best ? { x: best.x, y: best.y } : null;
+  }
+
+  function getSurfaceCornerFromApriltags(detections, cornerIndex, width, height) {
+    if (typeof cornerIndex !== 'number' || cornerIndex < 0 || cornerIndex > 3) return null;
+    if (!width || !height) return null;
+
+    // Convention: corner buttons 1-4 map to tags 1-4
+    // 1: top-left, 2: top-right, 3: bottom-right, 4: bottom-left
+    var tagId = cornerIndex + 1;
+    var det = getApriltagDetectionById(detections, tagId);
+    if (!det) return null;
+
+    return getApriltagInnerCorner(det, cornerIndex);
+  }
+
+  function computeApriltagSurfaceCorners(detections, width, height) {
+    var corners = [null, null, null, null];
+    for (var i = 0; i < 4; i++) {
+      corners[i] = getSurfaceCornerFromApriltags(detections, i, width, height);
+      if (!corners[i]) return null;
+    }
+    return corners;
+  }
+
+  function cornersAreClose(a, b, tolPx) {
+    if (!a || !b || a.length !== 4 || b.length !== 4) return false;
+    var tol2 = (tolPx || 6) * (tolPx || 6);
+    for (var i = 0; i < 4; i++) {
+      if (!a[i] || !b[i]) return false;
+      var dx = a[i].x - b[i].x;
+      var dy = a[i].y - b[i].y;
+      if (dx * dx + dy * dy > tol2) return false;
+    }
+    return true;
+  }
+
+  function cloneCorners(corners) {
+    var out = [null, null, null, null];
+    if (!corners || corners.length !== 4) return out;
+    for (var i = 0; i < 4; i++) {
+      var c = corners[i];
+      out[i] = c ? { x: c.x, y: c.y } : null;
+    }
+    return out;
+  }
+
+  function triggerApriltagCalibration() {
+    // Capture all 4 corners at once from the currently visible AprilTags (IDs 1-4)
+    if (!state.apriltagEnabled || !state.lastApriltagDetections || state.lastApriltagDetections.length < 4) {
+      setError('AprilTag calibration requires all 4 tags (IDs 1-4) to be visible.');
+      return;
+    }
+
+    var width = state.captureCanvas.width;
+    var height = state.captureCanvas.height;
+    var corners = computeApriltagSurfaceCorners(state.lastApriltagDetections, width, height);
+
+    if (!corners) {
+      setError('Could not detect all 4 AprilTags. Make sure tags 1-4 are visible.');
+      return;
+    }
+
+    // Apply the captured corners
+    state.surfaceCorners = corners;
+    updateSurfaceButtonsUI();
+    recomputeSurfaceHomographyIfReady();
+
+    // Flash all corner buttons to indicate success
+    for (var i = 0; i < 4; i++) {
+      flashCornerButton(i);
+    }
+
+    setError('');
+  }
+
   async function processFrame() {
     if (!state.isProcessing) return;
 
@@ -898,22 +1017,8 @@ export function initApp() {
       clearOverlay(state.overlayCtx, dom.overlay);
     }
 
-    var hands = [];
-    var hands2 = [];
     var imageData2 = null;
-
-    // Hand detection camera 1
-    if (state.handDetector) {
-      try {
-        hands = (await state.handDetector.detect(imageData.data, width, height)) || [];
-      } catch (err) {
-        console.error('Hand detection error (camera 1):', err);
-      }
-    }
-
-    // Hand detection camera 2 (stereo mode)
-    var fingertip2 = null;
-    if (state.stereoMode && state.handDetector2 && state.captureCanvas2 && state.captureCtx2) {
+    if (state.stereoMode && state.captureCanvas2 && state.captureCtx2) {
       try {
         var video2 = document.getElementById('video2');
         if (video2 && video2.readyState >= 2) {
@@ -921,132 +1026,50 @@ export function initApp() {
           var h2 = state.captureCanvas2.height;
           state.captureCtx2.drawImage(video2, 0, 0, w2, h2);
           imageData2 = state.captureCtx2.getImageData(0, 0, w2, h2);
-          hands2 = (await state.handDetector2.detect(imageData2.data, w2, h2)) || [];
-
-          if (hands2.length > 0) {
-            for (var j = 0; j < hands2.length; j++) {
-              var hand2 = hands2[j];
-              if (hand2 && hand2.landmarks && hand2.landmarks.length > 8) {
-                var tip2 = hand2.landmarks[8];
-                fingertip2 = { x: tip2.x, y: tip2.y };
-                break;
-              }
-            }
-          }
         }
       } catch (err) {
-        console.error('Hand detection error (camera 2):', err);
+        console.error('Camera 2 frame read error:', err);
       }
-    }
-
-    // Extract fingertips from camera 1
-    var indexTipPoint = null;
-    var indexTipPoints = [];
-
-    if (hands.length > 0) {
-      for (var i = 0; i < hands.length; i++) {
-        var hand = hands[i];
-        if (!hand || !hand.landmarks || hand.landmarks.length <= 8) continue;
-
-        var tip = hand.landmarks[8];
-        var pinchDistance = typeof hand.pinchDistance === 'number' ? hand.pinchDistance : null;
-        var handScale = null;
-
-        if (hand.landmarks.length > 17) {
-          var lm5 = hand.landmarks[5];
-          var lm17 = hand.landmarks[17];
-          if (lm5 && lm17) {
-            var dxs = lm5.x - lm17.x;
-            var dys = lm5.y - lm17.y;
-            handScale = Math.sqrt(dxs * dxs + dys * dys);
-          }
-        }
-
-        if (!handScale && hand.landmarks.length > 9) {
-          var lm0 = hand.landmarks[0];
-          var lm9 = hand.landmarks[9];
-          if (lm0 && lm9) {
-            var dxs2 = lm0.x - lm9.x;
-            var dys2 = lm0.y - lm9.y;
-            handScale = Math.sqrt(dxs2 * dxs2 + dys2 * dys2);
-          }
-        }
-
-        var pinchRatio = (pinchDistance !== null && handScale && handScale > 1e-6) ? pinchDistance / handScale : null;
-
-        // Use handedness as stable identifier, fallback to index if not available
-        var handId = hand.handedness || ('hand' + i);
-
-        // Apply exponential smoothing to reduce jitter
-        var smoothedX = tip.x;
-        var smoothedY = tip.y;
-        var smoothingFactor = state.fingerSmoothingFactor;
-
-        if (state.smoothedFingerPositions[handId]) {
-          var prev = state.smoothedFingerPositions[handId];
-          smoothedX = prev.x + smoothingFactor * (tip.x - prev.x);
-          smoothedY = prev.y + smoothingFactor * (tip.y - prev.y);
-        }
-
-        state.smoothedFingerPositions[handId] = { x: smoothedX, y: smoothedY };
-
-        indexTipPoints.push({
-          x: smoothedX,
-          y: smoothedY,
-          pinchDistance: pinchDistance,
-          pinchRatio: pinchRatio,
-          handedness: hand.handedness || null,
-          handId: handId
-        });
-      }
-
-      if (indexTipPoints.length > 0) {
-        indexTipPoint = indexTipPoints[0];
-        state.lastIndexTipPoint = indexTipPoint;
-        state.lastIndexTipPoints = indexTipPoints;
-        state.lastIndexTipTimeMs = performance.now();
-      }
-
-      // Clean up smoothed positions for hands no longer visible
-      var activeHandIds = {};
-      for (var j = 0; j < indexTipPoints.length; j++) {
-        activeHandIds[indexTipPoints[j].handId] = true;
-      }
-      for (var hid in state.smoothedFingerPositions) {
-        if (!activeHandIds[hid]) {
-          delete state.smoothedFingerPositions[hid];
-        }
-      }
-    }
-
-    // Use recent fingertip if current frame has none
-    var usableIndexTipPoint = indexTipPoint;
-    var usableIndexTipPoints = indexTipPoints;
-    if (!indexTipPoint && state.lastIndexTipPoints && performance.now() - state.lastIndexTipTimeMs < 150) {
-      usableIndexTipPoints = state.lastIndexTipPoints;
-      usableIndexTipPoint = state.lastIndexTipPoint;
     }
 
     var isSurfaceSetupCameraView = (state.stage === 2 || state.stage === 3) && state.viewMode === 'camera';
 
+    // Surface-corner capture preview (AprilTags only)
+    var surfacePreviewPoint = null;
+    if (!state.stereoMode && state.stage === 2 && isSurfaceSetupCameraView && state.armedCornerIndex !== null && state.armedCornerCaptureRequested) {
+      surfacePreviewPoint = getSurfaceCornerFromApriltags(state.lastApriltagDetections || [], state.armedCornerIndex, width, height);
+    }
+
     // Single camera corner capture
-    if (!state.stereoMode && isSurfaceSetupCameraView && state.armedCornerCaptureRequested && state.armedCornerIndex !== null && usableIndexTipPoint) {
-      state.surfaceCorners[state.armedCornerIndex] = usableIndexTipPoint;
+    if (!state.stereoMode && state.stage === 2 && isSurfaceSetupCameraView && state.armedCornerCaptureRequested && state.armedCornerIndex !== null && surfacePreviewPoint) {
+      state.surfaceCorners[state.armedCornerIndex] = { x: surfacePreviewPoint.x, y: surfacePreviewPoint.y };
       flashCornerButton(state.armedCornerIndex);
       clearArmedCorner();
       updateSurfaceButtonsUI();
       recomputeSurfaceHomographyIfReady();
     }
 
-    // Stereo calibration capture
-    if (state.stereoMode && isSurfaceSetupCameraView && state.stereoArmedPointIndex !== null && usableIndexTipPoint && fingertip2) {
-      captureStereoCalibPoint(usableIndexTipPoint, fingertip2);
-    }
-
-    // Stereo triangulation for touch detection
-    if (state.stereoMode && state.stereoCalibrationReady && usableIndexTipPoint && fingertip2) {
-      var worldPoint = triangulatePoint(state.stereoProjectionMatrix1, state.stereoProjectionMatrix2, usableIndexTipPoint, fingertip2);
-      if (worldPoint) updateTouchIndicator(worldPoint);
+    // Stereo calibration preview points (use selected AprilTag ID)
+    var stereoPreview1 = null;
+    var stereoPreview2 = null;
+    if (state.stereoMode) {
+      var calibId = parseInt(state.stereoCalibTagId, 10);
+      if (isFinite(calibId) && Array.isArray(state.lastApriltagDetections)) {
+        for (var sp1 = 0; sp1 < state.lastApriltagDetections.length; sp1++) {
+          var dd1 = state.lastApriltagDetections[sp1];
+          if (!dd1 || !dd1.center) continue;
+          var idd1 = typeof dd1.id === 'number' ? dd1.id : parseInt(dd1.id, 10);
+          if (idd1 === calibId) { stereoPreview1 = { x: dd1.center.x, y: dd1.center.y }; break; }
+        }
+      }
+      if (isFinite(calibId) && Array.isArray(state.lastApriltagDetections2)) {
+        for (var sp2 = 0; sp2 < state.lastApriltagDetections2.length; sp2++) {
+          var dd2 = state.lastApriltagDetections2[sp2];
+          if (!dd2 || !dd2.center) continue;
+          var idd2 = typeof dd2.id === 'number' ? dd2.id : parseInt(dd2.id, 10);
+          if (idd2 === calibId) { stereoPreview2 = { x: dd2.center.x, y: dd2.center.y }; break; }
+        }
+      }
     }
 
     // Draw calibration overlays
@@ -1054,7 +1077,7 @@ export function initApp() {
       if (state.stereoMode) {
         drawStereoCalibPoints(state.overlayCtx, state.stereoCalibrationPoints, 'camera1Pixel', {
           armedIndex: state.stereoArmedPointIndex,
-          previewPoint: usableIndexTipPoint
+          previewPoint: stereoPreview1
         });
 
         var overlay2 = document.getElementById('overlay2');
@@ -1064,61 +1087,90 @@ export function initApp() {
             ctx2.clearRect(0, 0, overlay2.width, overlay2.height);
             drawStereoCalibPoints(ctx2, state.stereoCalibrationPoints, 'camera2Pixel', {
               armedIndex: state.stereoArmedPointIndex,
-              previewPoint: fingertip2
+              previewPoint: stereoPreview2
             });
           }
         }
       } else {
         drawSurface(state.overlayCtx, state.surfaceCorners, {
           previewIndex: state.armedCornerIndex,
-          previewPoint: state.armedCornerIndex !== null ? usableIndexTipPoint : null
+          previewPoint: state.armedCornerIndex !== null ? surfacePreviewPoint : null
         });
       }
     }
 
-    // Map finger dots (show in Stage 2, 3, and 4)
+    // Map view (Stage 2, 3, and 4)
     var isMapViewWithHomography = (state.stage === 2 || state.stage === 3 || state.stage === 4) && state.viewMode === 'map';
-    var allowFingerDots = !(state.stage3InputMode === 'apriltag' && (state.stage === 3 || state.stage === 4));
-    if (allowFingerDots && isMapViewWithHomography && state.surfaceHomography && usableIndexTipPoints && usableIndexTipPoints.length > 0) {
-      updateMapFingerDots(usableIndexTipPoints);
-    } else {
-      setMapFingerDotsVisible(false);
-    }
+    setMapFingerDotsVisible(false);
 
     // Gesture handling (dwell-to-click and pinch-to-drag for Stage 3 and 4)
     if ((state.stage === 3 || state.stage === 4) && state.viewMode === 'map') {
-      if (state.stage3InputMode === 'apriltag') {
-        var apriltagPoints = [];
-        if (Array.isArray(state.stage3ParticipantTagIds)) {
-          for (var t = 0; t < state.stage3ParticipantTagIds.length; t++) {
-            var tagId = parseInt(state.stage3ParticipantTagIds[t], 10);
-            if (!isFinite(tagId)) continue;
-            var touchInfo = state.apriltagTouchById && state.apriltagTouchById[tagId] ? state.apriltagTouchById[tagId] : null;
-            apriltagPoints.push({
-              handId: String(tagId),
-              isApriltag: true,
-              tagId: tagId,
-              isTouch: touchInfo ? !!touchInfo.isTouch : null,
-              // Make it behave like "pinching" so pinch-hold UI can be reused.
-              pinchDistance: 0,
-              pinchRatio: 0
-            });
-          }
+      var apriltagPoints = [];
+      if (Array.isArray(state.stage3ParticipantTagIds)) {
+        for (var t = 0; t < state.stage3ParticipantTagIds.length; t++) {
+          var tagId = parseInt(state.stage3ParticipantTagIds[t], 10);
+          if (!isFinite(tagId)) continue;
+          var touchInfo = state.apriltagTouchById && state.apriltagTouchById[tagId] ? state.apriltagTouchById[tagId] : null;
+          apriltagPoints.push({
+            handId: String(tagId),
+            isApriltag: true,
+            tagId: tagId,
+            isTouch: touchInfo ? !!touchInfo.isTouch : null
+          });
         }
-        handleStage3Gestures(apriltagPoints);
-      } else {
-        handleStage3Gestures(usableIndexTipPoints);
       }
+      handleStage3Gestures(apriltagPoints);
     } else {
       resetStage3Gestures();
     }
 
     // AprilTag detection (keep latest results for map debug dots and AprilTag gestures)
+    // Grayscale conversion moved to worker for better performance
     if (state.apriltagEnabled && state.detector) {
       try {
-        var grayscale = rgbaToGrayscale(imageData);
-        var detections = await state.detector.detect(grayscale, width, height);
+        // Use detectRGBA - grayscale conversion happens in worker thread
+        var detections = await state.detector.detectRGBA(imageData.data, width, height);
         state.lastApriltagDetections = detections || [];
+
+        // Stage 2: allow AprilTags 1-4 to define surface corners automatically (single camera).
+        // Uses the tag corner closest to each image corner.
+        if (!state.stereoMode && state.stage === 2 && state.viewMode === 'camera' && !state.armedCornerCaptureRequested) {
+          var candidate = computeApriltagSurfaceCorners(state.lastApriltagDetections, width, height);
+          if (candidate) {
+            if (!cornersAreClose(candidate, apriltagSurfaceLastCorners, 6)) {
+              apriltagSurfaceStableCount = 1;
+              apriltagSurfaceLastCorners = candidate;
+            } else {
+              apriltagSurfaceStableCount++;
+            }
+
+            if (apriltagSurfaceStableCount >= 3) {
+              // Smooth to reduce jitter, but keep corners "attached" to tags while visible.
+              var alpha = 0.35;
+              if (!apriltagSurfaceSmoothedCorners) {
+                apriltagSurfaceSmoothedCorners = cloneCorners(candidate);
+              } else {
+                for (var si = 0; si < 4; si++) {
+                  if (!apriltagSurfaceSmoothedCorners[si] || !candidate[si]) continue;
+                  apriltagSurfaceSmoothedCorners[si].x = apriltagSurfaceSmoothedCorners[si].x + alpha * (candidate[si].x - apriltagSurfaceSmoothedCorners[si].x);
+                  apriltagSurfaceSmoothedCorners[si].y = apriltagSurfaceSmoothedCorners[si].y + alpha * (candidate[si].y - apriltagSurfaceSmoothedCorners[si].y);
+                }
+              }
+
+              var nextCorners = cloneCorners(apriltagSurfaceSmoothedCorners);
+              var needsApply = !areSurfaceCornersReady() || !cornersAreClose(nextCorners, state.surfaceCorners, 2);
+              if (needsApply) {
+                state.surfaceCorners = nextCorners;
+                updateSurfaceButtonsUI();
+                recomputeSurfaceHomographyIfReady();
+              }
+            }
+          } else {
+            apriltagSurfaceStableCount = 0;
+            apriltagSurfaceLastCorners = null;
+            apriltagSurfaceSmoothedCorners = null;
+          }
+        }
 
         if (state.viewMode === 'camera') {
           updateApriltagHud(dom.apriltagHudEl, state.lastApriltagDetections, width, height);
@@ -1130,19 +1182,17 @@ export function initApp() {
           updateApriltagHud(dom.apriltagHudEl, null, width, height);
         }
 
-        // Stereo AprilTag touch/hover classification (cancel pinch while hovering)
-        if (state.stage3InputMode === 'apriltag' && state.stereoMode && state.stereoCalibrationReady && imageData2) {
+        // Stereo AprilTags (camera 2 detections + optional touch sensing)
+        if (state.stereoMode && imageData2) {
           try {
-            var grayscale2 = rgbaToGrayscale(imageData2);
-            var detections2 = await state.detector.detect(grayscale2, imageData2.width, imageData2.height);
+            // Use detectRGBA for camera 2 as well
+            var detections2 = await state.detector.detectRGBA(imageData2.data, imageData2.width, imageData2.height);
             state.lastApriltagDetections2 = detections2 || [];
             if (state.viewMode === 'camera') {
               updateApriltagHud(dom.apriltagHud2El, state.lastApriltagDetections2, imageData2.width, imageData2.height);
             } else {
               updateApriltagHud(dom.apriltagHud2El, null, imageData2.width, imageData2.height);
             }
-
-            var touchById = {};
 
             var det1ById = {};
             for (var di1 = 0; di1 < (state.lastApriltagDetections || []).length; di1++) {
@@ -1162,7 +1212,19 @@ export function initApp() {
               det2ById[id2] = d2;
             }
 
-            if (Array.isArray(state.stage3ParticipantTagIds)) {
+            // Stage 2: capture stereo calibration points using the selected calibration tag ID.
+            if (state.stage === 2 && state.stereoArmedPointIndex !== null) {
+              var calibId = parseInt(state.stereoCalibTagId, 10);
+              var ca = isFinite(calibId) ? (det1ById[calibId] || null) : null;
+              var cb = isFinite(calibId) ? (det2ById[calibId] || null) : null;
+              if (ca && cb) {
+                captureStereoCalibPoint(ca.center, cb.center);
+              }
+            }
+
+            // Stage 3/4: touch/hover classification for participant tags (requires calibration)
+            if (state.stereoCalibrationReady && (state.stage === 3 || state.stage === 4) && Array.isArray(state.stage3ParticipantTagIds)) {
+              var touchById = {};
               for (var ti = 0; ti < state.stage3ParticipantTagIds.length; ti++) {
                 var tagId2 = parseInt(state.stage3ParticipantTagIds[ti], 10);
                 if (!isFinite(tagId2)) continue;
@@ -1184,9 +1246,10 @@ export function initApp() {
                 var isTouch = Math.abs(wp.z) < state.touchZThreshold;
                 touchById[tagId2] = { isTouch: isTouch, z: wp.z };
               }
+              state.apriltagTouchById = touchById;
+            } else {
+              state.apriltagTouchById = null;
             }
-
-            state.apriltagTouchById = touchById;
           } catch (err2) {
             state.apriltagTouchById = null;
             updateApriltagHud(dom.apriltagHud2El, null, imageData2 ? imageData2.width : 0, imageData2 ? imageData2.height : 0);
@@ -1271,7 +1334,6 @@ export function initApp() {
   function updateMapApriltagDots(detections) {
     if (!dom.mapApriltagDotsEl) { return; }
     if (!state.surfaceHomography) { setMapApriltagDotsVisible(false); return; }
-    if (state.stage3InputMode !== 'apriltag') { setMapApriltagDotsVisible(false); return; }
     if (!Array.isArray(state.stage3ParticipantTagIds) || state.stage3ParticipantTagIds.length < 1) { setMapApriltagDotsVisible(false); return; }
 
     var w = dom.mapWarpEl.offsetWidth;

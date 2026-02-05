@@ -26,24 +26,6 @@
             </div>
         </div>
         <div id="gestureControls" class="gesture-controls hidden" aria-hidden="true">
-            <!-- Hand tracking only -->
-            <div class="gesture-controls__group gesture-controls__group--hand-only">
-                <div class="gesture-controls__row">
-                    <span class="gesture-controls__label">Pinch distance threshold (px)</span>
-                    <span id="pinchThresholdValue" class="gesture-controls__value">45</span>
-                </div>
-                <input id="pinchThresholdSlider" class="gesture-controls__slider" type="range" min="10" max="120" step="1" value="45" aria-label="Pinch distance threshold in pixels" />
-                <div class="gesture-controls__row">
-                    <span class="gesture-controls__label">Dwell time (sec)</span>
-                    <span id="dwellTimeValue" class="gesture-controls__value">3.0</span>
-                </div>
-                <input id="dwellTimeSlider" class="gesture-controls__slider" type="range" min="0.5" max="8.0" step="0.1" value="3.0" aria-label="Dwell time in seconds" />
-                <div class="gesture-controls__row">
-                    <span class="gesture-controls__label">Finger smoothing</span>
-                    <span id="fingerSmoothingValue" class="gesture-controls__value">0.4</span>
-                </div>
-                <input id="fingerSmoothingSlider" class="gesture-controls__slider" type="range" min="0.1" max="1.0" step="0.05" value="0.4" aria-label="Finger position smoothing factor" />
-            </div>
             <!-- AprilTag only -->
             <div class="gesture-controls__group gesture-controls__group--apriltag-only">
                 <div class="gesture-controls__row">
@@ -74,10 +56,15 @@
             </div>
             <input id="holdStillThresholdSlider" class="gesture-controls__slider" type="range" min="2" max="80" step="1" value="14" aria-label="Hold-still movement threshold in pixels" />
             <div class="gesture-controls__row">
-                <span class="gesture-controls__label">Pinch-hold time (sec)</span>
+                <span class="gesture-controls__label">Dwell click time (sec)</span>
+                <span id="dwellTimeValue" class="gesture-controls__value">3.0</span>
+            </div>
+            <input id="dwellTimeSlider" class="gesture-controls__slider" type="range" min="0.5" max="8.0" step="0.1" value="3.0" aria-label="Dwell click time in seconds" />
+            <div class="gesture-controls__row">
+                <span class="gesture-controls__label">Hold time (sec)</span>
                 <span id="pinchHoldTimeValue" class="gesture-controls__value">3.0</span>
             </div>
-            <input id="pinchHoldTimeSlider" class="gesture-controls__slider" type="range" min="0.5" max="8.0" step="0.1" value="3.0" aria-label="Pinch-hold time in seconds" />
+            <input id="pinchHoldTimeSlider" class="gesture-controls__slider" type="range" min="0.5" max="8.0" step="0.1" value="3.0" aria-label="Hold time in seconds" />
             <div class="gesture-controls__row">
                 <span class="gesture-controls__label">Lost tracking grace (ms)</span>
                 <span id="pointerLostTimeoutValue" class="gesture-controls__value">300</span>
@@ -89,6 +76,7 @@
             <button id="surfaceBtn2" class="surface-btn" type="button">2</button>
             <button id="surfaceBtn3" class="surface-btn" type="button">3</button>
             <button id="surfaceBtn4" class="surface-btn" type="button">4</button>
+            <button id="apriltagCalibBtn" class="surface-btn surface-btn--apriltag" type="button" title="Calibrate using AprilTags 1-4">AT</button>
         </div>
 
         <!-- Stereo Calibration Buttons (shown when 2 cameras selected) -->
@@ -113,6 +101,10 @@
             </div>
             <div class="stereo-calib-actions">
                 <button id="stereoComputeBtn" class="btn btn-secondary" type="button" disabled>Compute Calibration</button>
+                <label class="stereo-calib-tag">
+                    <span class="stereo-calib-tag__label">Tag ID</span>
+                    <input id="stereoCalibTagId" class="stereo-calib-tag__input" type="number" min="0" max="9999" step="1" value="5" aria-label="AprilTag ID to use for stereo calibration" />
+                </label>
                 <span id="stereoCalibStatus" class="stereo-calib-status"></span>
             </div>
         </div>
@@ -138,9 +130,9 @@
             <div id="cameraDeviceSelects" class="camera-device-selects" aria-label="Available cameras"></div>
         </div>
         <label id="apriltagToggleContainer" class="toggle-inline">
-            <span class="toggle-inline-label">AprilTag detection</span>
+            <span class="toggle-inline-label">AprilTag detection (required)</span>
             <span class="switch">
-                <input type="checkbox" id="apriltagToggle" checked>
+                <input type="checkbox" id="apriltagToggle" checked disabled>
                 <span class="slider" aria-hidden="true"></span>
             </span>
         </label>

@@ -525,7 +525,8 @@ export function initLeafletIfNeeded() {
     dragging: false
   });
 
-  state.leafletMap.setView([37.76, -122.44], 12);
+  // IP Paris campus, Palaiseau
+  state.leafletMap.setView([48.7133, 2.2118], 15);
 
   state.leafletTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
