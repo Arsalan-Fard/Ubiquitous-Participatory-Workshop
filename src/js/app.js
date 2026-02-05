@@ -147,6 +147,57 @@ export function initApp() {
     if (state.stage4DrawMode) setStage4DrawMode(false);
   });
 
+  // Track mouse position globally for manual corner placement
+  var lastMouseX = 0;
+  var lastMouseY = 0;
+
+  document.addEventListener('mousemove', function(e) {
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
+  });
+
+  // Keyboard shortcuts 1-4 to set surface corners at mouse position
+  document.addEventListener('keydown', function(e) {
+    // Only in stage 2, camera view
+    if (state.stage !== 2) return;
+    if (state.viewMode !== 'camera') return;
+
+    var cornerIndex = null;
+    if (e.key === '1') cornerIndex = 0;
+    else if (e.key === '2') cornerIndex = 1;
+    else if (e.key === '3') cornerIndex = 2;
+    else if (e.key === '4') cornerIndex = 3;
+
+    if (cornerIndex === null) return;
+
+    // Get video element bounds
+    var videoEl = state.usingIpCamera && state.ipCameraImg ? state.ipCameraImg : dom.video;
+    var rect = videoEl.getBoundingClientRect();
+
+    // Check if mouse is within the video area
+    if (lastMouseX < rect.left || lastMouseX > rect.right ||
+        lastMouseY < rect.top || lastMouseY > rect.bottom) {
+      return;
+    }
+
+    // Check dimensions are valid
+    if (!rect.width || !rect.height || !dom.overlay.width || !dom.overlay.height) return;
+
+    e.preventDefault();
+
+    // Convert mouse position to video/canvas pixel coordinates
+    var scaleX = dom.overlay.width / rect.width;
+    var scaleY = dom.overlay.height / rect.height;
+    var cornerX = (lastMouseX - rect.left) * scaleX;
+    var cornerY = (lastMouseY - rect.top) * scaleY;
+
+    // Set the corner at the current mouse position
+    state.surfaceCorners[cornerIndex] = { x: cornerX, y: cornerY };
+    flashCornerButton(cornerIndex);
+    updateSurfaceButtonsUI();
+    recomputeSurfaceHomographyIfReady();
+  });
+
   // Stage 4 sticker dragging
   document.addEventListener('pointerdown', function(e) {
     if (state.stage !== 4 || state.viewMode !== 'map') return;
@@ -1257,16 +1308,8 @@ export function initApp() {
     return null;
   }
 
-  function getApriltagInnerCorner(det, cornerIndex) {
-    // Get the inner corner of an AprilTag based on its position in the surface layout.
-    // AprilTag corners order varies by library. We find the corner closest to the tag center
-    // that is in the direction toward the surface center.
-    //
-    // For a 4-tag calibration setup, we want the corner pointing toward the surface center:
-    // - Tag at top-left (cornerIndex 0): inner corner is toward bottom-right
-    // - Tag at top-right (cornerIndex 1): inner corner is toward bottom-left
-    // - Tag at bottom-right (cornerIndex 2): inner corner is toward top-left
-    // - Tag at bottom-left (cornerIndex 3): inner corner is toward top-right
+  function getApriltagCenter(det) {
+    // Get the center of an AprilTag from its corners
     if (!det || !Array.isArray(det.corners) || det.corners.length < 4) return null;
 
     // Calculate tag center from corners
@@ -1278,27 +1321,7 @@ export function initApp() {
     cx /= 4;
     cy /= 4;
 
-    // Determine which direction the inner corner should be relative to tag center
-    // cornerIndex: 0=top-left tag, 1=top-right tag, 2=bottom-right tag, 3=bottom-left tag
-    // Inner direction: 0->bottom-right, 1->bottom-left, 2->top-left, 3->top-right
-    var dirX = (cornerIndex === 0 || cornerIndex === 3) ? 1 : -1;  // right for 0,3; left for 1,2
-    var dirY = (cornerIndex === 0 || cornerIndex === 1) ? 1 : -1;  // down for 0,1; up for 2,3
-
-    // Find the corner that is in the inner direction from the tag center
-    var best = null;
-    var bestScore = -Infinity;
-    for (var j = 0; j < 4; j++) {
-      var c = det.corners[j];
-      var dx = c.x - cx;
-      var dy = c.y - cy;
-      var score = dx * dirX + dy * dirY;
-      if (score > bestScore) {
-        bestScore = score;
-        best = c;
-      }
-    }
-
-    return best ? { x: best.x, y: best.y } : null;
+    return { x: cx, y: cy };
   }
 
   function getSurfaceCornerFromApriltags(detections, cornerIndex, width, height) {
@@ -1311,7 +1334,8 @@ export function initApp() {
     var det = getApriltagDetectionById(detections, tagId);
     if (!det) return null;
 
-    return getApriltagInnerCorner(det, cornerIndex);
+    // Use the center of the tag as the surface corner
+    return getApriltagCenter(det);
   }
 
   function computeApriltagSurfaceCorners(detections, width, height) {
