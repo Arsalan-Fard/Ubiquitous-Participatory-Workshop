@@ -1800,10 +1800,28 @@ export function initApp() {
       var x = uv.x * w;
       var y = uv.y * h;
 
-      // Apply tracking offset for participant tags (11-20) in screen coordinates
+      // Apply tracking offset for participant tags (11-20) rotated by tag angle
       if (tagId >= 11 && tagId <= 20) {
-        x += state.apriltagTrackingOffsetX;
-        y += state.apriltagTrackingOffsetY;
+        var ox = state.apriltagTrackingOffsetX;
+        var oy = state.apriltagTrackingOffsetY;
+        // Compute tag rotation angle in screen space from two adjacent corners
+        if (det.corners && det.corners.length >= 4 && (ox !== 0 || oy !== 0)) {
+          var c0 = applyHomography(state.surfaceHomography, det.corners[0].x, det.corners[0].y);
+          var c1 = applyHomography(state.surfaceHomography, det.corners[1].x, det.corners[1].y);
+          if (c0 && c1) {
+            var angle = Math.atan2((c1.y - c0.y) * h, (c1.x - c0.x) * w);
+            var cosA = Math.cos(angle);
+            var sinA = Math.sin(angle);
+            x += ox * cosA - oy * sinA;
+            y += ox * sinA + oy * cosA;
+          } else {
+            x += ox;
+            y += oy;
+          }
+        } else {
+          x += ox;
+          y += oy;
+        }
       }
       dot.style.transform = 'translate(' + (x - 7) + 'px, ' + (y - 7) + 'px)';
       dot.classList.remove('hidden');
