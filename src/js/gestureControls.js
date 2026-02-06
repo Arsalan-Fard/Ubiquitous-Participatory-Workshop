@@ -275,7 +275,10 @@ export function handleStage3Gestures(usableIndexTipPoints) {
             var onDrawBtn = t.closest && t.closest('.ui-draw') && !t.closest('.ui-draw').classList.contains('ui-sticker-instance');
             var onDotBtn = t.closest && t.closest('.ui-dot') && !t.closest('.ui-dot').classList.contains('ui-sticker-instance');
             var onNoteBtn = t.closest && t.closest('.ui-note') && !t.closest('.ui-note').classList.contains('ui-sticker-instance');
-            shouldShowFill = onDrawBtn || onDotBtn || onNoteBtn;
+            // Also allow interaction with sticker instances and note form elements
+            var onStickerInstance = t.closest && t.closest('.ui-sticker-instance');
+            var onNoteForm = t.closest && t.closest('.ui-note__form');
+            shouldShowFill = onDrawBtn || onDotBtn || onNoteBtn || onStickerInstance || onNoteForm;
           }
         } else if (!shouldShowFill && state.stage !== 4) {
           // In stage 3, show fill on interactive elements
@@ -387,7 +390,15 @@ export function handleStage3Gestures(usableIndexTipPoints) {
                   ps.armedStickerTemplate = target.closest('.ui-note');
                   ps.armedStickerTemplate.classList.add('ui-note--active');
                 }
-                // Not one of the 3 buttons - do nothing (Case 2: no trigger outside buttons)
+                // Sticker instances and note form elements are clickable
+                else if (interaction.action === 'click' || interaction.action === 'drag') {
+                  var isStickerInstance = target.closest && target.closest('.ui-sticker-instance');
+                  var isNoteForm = target.closest && target.closest('.ui-note__form');
+                  if (isStickerInstance || isNoteForm) {
+                    dispatchClickAt(ps.lastPointer, ps.dragPointerId);
+                  }
+                }
+                // Not one of the 3 buttons and not a sticker/form - do nothing
               } else if (interaction.action === 'click') {
                 // Stage 3 or other: dispatch click on interactive elements
                 dispatchClickAt(ps.lastPointer, ps.dragPointerId);
