@@ -47,6 +47,7 @@ var BACKEND_CAMERA_FEED_URL = '/video_feed';
 var BACKEND_APRILTAG_API_URL = '/api/apriltags';
 var BACKEND_APRILTAG_POLL_CAMERA_MS = 60;
 var BACKEND_APRILTAG_POLL_MAP_MS = 16;
+var MAP_TAG_MASK_HOLD_MS = 500;
 var apriltagPollInFlight = false;
 var apriltagLastPollMs = 0;
 var apriltagBackendErrorNotified = false;
@@ -65,6 +66,7 @@ export function initApp() {
   var apriltagSurfaceStableCount = 0;
   var apriltagSurfaceLastCorners = null;
   var apriltagSurfaceSmoothedCorners = null;
+  var mapTagMaskCacheById = {};
 
   var videoContainer = document.getElementById('videoContainer1');
 
@@ -1553,20 +1555,48 @@ export function initApp() {
     svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
     svg.setAttribute('preserveAspectRatio', 'none');
 
-    var polygons = [];
-    var tagScale = 1.4; // Make detected tag masks 40% larger
-
-    // Draw masks for all detected tags
+    var nowMs = performance.now();
     if (Array.isArray(detections)) {
       for (var di = 0; di < detections.length; di++) {
         var det = detections[di];
-        if (!det || !det.corners || det.corners.length < 4 || !det.center) continue;
+        if (!det || !det.corners || det.corners.length < 4) continue;
+        var detId = typeof det.id === 'number' ? det.id : parseInt(det.id, 10);
+        if (!isFinite(detId)) continue;
 
-        // Transform all 4 corners of the tag
+        var cachedCorners = [];
+        for (var ci = 0; ci < 4; ci++) {
+          var c = det.corners[ci];
+          if (!c) continue;
+          cachedCorners.push({ x: c.x, y: c.y });
+        }
+        if (cachedCorners.length < 4) continue;
+
+        mapTagMaskCacheById[String(detId)] = {
+          corners: cachedCorners,
+          lastSeenMs: nowMs
+        };
+      }
+    }
+
+    for (var key in mapTagMaskCacheById) {
+      var entry = mapTagMaskCacheById[key];
+      if (!entry || (nowMs - entry.lastSeenMs) > MAP_TAG_MASK_HOLD_MS) {
+        delete mapTagMaskCacheById[key];
+      }
+    }
+
+    var polygons = [];
+    var tagScale = 1.4; // Make detected tag masks 40% larger
+
+    // Draw masks for all tags seen recently (hold for MAP_TAG_MASK_HOLD_MS)
+    for (var cacheKey in mapTagMaskCacheById) {
+      var cached = mapTagMaskCacheById[cacheKey];
+      if (!cached || !cached.corners || cached.corners.length < 4) continue;
+
         var screenCorners = [];
         var allValid = true;
         for (var j = 0; j < 4; j++) {
-          var uv = applyHomography(state.surfaceHomography, det.corners[j].x, det.corners[j].y);
+          var uv = applyHomography(state.surfaceHomography, cached.corners[j].x, cached.corners[j].y);
           if (!uv) { allValid = false; break; }
           screenCorners.push({ x: uv.x * w, y: uv.y * h });
         }
@@ -1585,7 +1615,6 @@ export function initApp() {
         }
 
         polygons.push('<polygon points="' + points.join(' ') + '" fill="#000000"/>');
-      }
     }
 
     svg.innerHTML = polygons.join('');
