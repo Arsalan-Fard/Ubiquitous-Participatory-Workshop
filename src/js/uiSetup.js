@@ -648,7 +648,9 @@ export function initUiSetup(options) {
       var top = parseFloat(el.style.top || '0');
 
       if (type === 'label') {
-        items.push({ type: 'label', text: el.textContent || '', x: left, y: top });
+        var rotationDeg = parseFloat(el.dataset.rotationDeg || '0');
+        if (!isFinite(rotationDeg)) rotationDeg = 0;
+        items.push({ type: 'label', text: el.textContent || '', x: left, y: top, rotationDeg: rotationDeg });
       } else if (type === 'dot') {
         items.push({ type: 'dot', color: el.dataset.color || '#ff3b30', x: left, y: top });
       } else if (type === 'draw') {
@@ -699,6 +701,9 @@ export function initUiSetup(options) {
         labelEl.dataset.uiType = 'label';
         labelEl.style.left = String(item.x || 0) + 'px';
         labelEl.style.top = String(item.y || 0) + 'px';
+        var importedRotationDeg = parseFloat(item.rotationDeg);
+        if (!isFinite(importedRotationDeg)) importedRotationDeg = 0;
+        setElementRotation(labelEl, importedRotationDeg);
         overlayEl.appendChild(labelEl);
         makeDraggable(labelEl);
         continue;
@@ -782,6 +787,13 @@ function makeDraggable(el, options) {
 
   el.addEventListener('pointerdown', function (e) {
     if (e.button !== 0) return;
+    if (state.stage === 3 && el.classList && el.classList.contains('ui-label') && e.ctrlKey) {
+      e.preventDefault();
+      var currentDeg = parseFloat(el.dataset.rotationDeg || '0');
+      if (!isFinite(currentDeg)) currentDeg = 0;
+      setElementRotation(el, currentDeg + 45);
+      return;
+    }
     if (state.stage === 4 && el.classList && el.classList.contains('ui-eraser')) return;
     e.preventDefault();
 
@@ -823,6 +835,13 @@ function makeDraggable(el, options) {
       el.parentNode.removeChild(el);
     }
   });
+}
+
+function setElementRotation(el, deg) {
+  if (!el) return;
+  var normalized = ((deg % 360) + 360) % 360;
+  el.dataset.rotationDeg = String(normalized);
+  el.style.transform = normalized ? ('rotate(' + normalized + 'deg)') : '';
 }
 
 function renderDrawIcon(canvasEl, color) {
