@@ -16,6 +16,7 @@ import {
   stopDrawingForPointer,
   cloneSticker,
   startStickerDrag,
+  eraseAtPoint,
   bindStickerLatLngFromCurrentPosition,
   updateStickerMappingForCurrentView
 } from './stage4Drawing.js';
@@ -27,6 +28,7 @@ var nextPointerId = 100; // Start at 100 to avoid conflicts with real pointer ID
 
 // AprilTag trigger-on-disappearance delay (ms)
 var APRILTAG_TRIGGER_DELAY_MS = 1000;
+var ERASER_TOUCH_RADIUS_PX = 16;
 
 // Get all visible finger dot positions in viewport coordinates
 export function getAllMapPointerViewportPoints() {
@@ -88,7 +90,9 @@ function getPointerState(handIndex) {
       triggerFillStartMs: 0,  // When the disappearance fill animation started
       triggerFired: false,    // Whether the trigger already fired this disappearance
       armedStickerTemplate: null,  // Template element for dot/note placement (two-step flow)
-      drawingStarted: false  // Whether drawing has been started by a trigger (2nd trigger enables actual drawing)
+      drawingStarted: false,  // Whether drawing has been started by a trigger (2nd trigger enables actual drawing)
+      eraserActive: false,
+      eraserButtonEl: null
     };
   }
   return pointerStates[handIndex];
@@ -102,6 +106,25 @@ function dearmStickerTemplate(ps) {
   }
 }
 
+function deactivateEraser(ps) {
+  if (!ps) return;
+  if (ps.eraserButtonEl) {
+    ps.eraserButtonEl.classList.remove('ui-eraser--active');
+  }
+  ps.eraserButtonEl = null;
+  ps.eraserActive = false;
+}
+
+function activateEraser(ps, buttonEl) {
+  if (!ps || !buttonEl) return;
+  if (ps.eraserButtonEl && ps.eraserButtonEl !== buttonEl) {
+    ps.eraserButtonEl.classList.remove('ui-eraser--active');
+  }
+  ps.eraserButtonEl = buttonEl;
+  ps.eraserActive = true;
+  buttonEl.classList.add('ui-eraser--active');
+}
+
 function shouldPinchClickTarget(target) {
   if (!target || !target.closest) return false;
 
@@ -112,6 +135,9 @@ function shouldPinchClickTarget(target) {
   if (state.stage === 4) {
     var drawButton = target.closest('.ui-draw');
     if (drawButton && !drawButton.classList.contains('ui-sticker-instance')) return true;
+
+    var eraserButton = target.closest('.ui-eraser');
+    if (eraserButton && !eraserButton.classList.contains('ui-sticker-instance')) return true;
 
     // Note form elements (textarea, save button) should be clickable
     if (target.closest('.ui-note__form')) return true;
@@ -163,7 +189,7 @@ function getDraggableRoot(target) {
   }
 
   // Stage 3: templates are draggable during UI setup
-  var setupEl = target.closest('.ui-dot, .ui-note, .ui-draw');
+  var setupEl = target.closest('.ui-dot, .ui-note, .ui-draw, .ui-eraser');
   return setupEl || null;
 }
 
@@ -271,7 +297,8 @@ export function handleStage3Gestures(usableIndexTipPoints) {
       if (ps.isApriltag && ps.lastPointer) {
         var isDrawingMode = state.stage === 4 && getDrawColorForPointer(ps.dragPointerId);
         var hasStickerArmed = !!ps.armedStickerTemplate;
-        var hasAnyToolActive = isDrawingMode || hasStickerArmed;
+        var hasEraserActive = !!ps.eraserActive;
+        var hasAnyToolActive = isDrawingMode || hasStickerArmed || hasEraserActive;
         var secondaryVisibleForTrigger = !!(state.stage3SecondaryVisibleByPrimaryTag && state.stage3SecondaryVisibleByPrimaryTag[handId]);
 
         // Stop current drawing stroke after brief delay
@@ -287,7 +314,7 @@ export function handleStage3Gestures(usableIndexTipPoints) {
           ps.triggerFired = false;
           updatePointerCursor(handId, ps.lastPointer, 0, null);
 
-          var keepAliveNoTrigger = !!ps.armedStickerTemplate || !!getDrawColorForPointer(ps.dragPointerId);
+          var keepAliveNoTrigger = !!ps.armedStickerTemplate || !!getDrawColorForPointer(ps.dragPointerId) || !!ps.eraserActive;
           var noTriggerTimeout = APRILTAG_TRIGGER_DELAY_MS + 200;
           var noTriggerMaxTimeout = keepAliveNoTrigger ? drawingTimeoutMs : noTriggerTimeout;
           if (missingDuration < noTriggerMaxTimeout) continue;
@@ -301,6 +328,7 @@ export function handleStage3Gestures(usableIndexTipPoints) {
           if (ps.cursorEl && ps.cursorEl !== state.dom.mapFingerCursorEl && ps.cursorEl.parentNode) {
             ps.cursorEl.parentNode.removeChild(ps.cursorEl);
           }
+          deactivateEraser(ps);
           dearmStickerTemplate(ps);
           delete pointerStates[handId];
           continue;
@@ -317,10 +345,11 @@ export function handleStage3Gestures(usableIndexTipPoints) {
             var onDrawBtn = t.closest && t.closest('.ui-draw') && !t.closest('.ui-draw').classList.contains('ui-sticker-instance');
             var onDotBtn = t.closest && t.closest('.ui-dot') && !t.closest('.ui-dot').classList.contains('ui-sticker-instance');
             var onNoteBtn = t.closest && t.closest('.ui-note') && !t.closest('.ui-note').classList.contains('ui-sticker-instance');
+            var onEraserBtn = t.closest && t.closest('.ui-eraser') && !t.closest('.ui-eraser').classList.contains('ui-sticker-instance');
             // Also allow interaction with sticker instances and note form elements
             var onStickerInstance = t.closest && t.closest('.ui-sticker-instance');
             var onNoteForm = t.closest && t.closest('.ui-note__form');
-            shouldShowFill = onDrawBtn || onDotBtn || onNoteBtn || onStickerInstance || onNoteForm;
+            shouldShowFill = onDrawBtn || onDotBtn || onNoteBtn || onEraserBtn || onStickerInstance || onNoteForm;
           }
         } else if (!shouldShowFill && state.stage !== 4) {
           // In stage 3, show fill on interactive elements
@@ -347,6 +376,7 @@ export function handleStage3Gestures(usableIndexTipPoints) {
           if (ps.cursorEl && ps.cursorEl !== state.dom.mapFingerCursorEl && ps.cursorEl.parentNode) {
             ps.cursorEl.parentNode.removeChild(ps.cursorEl);
           }
+          deactivateEraser(ps);
           dearmStickerTemplate(ps);
           delete pointerStates[handId];
           continue;
@@ -367,7 +397,10 @@ export function handleStage3Gestures(usableIndexTipPoints) {
         if (!ps.triggerFired && fillProgress >= 1) {
           ps.triggerFired = true;
 
-          if (isDrawingMode) {
+          if (hasEraserActive) {
+            // Next trigger after eraser activation always deactivates eraser.
+            deactivateEraser(ps);
+          } else if (isDrawingMode) {
             // Drawing 3-trigger flow:
             //   Trigger 1 (on button): activates drawing, drawingStarted = false
             //   Trigger 2 (this): sets drawingStarted = true, next appearance will draw
@@ -402,7 +435,7 @@ export function handleStage3Gestures(usableIndexTipPoints) {
             }
             dearmStickerTemplate(ps); // Dearm after placement
           } else {
-            // Nothing activated - check what's at the last position (only 3 buttons)
+            // Nothing activated - check what's at the last position (tool buttons / stickers)
             var interaction = getInteractionCandidate(ps.lastPointer, 20);
             if (interaction && interaction.target) {
               var target = interaction.target;
@@ -411,6 +444,7 @@ export function handleStage3Gestures(usableIndexTipPoints) {
                 // Check if pointing at a drawing button
                 var drawButton = target.closest ? target.closest('.ui-draw') : null;
                 if (drawButton && !drawButton.classList.contains('ui-sticker-instance')) {
+                  deactivateEraser(ps);
                   // 1st trigger: activate drawing mode for this pointer
                   var color = drawButton.dataset && drawButton.dataset.color ? drawButton.dataset.color : '#2bb8ff';
                   var currentColor = getDrawColorForPointer(ps.dragPointerId);
@@ -424,13 +458,27 @@ export function handleStage3Gestures(usableIndexTipPoints) {
                 }
                 // Check if pointing at a dot template button - arm it (1st trigger)
                 else if (target.closest && target.closest('.ui-dot') && !target.closest('.ui-dot').classList.contains('ui-sticker-instance')) {
+                  deactivateEraser(ps);
                   ps.armedStickerTemplate = target.closest('.ui-dot');
                   ps.armedStickerTemplate.classList.add('ui-dot--active');
                 }
                 // Check if pointing at a note template button - arm it (1st trigger)
                 else if (target.closest && target.closest('.ui-note') && !target.closest('.ui-note').classList.contains('ui-sticker-instance')) {
+                  deactivateEraser(ps);
                   ps.armedStickerTemplate = target.closest('.ui-note');
                   ps.armedStickerTemplate.classList.add('ui-note--active');
+                }
+                // Check if pointing at eraser button - toggle eraser mode
+                else if (target.closest && target.closest('.ui-eraser') && !target.closest('.ui-eraser').classList.contains('ui-sticker-instance')) {
+                  var eraserButton = target.closest('.ui-eraser');
+                  if (ps.eraserActive && ps.eraserButtonEl === eraserButton) {
+                    deactivateEraser(ps);
+                  } else {
+                    deactivateDrawingForPointer(ps.dragPointerId);
+                    ps.drawingStarted = false;
+                    dearmStickerTemplate(ps);
+                    activateEraser(ps, eraserButton);
+                  }
                 }
                 // Sticker instances and note form elements are clickable
                 else if (interaction.action === 'click' || interaction.action === 'drag') {
@@ -440,7 +488,7 @@ export function handleStage3Gestures(usableIndexTipPoints) {
                     dispatchClickAt(ps.lastPointer, ps.dragPointerId);
                   }
                 }
-                // Not one of the 3 buttons and not a sticker/form - do nothing
+                // Not a supported tool/sticker/form target - do nothing
               } else if (interaction.action === 'click') {
                 // Stage 3 or other: dispatch click on interactive elements
                 dispatchClickAt(ps.lastPointer, ps.dragPointerId);
@@ -455,7 +503,7 @@ export function handleStage3Gestures(usableIndexTipPoints) {
         // so it persists when the tag reappears for the next step.
         var hasDrawingActiveNow = getDrawColorForPointer(ps.dragPointerId);
         var triggerTimeout = APRILTAG_TRIGGER_DELAY_MS + 200; // extra buffer
-        var keepAlive = !!ps.armedStickerTemplate || !!hasDrawingActiveNow;
+        var keepAlive = !!ps.armedStickerTemplate || !!hasDrawingActiveNow || !!ps.eraserActive;
         var maxTimeout = keepAlive ? drawingTimeoutMs : triggerTimeout;
         if (missingDuration < maxTimeout) continue;
 
@@ -476,6 +524,7 @@ export function handleStage3Gestures(usableIndexTipPoints) {
           ps.cursorEl.parentNode.removeChild(ps.cursorEl);
         }
 
+        deactivateEraser(ps);
         dearmStickerTemplate(ps);
         delete pointerStates[handId];
         continue;
@@ -521,6 +570,7 @@ export function handleStage3Gestures(usableIndexTipPoints) {
         ps.cursorEl.parentNode.removeChild(ps.cursorEl);
       }
 
+      deactivateEraser(ps);
       dearmStickerTemplate(ps);
       delete pointerStates[handId];
     }
@@ -590,6 +640,13 @@ function processPointerGesture(handIndex, pointer, handData) {
     ps.isApriltag = true;
     ps.triggerFillStartMs = 0;  // Reset fill since tag is visible again
     ps.triggerFired = false;
+
+    if (ps.eraserActive) {
+      eraseAtPoint(pointer.x, pointer.y, ERASER_TOUCH_RADIUS_PX);
+      updatePointerCursor(handIndex, pointer, 1, 'draw');
+      ps.prevPointerTimeMs = nowMs;
+      return;
+    }
 
     var isDrawingMode = state.stage === 4 && getDrawColorForPointer(ps.dragPointerId);
 
@@ -887,6 +944,7 @@ export function resetStage3Gestures() {
     // Deactivate drawing mode for this hand
     deactivateDrawingForPointer(ps.dragPointerId);
     // Dearm sticker template
+    deactivateEraser(ps);
     dearmStickerTemplate(ps);
     // Remove secondary cursors
     if (ps.cursorEl && ps.cursorEl !== state.dom.mapFingerCursorEl && ps.cursorEl.parentNode) {

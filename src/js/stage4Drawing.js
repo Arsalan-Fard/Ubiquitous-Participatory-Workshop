@@ -13,6 +13,7 @@ var handDrawStates = {};
 
 // Sticker mapping sync loop (Stage 3/4 map view)
 var stickerSyncRafId = 0;
+var nextStrokeId = 1;
 
 // Get or create drawing state for a pointer
 function getHandDrawState(pointerId) {
@@ -296,6 +297,7 @@ export function stage4PointerdownOnMap(e) {
   hs.isDrawing = true;
   hs.lastContainerPt = null;
   var latlngs = [latlng];
+  var strokeId = 'stroke_' + (nextStrokeId++);
 
   var L = state.leafletGlobal;
   var glow = L.polyline(latlngs, {
@@ -322,6 +324,8 @@ export function stage4PointerdownOnMap(e) {
     glow.sessionId = sessionId;
     main.sessionId = sessionId;
   }
+  glow.strokeId = strokeId;
+  main.strokeId = strokeId;
 
   hs.activeStroke = { latlngs: latlngs, glow: glow, main: main };
 
@@ -412,6 +416,7 @@ export function startDrawingAtPoint(pointerId, clientX, clientY) {
   hs.isDrawing = true;
   hs.lastContainerPt = null;
   var latlngs = [latlng];
+  var strokeId = 'stroke_' + (nextStrokeId++);
 
   var L = state.leafletGlobal;
   var glow = L.polyline(latlngs, {
@@ -438,8 +443,131 @@ export function startDrawingAtPoint(pointerId, clientX, clientY) {
     glow.sessionId = sessionId;
     main.sessionId = sessionId;
   }
+  glow.strokeId = strokeId;
+  main.strokeId = strokeId;
 
   hs.activeStroke = { latlngs: latlngs, glow: glow, main: main };
+}
+
+function distancePointToSegmentPx(px, py, x1, y1, x2, y2) {
+  var dx = x2 - x1;
+  var dy = y2 - y1;
+  if (dx === 0 && dy === 0) {
+    var ddx = px - x1;
+    var ddy = py - y1;
+    return Math.sqrt(ddx * ddx + ddy * ddy);
+  }
+  var t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy);
+  if (t < 0) t = 0;
+  if (t > 1) t = 1;
+  var cx = x1 + t * dx;
+  var cy = y1 + t * dy;
+  var ex = px - cx;
+  var ey = py - cy;
+  return Math.sqrt(ex * ex + ey * ey);
+}
+
+function distancePointToRectPx(px, py, rect) {
+  var nx = Math.max(rect.left, Math.min(px, rect.right));
+  var ny = Math.max(rect.top, Math.min(py, rect.bottom));
+  var dx = px - nx;
+  var dy = py - ny;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function flattenLatLngs(latlngs, out) {
+  if (!Array.isArray(latlngs)) return;
+  for (var i = 0; i < latlngs.length; i++) {
+    var v = latlngs[i];
+    if (!v) continue;
+    if (Array.isArray(v)) {
+      flattenLatLngs(v, out);
+      continue;
+    }
+    if (typeof v.lat === 'number' && typeof v.lng === 'number') {
+      out.push(v);
+    }
+  }
+}
+
+export function eraseAtPoint(clientX, clientY, radiusPx) {
+  if (state.stage !== 4 || state.viewMode !== 'map') return;
+  if (!state.leafletMap || !state.stage4DrawLayer || !state.dom) return;
+  if (!isFinite(clientX) || !isFinite(clientY)) return;
+
+  var radius = Math.max(2, isFinite(radiusPx) ? radiusPx : 16);
+  var pointerLatLng = stage4LatLngFromClientCoords(clientX, clientY);
+  if (!pointerLatLng) return;
+  var pointerPt = state.leafletMap.latLngToContainerPoint(pointerLatLng);
+  if (!pointerPt) return;
+
+  var layersToRemove = [];
+  var removeStrokeIds = {};
+  state.stage4DrawLayer.eachLayer(function(layer) {
+    if (!layer || typeof layer.getLatLngs !== 'function') return;
+    var raw = layer.getLatLngs();
+    if (!raw) return;
+    var flat = [];
+    flattenLatLngs(raw, flat);
+    if (flat.length < 1) return;
+
+    var minDist = Infinity;
+    if (flat.length === 1) {
+      var onlyPt = state.leafletMap.latLngToContainerPoint(flat[0]);
+      if (onlyPt) {
+        var odx = pointerPt.x - onlyPt.x;
+        var ody = pointerPt.y - onlyPt.y;
+        minDist = Math.sqrt(odx * odx + ody * ody);
+      }
+    } else {
+      for (var i = 1; i < flat.length; i++) {
+        var a = state.leafletMap.latLngToContainerPoint(flat[i - 1]);
+        var b = state.leafletMap.latLngToContainerPoint(flat[i]);
+        if (!a || !b) continue;
+        var dist = distancePointToSegmentPx(pointerPt.x, pointerPt.y, a.x, a.y, b.x, b.y);
+        if (dist < minDist) minDist = dist;
+      }
+    }
+
+    if (minDist <= radius) {
+      layersToRemove.push(layer);
+      if (layer.strokeId) {
+        removeStrokeIds[String(layer.strokeId)] = true;
+      }
+    }
+  });
+
+  if (Object.keys(removeStrokeIds).length > 0) {
+    state.stage4DrawLayer.eachLayer(function(layer) {
+      if (!layer || !layer.strokeId) return;
+      if (removeStrokeIds[String(layer.strokeId)]) {
+        layersToRemove.push(layer);
+      }
+    });
+  }
+
+  var uniqueLayers = [];
+  for (var li = 0; li < layersToRemove.length; li++) {
+    if (uniqueLayers.indexOf(layersToRemove[li]) === -1) {
+      uniqueLayers.push(layersToRemove[li]);
+    }
+  }
+  for (var lr = 0; lr < uniqueLayers.length; lr++) {
+    try {
+      state.stage4DrawLayer.removeLayer(uniqueLayers[lr]);
+    } catch (e) { /* ignore */ }
+  }
+
+  var overlayEl = state.dom.uiSetupOverlayEl;
+  if (!overlayEl) return;
+  var stickerEls = overlayEl.querySelectorAll('.ui-sticker-instance.ui-dot, .ui-sticker-instance.ui-note, .ui-sticker-instance.ui-draw');
+  for (var si = 0; si < stickerEls.length; si++) {
+    var el = stickerEls[si];
+    var rect = el.getBoundingClientRect();
+    if (distancePointToRectPx(clientX, clientY, rect) <= radius) {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }
+  }
 }
 
 // Continue drawing for a hand at given coordinates

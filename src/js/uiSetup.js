@@ -254,6 +254,21 @@ export function initUiSetup(options) {
   addNoteBtn.textContent = '+';
   addNoteBtn.setAttribute('aria-label', 'Add note annotation');
 
+  var eraserSwatchEl = document.createElement('div');
+  eraserSwatchEl.className = 'ui-draw-swatch ui-eraser-swatch';
+  eraserSwatchEl.setAttribute('aria-hidden', 'true');
+
+  var eraserIconEl = document.createElement('div');
+  eraserIconEl.className = 'ui-eraser-swatch__icon';
+  eraserIconEl.textContent = '\u232B';
+  eraserSwatchEl.appendChild(eraserIconEl);
+
+  var addEraserBtn = document.createElement('button');
+  addEraserBtn.className = 'ui-setup-add-btn';
+  addEraserBtn.type = 'button';
+  addEraserBtn.textContent = '+';
+  addEraserBtn.setAttribute('aria-label', 'Add eraser');
+
   var controlsRow = document.createElement('div');
   controlsRow.className = 'ui-setup-row';
   controlsRow.appendChild(colorSwatchBtn);
@@ -262,6 +277,8 @@ export function initUiSetup(options) {
   controlsRow.appendChild(addDrawBtn);
   controlsRow.appendChild(noteSwatchEl);
   controlsRow.appendChild(addNoteBtn);
+  controlsRow.appendChild(eraserSwatchEl);
+  controlsRow.appendChild(addEraserBtn);
   panelEl.appendChild(controlsRow);
 
   var footer = document.createElement('div');
@@ -319,6 +336,10 @@ export function initUiSetup(options) {
 
   addNoteBtn.addEventListener('click', function () {
     createNote();
+  });
+
+  addEraserBtn.addEventListener('click', function () {
+    createEraser();
   });
 
   exportBtn.addEventListener('click', function () {
@@ -467,6 +488,40 @@ export function initUiSetup(options) {
     setupNoteInteraction(noteEl);
   }
 
+  function createEraser() {
+    var eraserEl = document.createElement('div');
+    eraserEl.className = 'ui-eraser';
+    eraserEl.dataset.uiType = 'eraser';
+
+    var iconEl = document.createElement('div');
+    iconEl.className = 'ui-eraser__icon';
+    iconEl.textContent = '\u232B';
+    eraserEl.appendChild(iconEl);
+
+    overlayEl.appendChild(eraserEl);
+    positionEraserAboveButton(eraserEl);
+    makeDraggable(eraserEl, { draggingClass: 'ui-eraser--dragging' });
+  }
+
+  function positionEraserAboveButton(eraserEl) {
+    var swatchRect = eraserSwatchEl.getBoundingClientRect();
+    var x = swatchRect.left + swatchRect.width / 2;
+    var y = swatchRect.top;
+
+    eraserEl.style.left = '0px';
+    eraserEl.style.top = '0px';
+    eraserEl.style.visibility = 'hidden';
+
+    requestAnimationFrame(function () {
+      var rect = eraserEl.getBoundingClientRect();
+      var left = Math.max(8, Math.min(window.innerWidth - rect.width - 8, x - rect.width / 2));
+      var top = Math.max(8, y - 10 - rect.height);
+      eraserEl.style.left = left + 'px';
+      eraserEl.style.top = top + 'px';
+      eraserEl.style.visibility = 'visible';
+    });
+  }
+
   function positionNoteAboveButton(noteEl) {
     var btnRect = addNoteBtn.getBoundingClientRect();
     var x = btnRect.left + btnRect.width / 2;
@@ -600,6 +655,8 @@ export function initUiSetup(options) {
         items.push({ type: 'draw', color: el.dataset.color || '#2bb8ff', x: left, y: top });
       } else if (type === 'note') {
         items.push({ type: 'note', text: el.dataset.noteText || '', color: el.dataset.color || '#ffc857', x: left, y: top });
+      } else if (type === 'eraser') {
+        items.push({ type: 'eraser', x: left, y: top });
       }
     }
 
@@ -696,6 +753,22 @@ export function initUiSetup(options) {
         setupNoteInteraction(noteEl);
         continue;
       }
+
+      if (item.type === 'eraser') {
+        var eraserEl = document.createElement('div');
+        eraserEl.className = 'ui-eraser';
+        eraserEl.dataset.uiType = 'eraser';
+        eraserEl.style.left = String(item.x || 0) + 'px';
+        eraserEl.style.top = String(item.y || 0) + 'px';
+
+        var eraserIcon = document.createElement('div');
+        eraserIcon.className = 'ui-eraser__icon';
+        eraserIcon.textContent = '\u232B';
+        eraserEl.appendChild(eraserIcon);
+
+        overlayEl.appendChild(eraserEl);
+        makeDraggable(eraserEl, { draggingClass: 'ui-eraser--dragging' });
+      }
     }
   }
 }
@@ -709,6 +782,7 @@ function makeDraggable(el, options) {
 
   el.addEventListener('pointerdown', function (e) {
     if (e.button !== 0) return;
+    if (state.stage === 4 && el.classList && el.classList.contains('ui-eraser')) return;
     e.preventDefault();
 
     var rect = el.getBoundingClientRect();
