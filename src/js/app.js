@@ -4,12 +4,10 @@
  */
 
 import { getDom } from './dom.js';
-import { startCameraStream, stopCameraStream, waitForVideoMetadata, startCameraById } from './camera.js';
-import { initDetector } from './detector.js';
-import { clearOverlay, drawDetections, drawSurface, drawStereoCalibPoints } from './render.js';
+import { stopCameraStream } from './camera.js';
+import { clearOverlay, drawDetections, drawSurface } from './render.js';
 import { initUiSetup } from './uiSetup.js';
-import { triangulatePoint } from './stereo.js';
-import { clamp, saveNumberSetting, saveCustomCameraSources, waitForImageLoad } from './utils.js';
+import { clamp, saveNumberSetting, waitForImageLoad } from './utils.js';
 import { state } from './state.js';
 
 // Surface calibration
@@ -23,15 +21,6 @@ import {
   setMapFingerDotsVisible,
   applyHomography
 } from './surfaceCalibration.js';
-
-// Stereo calibration
-import {
-  setupStereoCalibButtonListeners,
-  updateStereoUIVisibility,
-  captureStereoCalibPoint,
-  updateTouchIndicator,
-  resetStereoCalibration
-} from './stereoCalibration.js';
 
 // Gesture controls
 import {
@@ -54,6 +43,15 @@ import {
   filterPolylinesBySession
 } from './stage4Drawing.js';
 
+var BACKEND_CAMERA_FEED_URL = '/video_feed';
+var BACKEND_APRILTAG_API_URL = '/api/apriltags';
+var BACKEND_APRILTAG_POLL_CAMERA_MS = 60;
+var BACKEND_APRILTAG_POLL_MAP_MS = 16;
+var apriltagPollInFlight = false;
+var apriltagLastPollMs = 0;
+var apriltagBackendErrorNotified = false;
+var backendFeedActive = false;
+
 export function initApp() {
   // Initialize DOM and state
   var dom = getDom();
@@ -62,8 +60,6 @@ export function initApp() {
   state.overlayCtx = dom.overlay.getContext('2d');
   state.captureCanvas = document.createElement('canvas');
   state.captureCtx = state.captureCanvas.getContext('2d', { willReadFrequently: true });
-  state.apriltagEnabled = true;
-  dom.apriltagToggleEl.checked = true;
 
   // AprilTag-based surface calibration (Stage 2, single-camera)
   var apriltagSurfaceStableCount = 0;
@@ -71,7 +67,6 @@ export function initApp() {
   var apriltagSurfaceSmoothedCorners = null;
 
   var videoContainer = document.getElementById('videoContainer1');
-  var videoContainer2 = document.getElementById('videoContainer2');
 
   initUiSetup({
     panelEl: dom.uiSetupPanelEl,
@@ -88,37 +83,6 @@ export function initApp() {
   dom.stopBtn.addEventListener('click', stopCamera);
   dom.viewToggleEl.addEventListener('change', onViewToggleChanged);
 
-  dom.cameraCountSelectEl.addEventListener('change', function() {
-    renderCameraDeviceSelects();
-    var count = parseInt(dom.cameraCountSelectEl.value, 10);
-    state.stereoMode = count === 2;
-    updateStereoUIVisibility(videoContainer2);
-  });
-
-  dom.cameraAddBtnEl.addEventListener('click', function() {
-    if (state.stage !== 1) return;
-    openCameraSourceModal();
-  });
-
-  dom.cameraSourceCancelBtnEl.addEventListener('click', closeCameraSourceModal);
-  dom.cameraSourceSaveBtnEl.addEventListener('click', saveCameraSourceFromModal);
-
-  dom.cameraSourceModalEl.addEventListener('click', function(e) {
-    if (e.target && e.target.classList && e.target.classList.contains('modal-backdrop')) {
-      closeCameraSourceModal();
-    }
-  });
-
-  dom.cameraSourceInputEl.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      closeCameraSourceModal();
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      saveCameraSourceFromModal();
-    }
-  });
-
   // Surface corner buttons
   dom.surfaceBtn1.addEventListener('click', function() { armCorner(0, setViewMode); });
   dom.surfaceBtn2.addEventListener('click', function() { armCorner(1, setViewMode); });
@@ -134,9 +98,6 @@ export function initApp() {
     }
     triggerApriltagCalibration();
   });
-
-  // Stereo calibration
-  setupStereoCalibButtonListeners(setError);
 
   // Hamburger menu
   state.viewToggleDockParent = dom.viewToggleContainerEl.parentNode;
@@ -284,11 +245,6 @@ export function initApp() {
   updateToolTagControlsVisibility();
   updateHamburgerMenuVisibility();
   updateBackState();
-  updateCameraSelectVisibility();
-  renderCameraDeviceSelects();
-  refreshAvailableCameras();
-  closeCameraSourceModal();
-  updateStereoUIVisibility(videoContainer2);
 
   // Gesture control sliders
   dom.holdStillThresholdSliderEl.value = String(Math.round(state.holdStillThresholdPx));
@@ -319,15 +275,6 @@ export function initApp() {
     state.pinchHoldMs = clamp(v, 0.25, 8.0) * 1000;
     dom.pinchHoldTimeValueEl.textContent = (state.pinchHoldMs / 1000).toFixed(1);
     saveNumberSetting('pinchHoldMs', state.pinchHoldMs);
-  });
-
-  dom.stereoCalibTagIdEl.value = String(Math.round(state.stereoCalibTagId));
-  dom.stereoCalibTagIdEl.addEventListener('input', function () {
-    var v = parseFloat(dom.stereoCalibTagIdEl.value);
-    if (!isFinite(v)) return;
-    state.stereoCalibTagId = clamp(Math.round(v), 0, 9999);
-    dom.stereoCalibTagIdEl.value = String(state.stereoCalibTagId);
-    saveNumberSetting('stereoCalibTagId', state.stereoCalibTagId);
   });
 
   dom.apriltagMoveWindowSliderEl.value = String(Math.round(state.apriltagSuddenMoveWindowMs));
@@ -757,8 +704,6 @@ export function initApp() {
   function updateLoadingMessage() {
     if (state.cameraStarting) {
       showLoading('Starting camera...');
-    } else if (state.cameraReady && state.detectorLoading) {
-      showLoading('Loading AprilTag detection...');
     } else {
       hideLoading();
     }
@@ -783,12 +728,6 @@ export function initApp() {
     dom.backBtn.disabled = !visible;
   }
 
-  function updateCameraSelectVisibility() {
-    var visible = state.stage === 1;
-    dom.cameraSelectRowEl.classList.toggle('hidden', !visible);
-    if (!visible) closeCameraSourceModal();
-  }
-
   // ============== Stage Management ==============
 
   function setStage(newStage) {
@@ -799,15 +738,13 @@ export function initApp() {
     document.title = titles[newStage] || '';
 
     if (newStage === 2 || newStage === 3 || newStage === 4) {
-      dom.apriltagToggleContainerEl.classList.add('hidden');
       dom.viewToggleContainerEl.classList.remove('hidden');
     } else {
-      dom.apriltagToggleContainerEl.classList.remove('hidden');
       dom.viewToggleContainerEl.classList.add('hidden');
     }
 
     if (newStage === 2) {
-      dom.surfaceButtonsEl.classList.toggle('hidden', state.stereoMode);
+      dom.surfaceButtonsEl.classList.remove('hidden');
       setViewMode(dom.viewToggleEl.checked ? 'map' : 'camera');
     } else if (newStage === 3 || newStage === 4) {
       dom.surfaceButtonsEl.classList.add('hidden');
@@ -823,10 +760,8 @@ export function initApp() {
     updateGestureControlsVisibility();
     updateTrackingOffsetControlsVisibility();
     updateToolTagControlsVisibility();
-    updateStereoUIVisibility(videoContainer2);
     updateHamburgerMenuVisibility();
     updateBackState();
-    updateCameraSelectVisibility();
   }
 
   function onNextClicked() {
@@ -852,6 +787,7 @@ export function initApp() {
     state.viewMode = mode === 'map' ? 'map' : 'camera';
 
     if (state.viewMode === 'map') {
+      setBackendFeedActive(false);
       dom.mapViewEl.classList.remove('hidden');
       dom.mapViewEl.setAttribute('aria-hidden', 'false');
       dom.viewToggleContainerEl.classList.add('toggle-floating');
@@ -868,6 +804,7 @@ export function initApp() {
       updateStage4MapInteractivity();
       updateStickerMappingForCurrentView();
     } else {
+      setBackendFeedActive(true);
       dom.mapViewEl.classList.add('hidden');
       dom.mapViewEl.setAttribute('aria-hidden', 'true');
       dom.viewToggleContainerEl.classList.add('toggle-floating');
@@ -884,13 +821,6 @@ export function initApp() {
       resetStage3Gestures();
       resumeProcessingIfReady();
     }
-  }
-
-  function onApriltagToggleChanged() {
-    // AprilTag detection is required (hand tracking removed).
-    state.apriltagEnabled = true;
-    dom.apriltagToggleEl.checked = true;
-    loadDetectorIfNeeded();
   }
 
   // ============== UI Visibility ==============
@@ -973,18 +903,34 @@ export function initApp() {
 
   // ============== Camera Management ==============
 
-  function loadDetectorIfNeeded() {
-    if (!state.apriltagEnabled || state.detector || state.detectorLoading) return;
-    state.detectorLoading = true;
-    updateLoadingMessage();
-    initDetector().then(function(d) {
-      state.detector = d;
-      state.detectorLoading = false;
-      updateLoadingMessage();
-    }, function(err) {
-      console.error('Failed to initialize detector:', err);
-      state.detectorLoading = false;
-      updateLoadingMessage();
+  function pollBackendApriltagsMaybe() {
+    if (apriltagPollInFlight) return;
+    var now = Date.now();
+    var pollMs = state.viewMode === 'map' ? BACKEND_APRILTAG_POLL_MAP_MS : BACKEND_APRILTAG_POLL_CAMERA_MS;
+    if ((now - apriltagLastPollMs) < pollMs) return;
+    apriltagLastPollMs = now;
+    apriltagPollInFlight = true;
+
+    fetch(BACKEND_APRILTAG_API_URL, { cache: 'no-store' }).then(function(resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    }).then(function(payload) {
+      if (!payload || !Array.isArray(payload.detections)) return;
+      state.lastApriltagDetections = payload.detections;
+      if (payload.ok) {
+        apriltagBackendErrorNotified = false;
+      } else if (payload.error && !apriltagBackendErrorNotified) {
+        setError('AprilTag backend error: ' + payload.error);
+        apriltagBackendErrorNotified = true;
+      }
+    }).catch(function(err) {
+      console.warn('AprilTag backend fetch failed:', err);
+      if (!apriltagBackendErrorNotified) {
+        setError('Cannot reach backend AprilTag API.');
+        apriltagBackendErrorNotified = true;
+      }
+    }).finally(function() {
+      apriltagPollInFlight = false;
     });
   }
 
@@ -994,60 +940,15 @@ export function initApp() {
       setError('');
       state.cameraStarting = true;
       updateLoadingMessage();
-
-      var selectedSource = getSelectedCameraSource();
-      if (selectedSource && selectedSource.type === 'ip') {
-        await startIpCamera(selectedSource.url);
-        return;
-      }
-
-      stopIpCameraIfRunning();
-      state.usingIpCamera = false;
-      state.pixelReadBlockedNotified = false;
-      dom.video.classList.remove('hidden');
-
-      var selectedDeviceId = selectedSource && selectedSource.type === 'device' ? selectedSource.deviceId : null;
-      var videoConstraints = { width: { ideal: 640 }, height: { ideal: 480 } };
-      if (selectedDeviceId) {
-        videoConstraints.deviceId = { exact: selectedDeviceId };
-      } else {
-        videoConstraints.facingMode = 'environment';
-      }
-
-      var stream = await startCameraStream(dom.video, { video: videoConstraints, audio: false });
-      state.currentStream = stream;
-      await waitForVideoMetadata(dom.video);
-
-      dom.overlay.width = dom.video.videoWidth;
-      dom.overlay.height = dom.video.videoHeight;
-      state.captureCanvas.width = dom.video.videoWidth;
-      state.captureCanvas.height = dom.video.videoHeight;
-
-      setButtonsRunning(true);
-      state.cameraStarting = false;
-      state.cameraReady = true;
-      updateLoadingMessage();
-      setNextEnabled(true);
-
-      loadDetectorIfNeeded();
-
-      var cameraCount = parseInt(dom.cameraCountSelectEl.value, 10);
-      state.stereoMode = cameraCount === 2;
-      if (state.stereoMode) {
-        var ok = await startSecondCamera();
-        if (!ok) { setError('Failed to start second camera. Stereo mode disabled.'); state.stereoMode = false; }
-      }
-      updateStereoUIVisibility(videoContainer2);
-      refreshAvailableCameras();
-      startProcessing();
+      await startIpCamera();
     } catch (err) {
       state.cameraStarting = false;
       state.cameraReady = false;
       updateLoadingMessage();
       dom.startBtn.disabled = false;
       setNextEnabled(false);
-      console.error('Error accessing camera:', err);
-      setError(cameraErrorMessage(err));
+      console.error('Error starting backend camera feed:', err);
+      setError('Error starting backend camera feed.');
     }
   }
 
@@ -1056,12 +957,11 @@ export function initApp() {
     stopIpCameraIfRunning();
     stopCameraStream(state.currentStream);
     state.currentStream = null;
-    stopSecondCamera();
     dom.video.srcObject = null;
-    dom.video.classList.remove('hidden');
+    dom.video.classList.add('hidden');
     clearOverlay(state.overlayCtx, dom.overlay);
     updateApriltagHud(dom.apriltagHudEl, null, 0, 0);
-    updateApriltagHud(dom.apriltagHud2El, null, 0, 0);
+    state.lastApriltagDetections = [];
     state.cameraStarting = false;
     state.cameraReady = false;
     updateLoadingMessage();
@@ -1070,48 +970,13 @@ export function initApp() {
     setStage(1);
     dom.viewToggleEl.checked = false;
     resetSurfaceCorners();
-    resetStereoCalibration(videoContainer2);
     setButtonsRunning(false);
-  }
-
-  async function startSecondCamera() {
-    var selectEl = dom.cameraDeviceSelectsEl.querySelector('select[data-camera-index="1"]');
-    if (!selectEl) return false;
-    var deviceId = selectEl.value;
-    if (!deviceId || deviceId.startsWith('ip:')) return false;
-
-    try {
-      var video2 = document.getElementById('video2');
-      if (!video2) return false;
-      state.currentStream2 = await startCameraById(video2, deviceId, { width: 640, height: 480 });
-      await waitForVideoMetadata(video2);
-
-      state.captureCanvas2 = document.createElement('canvas');
-      state.captureCanvas2.width = video2.videoWidth;
-      state.captureCanvas2.height = video2.videoHeight;
-      state.captureCtx2 = state.captureCanvas2.getContext('2d', { willReadFrequently: true });
-
-      var overlay2 = document.getElementById('overlay2');
-      if (overlay2) { overlay2.width = video2.videoWidth; overlay2.height = video2.videoHeight; }
-
-      return true;
-    } catch (err) {
-      console.error('Failed to start second camera:', err);
-      return false;
-    }
-  }
-
-  function stopSecondCamera() {
-    if (state.currentStream2) { stopCameraStream(state.currentStream2); state.currentStream2 = null; }
-    state.captureCanvas2 = null;
-    state.captureCtx2 = null;
   }
 
   async function startIpCamera(url) {
     stopCameraStream(state.currentStream);
     state.currentStream = null;
     state.usingIpCamera = true;
-    state.pixelReadBlockedNotified = false;
 
     if (!state.ipCameraImg) {
       state.ipCameraImg = document.createElement('img');
@@ -1123,18 +988,20 @@ export function initApp() {
       state.ipCameraImg.crossOrigin = 'anonymous';
       videoContainer.insertBefore(state.ipCameraImg, dom.overlay);
     }
+    state.ipCameraImg.style.display = state.viewMode === 'camera' ? 'block' : 'none';
 
     dom.video.classList.add('hidden');
 
     try {
-      await waitForImageLoad(state.ipCameraImg, url);
+      await waitForImageLoad(state.ipCameraImg, buildBackendFeedUrl(url || BACKEND_CAMERA_FEED_URL));
     } catch (err) {
+      backendFeedActive = false;
       state.cameraStarting = false;
       state.cameraReady = false;
       updateLoadingMessage();
       dom.startBtn.disabled = false;
       setNextEnabled(false);
-      setError('Failed to load IP camera URL.');
+      setError('Failed to load backend camera feed.');
       return;
     }
 
@@ -1149,132 +1016,50 @@ export function initApp() {
     dom.overlay.style.aspectRatio = w + ' / ' + h;
 
     setButtonsRunning(true);
+    backendFeedActive = true;
     state.cameraStarting = false;
     state.cameraReady = true;
     updateLoadingMessage();
     setNextEnabled(true);
 
-    loadDetectorIfNeeded();
-
-    var cameraCount = parseInt(dom.cameraCountSelectEl.value, 10);
-    state.stereoMode = cameraCount === 2;
-    if (state.stereoMode) {
-      var ok = await startSecondCamera();
-      if (!ok) { setError('Failed to start second camera. Stereo mode disabled.'); state.stereoMode = false; }
-    }
-    updateStereoUIVisibility(videoContainer2);
+    state.lastApriltagDetections = [];
+    apriltagLastPollMs = 0;
+    apriltagPollInFlight = false;
+    apriltagBackendErrorNotified = false;
     startProcessing();
+  }
+
+  function buildBackendFeedUrl(baseUrl) {
+    var sep = baseUrl.indexOf('?') === -1 ? '?' : '&';
+    return baseUrl + sep + 't=' + Date.now();
+  }
+
+  function setBackendFeedActive(active) {
+    if (!state.usingIpCamera || !state.ipCameraImg || !state.cameraReady) return;
+    if (active) {
+      state.ipCameraImg.style.display = 'block';
+      if (!backendFeedActive) {
+        state.ipCameraImg.src = buildBackendFeedUrl(BACKEND_CAMERA_FEED_URL);
+        backendFeedActive = true;
+      }
+      return;
+    }
+
+    if (backendFeedActive) {
+      try { state.ipCameraImg.src = ''; } catch (e) {}
+      backendFeedActive = false;
+    }
+    state.ipCameraImg.style.display = 'none';
   }
 
   function stopIpCameraIfRunning() {
     if (!state.usingIpCamera) return;
     state.usingIpCamera = false;
-    if (state.ipCameraImg) { try { state.ipCameraImg.src = ''; } catch (e) {} }
-  }
-
-  function cameraErrorMessage(err) {
-    if (!err || typeof err !== 'object') return 'Error accessing camera.';
-    if (err.name === 'NotAllowedError') return 'Camera access denied. Please allow camera permissions.';
-    if (err.name === 'NotFoundError') return 'No camera found on this device.';
-    return 'Error accessing camera: ' + (err.message || String(err));
-  }
-
-  // ============== Camera Source UI ==============
-
-  async function refreshAvailableCameras() {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
-    try {
-      var devices = await navigator.mediaDevices.enumerateDevices();
-      state.availableVideoDevices = devices.filter(function(d) { return d && d.kind === 'videoinput'; });
-      renderCameraDeviceSelects();
-    } catch (err) {
-      console.warn('Failed to enumerate camera devices:', err);
+    backendFeedActive = false;
+    if (state.ipCameraImg) {
+      try { state.ipCameraImg.src = ''; } catch (e) {}
+      state.ipCameraImg.style.display = 'none';
     }
-  }
-
-  function getSelectedCameraSource() {
-    var selectEl = dom.cameraDeviceSelectsEl.querySelector('select[data-camera-index="0"]');
-    if (!selectEl) return null;
-    var id = String(selectEl.value || '').trim();
-    if (!id) return null;
-    return id.startsWith('ip:') ? { type: 'ip', url: id.slice(3) } : { type: 'device', deviceId: id };
-  }
-
-  function renderCameraDeviceSelects() {
-    var count = parseInt(dom.cameraCountSelectEl.value, 10);
-    if (isNaN(count) || count < 0) count = 0;
-    if (count > 2) count = 2;
-
-    var previousValues = [];
-    var existing = dom.cameraDeviceSelectsEl.querySelectorAll('select');
-    for (var i = 0; i < existing.length; i++) previousValues[i] = existing[i].value;
-
-    dom.cameraDeviceSelectsEl.textContent = '';
-
-    for (var index = 0; index < count; index++) {
-      var selectEl = document.createElement('select');
-      selectEl.className = 'camera-select';
-      selectEl.setAttribute('aria-label', 'Camera ' + (index + 1));
-      selectEl.dataset.cameraIndex = String(index);
-
-      var placeholder = document.createElement('option');
-      placeholder.value = '';
-      placeholder.textContent = 'Select camera...';
-      selectEl.appendChild(placeholder);
-
-      for (var d = 0; d < state.availableVideoDevices.length; d++) {
-        var device = state.availableVideoDevices[d];
-        var opt = document.createElement('option');
-        opt.value = device.deviceId || '';
-        opt.textContent = device.label || ('Camera ' + (d + 1));
-        selectEl.appendChild(opt);
-      }
-
-      if (state.customCameraSources.length > 0) {
-        var group = document.createElement('optgroup');
-        group.label = 'IP camera sources';
-        for (var s = 0; s < state.customCameraSources.length; s++) {
-          var url = state.customCameraSources[s];
-          var opt2 = document.createElement('option');
-          opt2.value = 'ip:' + url;
-          opt2.textContent = url;
-          group.appendChild(opt2);
-        }
-        selectEl.appendChild(group);
-      }
-
-      if (previousValues[index]) selectEl.value = previousValues[index];
-      else if (state.availableVideoDevices[index]) selectEl.value = state.availableVideoDevices[index].deviceId;
-
-      dom.cameraDeviceSelectsEl.appendChild(selectEl);
-    }
-  }
-
-  function openCameraSourceModal() {
-    dom.cameraSourceInputEl.value = '';
-    dom.cameraSourceModalEl.classList.remove('hidden');
-    dom.cameraSourceModalEl.setAttribute('aria-hidden', 'false');
-    setTimeout(function() { dom.cameraSourceInputEl.focus(); }, 0);
-  }
-
-  function closeCameraSourceModal() {
-    dom.cameraSourceModalEl.classList.add('hidden');
-    dom.cameraSourceModalEl.setAttribute('aria-hidden', 'true');
-  }
-
-  function saveCameraSourceFromModal() {
-    var raw = String(dom.cameraSourceInputEl.value || '').trim();
-    if (!raw) return;
-    if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
-      setError('Camera source must start with http:// or https://');
-      return;
-    }
-    if (state.customCameraSources.indexOf(raw) === -1) {
-      state.customCameraSources.push(raw);
-      saveCustomCameraSources(state.customCameraSources);
-    }
-    closeCameraSourceModal();
-    renderCameraDeviceSelects();
   }
 
   // ============== Frame Processing ==============
@@ -1371,7 +1156,7 @@ export function initApp() {
 
   function triggerApriltagCalibration() {
     // Capture all 4 corners at once from the currently visible AprilTags (IDs 1-4)
-    if (!state.apriltagEnabled || !state.lastApriltagDetections || state.lastApriltagDetections.length < 4) {
+    if (!state.lastApriltagDetections || state.lastApriltagDetections.length < 4) {
       setError('AprilTag calibration requires all 4 tags (IDs 1-4) to be visible.');
       return;
     }
@@ -1398,61 +1183,37 @@ export function initApp() {
     setError('');
   }
 
-  async function processFrame() {
+  function processFrame() {
     if (!state.isProcessing) return;
 
     var width = state.captureCanvas.width;
     var height = state.captureCanvas.height;
 
-    var frameSource = state.usingIpCamera && state.ipCameraImg ? state.ipCameraImg : dom.video;
-    try {
-      state.captureCtx.drawImage(frameSource, 0, 0, width, height);
-    } catch (err) {
-      state.animationId = requestAnimationFrame(processFrame);
-      return;
-    }
-
-    var imageData = null;
-    try {
-      imageData = state.captureCtx.getImageData(0, 0, width, height);
-    } catch (err) {
-      if (!state.pixelReadBlockedNotified && state.usingIpCamera) {
-        state.pixelReadBlockedNotified = true;
-        setError('IP camera stream is visible, but pixel processing is blocked (CORS).');
+    if (state.viewMode === 'camera') {
+      var frameSource = state.usingIpCamera && state.ipCameraImg ? state.ipCameraImg : dom.video;
+      try {
+        state.captureCtx.drawImage(frameSource, 0, 0, width, height);
+      } catch (err) {
+        state.animationId = requestAnimationFrame(processFrame);
+        return;
       }
-      state.animationId = requestAnimationFrame(processFrame);
-      return;
     }
 
     if (state.viewMode === 'camera') {
       clearOverlay(state.overlayCtx, dom.overlay);
     }
-
-    var imageData2 = null;
-    if (state.stereoMode && state.captureCanvas2 && state.captureCtx2) {
-      try {
-        var video2 = document.getElementById('video2');
-        if (video2 && video2.readyState >= 2) {
-          var w2 = state.captureCanvas2.width;
-          var h2 = state.captureCanvas2.height;
-          state.captureCtx2.drawImage(video2, 0, 0, w2, h2);
-          imageData2 = state.captureCtx2.getImageData(0, 0, w2, h2);
-        }
-      } catch (err) {
-        console.error('Camera 2 frame read error:', err);
-      }
-    }
+    pollBackendApriltagsMaybe();
 
     var isSurfaceSetupCameraView = (state.stage === 2 || state.stage === 3) && state.viewMode === 'camera';
 
     // Surface-corner capture preview (AprilTags only)
     var surfacePreviewPoint = null;
-    if (!state.stereoMode && state.stage === 2 && isSurfaceSetupCameraView && state.armedCornerIndex !== null && state.armedCornerCaptureRequested) {
+    if (state.stage === 2 && isSurfaceSetupCameraView && state.armedCornerIndex !== null && state.armedCornerCaptureRequested) {
       surfacePreviewPoint = getSurfaceCornerFromApriltags(state.lastApriltagDetections || [], state.armedCornerIndex, width, height);
     }
 
     // Single camera corner capture
-    if (!state.stereoMode && state.stage === 2 && isSurfaceSetupCameraView && state.armedCornerCaptureRequested && state.armedCornerIndex !== null && surfacePreviewPoint) {
+    if (state.stage === 2 && isSurfaceSetupCameraView && state.armedCornerCaptureRequested && state.armedCornerIndex !== null && surfacePreviewPoint) {
       state.surfaceCorners[state.armedCornerIndex] = { x: surfacePreviewPoint.x, y: surfacePreviewPoint.y };
       flashCornerButton(state.armedCornerIndex);
       clearArmedCorner();
@@ -1460,54 +1221,12 @@ export function initApp() {
       recomputeSurfaceHomographyIfReady();
     }
 
-    // Stereo calibration preview points (use selected AprilTag ID)
-    var stereoPreview1 = null;
-    var stereoPreview2 = null;
-    if (state.stereoMode) {
-      var calibId = parseInt(state.stereoCalibTagId, 10);
-      if (isFinite(calibId) && Array.isArray(state.lastApriltagDetections)) {
-        for (var sp1 = 0; sp1 < state.lastApriltagDetections.length; sp1++) {
-          var dd1 = state.lastApriltagDetections[sp1];
-          if (!dd1 || !dd1.center) continue;
-          var idd1 = typeof dd1.id === 'number' ? dd1.id : parseInt(dd1.id, 10);
-          if (idd1 === calibId) { stereoPreview1 = { x: dd1.center.x, y: dd1.center.y }; break; }
-        }
-      }
-      if (isFinite(calibId) && Array.isArray(state.lastApriltagDetections2)) {
-        for (var sp2 = 0; sp2 < state.lastApriltagDetections2.length; sp2++) {
-          var dd2 = state.lastApriltagDetections2[sp2];
-          if (!dd2 || !dd2.center) continue;
-          var idd2 = typeof dd2.id === 'number' ? dd2.id : parseInt(dd2.id, 10);
-          if (idd2 === calibId) { stereoPreview2 = { x: dd2.center.x, y: dd2.center.y }; break; }
-        }
-      }
-    }
-
     // Draw calibration overlays
     if (isSurfaceSetupCameraView) {
-      if (state.stereoMode) {
-        drawStereoCalibPoints(state.overlayCtx, state.stereoCalibrationPoints, 'camera1Pixel', {
-          armedIndex: state.stereoArmedPointIndex,
-          previewPoint: stereoPreview1
-        });
-
-        var overlay2 = document.getElementById('overlay2');
-        if (overlay2) {
-          var ctx2 = overlay2.getContext('2d');
-          if (ctx2) {
-            ctx2.clearRect(0, 0, overlay2.width, overlay2.height);
-            drawStereoCalibPoints(ctx2, state.stereoCalibrationPoints, 'camera2Pixel', {
-              armedIndex: state.stereoArmedPointIndex,
-              previewPoint: stereoPreview2
-            });
-          }
-        }
-      } else {
-        drawSurface(state.overlayCtx, state.surfaceCorners, {
-          previewIndex: state.armedCornerIndex,
-          previewPoint: state.armedCornerIndex !== null ? surfacePreviewPoint : null
-        });
-      }
+      drawSurface(state.overlayCtx, state.surfaceCorners, {
+        previewIndex: state.armedCornerIndex,
+        previewPoint: state.armedCornerIndex !== null ? surfacePreviewPoint : null
+      });
     }
 
     // Map view (Stage 2, 3, and 4)
@@ -1535,150 +1254,57 @@ export function initApp() {
       resetStage3Gestures();
     }
 
-    // AprilTag detection (keep latest results for map debug dots and AprilTag gestures)
-    // Grayscale conversion moved to worker for better performance
-    if (state.apriltagEnabled && state.detector) {
-      try {
-        // Use detectRGBA - grayscale conversion happens in worker thread
-        var detections = await state.detector.detectRGBA(imageData.data, width, height);
-        state.lastApriltagDetections = detections || [];
+    var detections = Array.isArray(state.lastApriltagDetections) ? state.lastApriltagDetections : [];
 
-        // Stage 2: allow AprilTags 1-4 to define surface corners automatically (single camera).
-        // Uses the tag corner closest to each image corner.
-        if (!state.stereoMode && state.stage === 2 && state.viewMode === 'camera' && !state.armedCornerCaptureRequested) {
-          var candidate = computeApriltagSurfaceCorners(state.lastApriltagDetections, width, height);
-          if (candidate) {
-            if (!cornersAreClose(candidate, apriltagSurfaceLastCorners, 6)) {
-              apriltagSurfaceStableCount = 1;
-              apriltagSurfaceLastCorners = candidate;
-            } else {
-              apriltagSurfaceStableCount++;
-            }
+    // Stage 2: allow AprilTags 1-4 to define surface corners automatically (single camera).
+    // Uses the tag corner closest to each image corner.
+    if (state.stage === 2 && state.viewMode === 'camera' && !state.armedCornerCaptureRequested) {
+      var candidate = computeApriltagSurfaceCorners(detections, width, height);
+      if (candidate) {
+        if (!cornersAreClose(candidate, apriltagSurfaceLastCorners, 6)) {
+          apriltagSurfaceStableCount = 1;
+          apriltagSurfaceLastCorners = candidate;
+        } else {
+          apriltagSurfaceStableCount++;
+        }
 
-            if (apriltagSurfaceStableCount >= 3) {
-              // Smooth to reduce jitter, but keep corners "attached" to tags while visible.
-              var alpha = 0.35;
-              if (!apriltagSurfaceSmoothedCorners) {
-                apriltagSurfaceSmoothedCorners = cloneCorners(candidate);
-              } else {
-                for (var si = 0; si < 4; si++) {
-                  if (!apriltagSurfaceSmoothedCorners[si] || !candidate[si]) continue;
-                  apriltagSurfaceSmoothedCorners[si].x = apriltagSurfaceSmoothedCorners[si].x + alpha * (candidate[si].x - apriltagSurfaceSmoothedCorners[si].x);
-                  apriltagSurfaceSmoothedCorners[si].y = apriltagSurfaceSmoothedCorners[si].y + alpha * (candidate[si].y - apriltagSurfaceSmoothedCorners[si].y);
-                }
-              }
-
-              var nextCorners = cloneCorners(apriltagSurfaceSmoothedCorners);
-              var needsApply = !areSurfaceCornersReady() || !cornersAreClose(nextCorners, state.surfaceCorners, 2);
-              if (needsApply) {
-                state.surfaceCorners = nextCorners;
-                updateSurfaceButtonsUI();
-                recomputeSurfaceHomographyIfReady();
-              }
-            }
+        if (apriltagSurfaceStableCount >= 3) {
+          // Smooth to reduce jitter, but keep corners "attached" to tags while visible.
+          var alpha = 0.35;
+          if (!apriltagSurfaceSmoothedCorners) {
+            apriltagSurfaceSmoothedCorners = cloneCorners(candidate);
           } else {
-            apriltagSurfaceStableCount = 0;
-            apriltagSurfaceLastCorners = null;
-            apriltagSurfaceSmoothedCorners = null;
+            for (var si = 0; si < 4; si++) {
+              if (!apriltagSurfaceSmoothedCorners[si] || !candidate[si]) continue;
+              apriltagSurfaceSmoothedCorners[si].x = apriltagSurfaceSmoothedCorners[si].x + alpha * (candidate[si].x - apriltagSurfaceSmoothedCorners[si].x);
+              apriltagSurfaceSmoothedCorners[si].y = apriltagSurfaceSmoothedCorners[si].y + alpha * (candidate[si].y - apriltagSurfaceSmoothedCorners[si].y);
+            }
+          }
+
+          var nextCorners = cloneCorners(apriltagSurfaceSmoothedCorners);
+          var needsApply = !areSurfaceCornersReady() || !cornersAreClose(nextCorners, state.surfaceCorners, 2);
+          if (needsApply) {
+            state.surfaceCorners = nextCorners;
+            updateSurfaceButtonsUI();
+            recomputeSurfaceHomographyIfReady();
           }
         }
-
-        if (state.viewMode === 'camera') {
-          updateApriltagHud(dom.apriltagHudEl, state.lastApriltagDetections, width, height);
-          // Keep canvas drawing too (useful on platforms where it renders correctly).
-          if (detections && detections.length > 0) {
-            drawDetections(state.overlayCtx, detections);
-          }
-        } else {
-          updateApriltagHud(dom.apriltagHudEl, null, width, height);
-        }
-
-        // Stereo AprilTags (camera 2 detections + optional touch sensing)
-        if (state.stereoMode && imageData2) {
-          try {
-            // Use detectRGBA for camera 2 as well
-            var detections2 = await state.detector.detectRGBA(imageData2.data, imageData2.width, imageData2.height);
-            state.lastApriltagDetections2 = detections2 || [];
-            if (state.viewMode === 'camera') {
-              updateApriltagHud(dom.apriltagHud2El, state.lastApriltagDetections2, imageData2.width, imageData2.height);
-            } else {
-              updateApriltagHud(dom.apriltagHud2El, null, imageData2.width, imageData2.height);
-            }
-
-            var det1ById = {};
-            for (var di1 = 0; di1 < (state.lastApriltagDetections || []).length; di1++) {
-              var d1 = state.lastApriltagDetections[di1];
-              if (!d1) continue;
-              var id1 = typeof d1.id === 'number' ? d1.id : parseInt(d1.id, 10);
-              if (!isFinite(id1) || !d1.center) continue;
-              det1ById[id1] = d1;
-            }
-
-            var det2ById = {};
-            for (var di2 = 0; di2 < (state.lastApriltagDetections2 || []).length; di2++) {
-              var d2 = state.lastApriltagDetections2[di2];
-              if (!d2) continue;
-              var id2 = typeof d2.id === 'number' ? d2.id : parseInt(d2.id, 10);
-              if (!isFinite(id2) || !d2.center) continue;
-              det2ById[id2] = d2;
-            }
-
-            // Stage 2: capture stereo calibration points using the selected calibration tag ID.
-            if (state.stage === 2 && state.stereoArmedPointIndex !== null) {
-              var calibId = parseInt(state.stereoCalibTagId, 10);
-              var ca = isFinite(calibId) ? (det1ById[calibId] || null) : null;
-              var cb = isFinite(calibId) ? (det2ById[calibId] || null) : null;
-              if (ca && cb) {
-                captureStereoCalibPoint(ca.center, cb.center);
-              }
-            }
-
-            // Stage 3/4: touch/hover classification for participant tags (requires calibration)
-            if (state.stereoCalibrationReady && (state.stage === 3 || state.stage === 4) && Array.isArray(state.stage3ParticipantTagIds)) {
-              var touchById = {};
-              for (var ti = 0; ti < state.stage3ParticipantTagIds.length; ti++) {
-                var tagId2 = parseInt(state.stage3ParticipantTagIds[ti], 10);
-                if (!isFinite(tagId2)) continue;
-                var a = det1ById[tagId2] || null;
-                var b = det2ById[tagId2] || null;
-
-                // Require both cameras for touch/hover; missing is treated as not-touch (cancels pinch).
-                if (!a || !b) {
-                  touchById[tagId2] = { isTouch: false, z: null };
-                  continue;
-                }
-
-                var wp = triangulatePoint(state.stereoProjectionMatrix1, state.stereoProjectionMatrix2, a.center, b.center);
-                if (!wp) {
-                  touchById[tagId2] = { isTouch: false, z: null };
-                  continue;
-                }
-
-                var isTouch = Math.abs(wp.z) < state.touchZThreshold;
-                touchById[tagId2] = { isTouch: isTouch, z: wp.z };
-              }
-              state.apriltagTouchById = touchById;
-            } else {
-              state.apriltagTouchById = null;
-            }
-          } catch (err2) {
-            state.apriltagTouchById = null;
-            updateApriltagHud(dom.apriltagHud2El, null, imageData2 ? imageData2.width : 0, imageData2 ? imageData2.height : 0);
-          }
-        } else {
-          state.lastApriltagDetections2 = null;
-          state.apriltagTouchById = null;
-          updateApriltagHud(dom.apriltagHud2El, null, imageData2 ? imageData2.width : 0, imageData2 ? imageData2.height : 0);
-        }
-      } catch (err) {
-        console.error('AprilTag detection error:', err);
-      }
-    } else {
-      if (state.viewMode === 'camera') {
-        updateApriltagHud(dom.apriltagHudEl, null, width, height);
-        updateApriltagHud(dom.apriltagHud2El, null, imageData2 ? imageData2.width : 0, imageData2 ? imageData2.height : 0);
+      } else {
+        apriltagSurfaceStableCount = 0;
+        apriltagSurfaceLastCorners = null;
+        apriltagSurfaceSmoothedCorners = null;
       }
     }
+
+    if (state.viewMode === 'camera') {
+      updateApriltagHud(dom.apriltagHudEl, detections, width, height);
+      if (detections.length > 0) {
+        drawDetections(state.overlayCtx, detections);
+      }
+    } else {
+      updateApriltagHud(dom.apriltagHudEl, null, width, height);
+    }
+    state.apriltagTouchById = null;
 
     // Map AprilTag debug dots for configured participant IDs
     if (isMapViewWithHomography) {

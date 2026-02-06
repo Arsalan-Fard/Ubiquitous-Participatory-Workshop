@@ -15,12 +15,6 @@ export function initUiSetup(options) {
   var currentDrawColor = '#2bb8ff';
   var currentNoteColor = '#ffc857';
 
-  // AprilTags only (hand tracking removed)
-  state.apriltagEnabled = true;
-  if (state.dom && state.dom.apriltagToggleEl) {
-    state.dom.apriltagToggleEl.checked = true;
-  }
-
   var participantsRowEl = document.createElement('div');
   participantsRowEl.className = 'ui-setup-row';
 

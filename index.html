@@ -18,12 +18,6 @@
                 <div id="apriltagHud" class="apriltag-hud hidden" aria-hidden="true"></div>
                 <div id="loading" class="loading hidden" role="status" aria-live="polite">Loading...</div>
             </div>
-            <div class="video-container hidden" id="videoContainer2">
-                <div class="video-container-label">Camera 2</div>
-                <video id="video2" autoplay playsinline></video>
-                <canvas id="overlay2"></canvas>
-                <div id="apriltagHud2" class="apriltag-hud hidden" aria-hidden="true"></div>
-            </div>
         </div>
         <div id="gestureControls" class="gesture-controls hidden" aria-hidden="true">
             <!-- AprilTag only -->
@@ -79,63 +73,12 @@
             <button id="apriltagCalibBtn" class="surface-btn surface-btn--apriltag" type="button" title="Calibrate using AprilTags 1-4">AT</button>
         </div>
 
-        <!-- Stereo Calibration Buttons (shown when 2 cameras selected) -->
-        <div id="stereoCalibButtons" class="stereo-calib-buttons hidden" aria-label="Stereo calibration points">
-            <div class="stereo-calib-group">
-                <span class="stereo-calib-group-label">Surface (Z=0):</span>
-                <button id="stereoCalibBtn1" class="stereo-calib-btn" type="button" title="Top-left corner">1</button>
-                <button id="stereoCalibBtn2" class="stereo-calib-btn" type="button" title="Top-right corner">2</button>
-                <button id="stereoCalibBtn3" class="stereo-calib-btn" type="button" title="Bottom-right corner">3</button>
-                <button id="stereoCalibBtn4" class="stereo-calib-btn" type="button" title="Bottom-left corner">4</button>
-                <button id="stereoCalibBtn5" class="stereo-calib-btn" type="button" title="Top edge midpoint">5</button>
-                <button id="stereoCalibBtn6" class="stereo-calib-btn" type="button" title="Right edge midpoint">6</button>
-                <button id="stereoCalibBtn7" class="stereo-calib-btn" type="button" title="Bottom edge midpoint">7</button>
-                <button id="stereoCalibBtn8" class="stereo-calib-btn" type="button" title="Left edge midpoint">8</button>
-            </div>
-            <div class="stereo-calib-group">
-                <span class="stereo-calib-group-label">Elevated (Z=10cm):</span>
-                <button id="stereoCalibBtn9" class="stereo-calib-btn stereo-calib-btn--elevated" type="button" title="Top-left corner, elevated">9</button>
-                <button id="stereoCalibBtn10" class="stereo-calib-btn stereo-calib-btn--elevated" type="button" title="Top-right corner, elevated">10</button>
-                <button id="stereoCalibBtn11" class="stereo-calib-btn stereo-calib-btn--elevated" type="button" title="Bottom-right corner, elevated">11</button>
-                <button id="stereoCalibBtn12" class="stereo-calib-btn stereo-calib-btn--elevated" type="button" title="Bottom-left corner, elevated">12</button>
-            </div>
-            <div class="stereo-calib-actions">
-                <button id="stereoComputeBtn" class="btn btn-secondary" type="button" disabled>Compute Calibration</button>
-                <label class="stereo-calib-tag">
-                    <span class="stereo-calib-tag__label">Tag ID</span>
-                    <input id="stereoCalibTagId" class="stereo-calib-tag__input" type="number" min="0" max="9999" step="1" value="5" aria-label="AprilTag ID to use for stereo calibration" />
-                </label>
-                <span id="stereoCalibStatus" class="stereo-calib-status"></span>
-            </div>
-        </div>
-
-        <!-- Touch/Hover Indicator (shown after stereo calibration) -->
-        <div id="touchIndicator" class="touch-indicator hidden" aria-live="polite">
-            <span id="touchStatus" class="touch-status">HOVER</span>
-            <span id="touchZ" class="touch-z">Z: 0.000</span>
-        </div>
         <div class="controls">
             <button id="backBtn" class="btn btn-secondary" type="button" disabled>Back</button>
             <button id="startBtn" class="btn">Start Camera</button>
             <button id="nextBtn" class="btn btn-secondary" disabled>Next</button>
             <button id="stopBtn" class="btn">Close Camera</button>
         </div>
-        <div id="cameraSelectRow" class="camera-select-row" aria-label="Camera selection">
-            <select id="cameraCountSelect" class="camera-select" aria-label="Number of cameras">
-                <option value="0">0</option>
-                <option value="1" selected>1</option>
-                <option value="2">2</option>
-            </select>
-            <button id="cameraAddBtn" class="camera-add-btn" type="button" aria-label="Add camera">+</button>
-            <div id="cameraDeviceSelects" class="camera-device-selects" aria-label="Available cameras"></div>
-        </div>
-        <label id="apriltagToggleContainer" class="toggle-inline">
-            <span class="toggle-inline-label">AprilTag detection (required)</span>
-            <span class="switch">
-                <input type="checkbox" id="apriltagToggle" checked disabled>
-                <span class="slider" aria-hidden="true"></span>
-            </span>
-        </label>
         <label id="viewToggleContainer" class="toggle-inline hidden" aria-label="Camera or map view">
             <span class="toggle-inline-label">Camera</span>
             <span class="switch">
@@ -262,18 +205,5 @@
     <script type="module" src="src/js/main.js"></script>
 
     <input id="geojsonFileInput" type="file" accept=".geojson,.json" style="display:none" aria-hidden="true" />
-
-    <div id="cameraSourceModal" class="modal hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Add camera source">
-        <div class="modal-backdrop"></div>
-        <div class="modal-card" role="document">
-            <h2 class="modal-title">Add camera source</h2>
-            <p class="modal-subtitle">Paste an IP camera URL (e.g. http://...)</p>
-            <input id="cameraSourceInput" class="modal-input" type="text" placeholder="http://..." autocomplete="off" spellcheck="false" />
-            <div class="modal-actions">
-                <button id="cameraSourceCancelBtn" class="btn btn-secondary" type="button">Cancel</button>
-                <button id="cameraSourceSaveBtn" class="btn" type="button">Add</button>
-            </div>
-        </div>
-    </div>
 </body>
 </html>

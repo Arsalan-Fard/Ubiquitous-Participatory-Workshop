@@ -3,7 +3,7 @@
  * All modules can import and modify this state object
  */
 
-import { loadNumberSetting, loadCustomCameraSources } from './utils.js';
+import { loadNumberSetting } from './utils.js';
 
 // Create the shared state object
 export var state = {
@@ -23,14 +23,6 @@ export var state = {
   cameraStarting: false,
   usingIpCamera: false,
   ipCameraImg: null,
-  pixelReadBlockedNotified: false,
-  availableVideoDevices: [],
-  customCameraSources: loadCustomCameraSources(),
-
-  // Detection state
-  detector: null,
-  detectorLoading: false,
-  apriltagEnabled: true,
 
   // Canvas state
   overlayCtx: null,
