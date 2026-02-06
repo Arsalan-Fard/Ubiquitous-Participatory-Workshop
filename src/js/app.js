@@ -5,7 +5,7 @@
 
 import { getDom } from './dom.js';
 import { stopCameraStream } from './camera.js';
-import { clearOverlay, drawDetections, drawSurface } from './render.js';
+import { clearOverlay, drawSurface } from './render.js';
 import { initUiSetup } from './uiSetup.js';
 import { clamp, saveNumberSetting, waitForImageLoad } from './utils.js';
 import { state } from './state.js';
@@ -1232,29 +1232,102 @@ export function initApp() {
     // Map view (Stage 2, 3, and 4)
     var isMapViewWithHomography = (state.stage === 2 || state.stage === 3 || state.stage === 4) && state.viewMode === 'map';
     setMapFingerDotsVisible(false);
+    var detections = Array.isArray(state.lastApriltagDetections) ? state.lastApriltagDetections : [];
+    var detectionVisibleById = {};
+    var detectionById = {};
+    for (var di = 0; di < detections.length; di++) {
+      var det = detections[di];
+      if (!det) continue;
+      var detId = typeof det.id === 'number' ? det.id : parseInt(det.id, 10);
+      if (!isFinite(detId)) continue;
+      detectionVisibleById[detId] = true;
+      detectionById[detId] = det;
+    }
 
     // Gesture handling (dwell-to-click and pinch-to-drag for Stage 3 and 4)
     if ((state.stage === 3 || state.stage === 4) && state.viewMode === 'map') {
       var apriltagPoints = [];
+      var secondaryVisibleByPrimaryTag = {};
+      var emittedTagIds = {};
+      var mapRect = dom.mapWarpEl.getBoundingClientRect();
+      var mapW = dom.mapWarpEl.offsetWidth;
+      var mapH = dom.mapWarpEl.offsetHeight;
+      var canProjectToMap = !!state.surfaceHomography && mapW > 0 && mapH > 0;
+      var maxExtrapolation = 1.5;
       if (Array.isArray(state.stage3ParticipantTagIds)) {
         for (var t = 0; t < state.stage3ParticipantTagIds.length; t++) {
-          var tagId = parseInt(state.stage3ParticipantTagIds[t], 10);
-          if (!isFinite(tagId)) continue;
-          var touchInfo = state.apriltagTouchById && state.apriltagTouchById[tagId] ? state.apriltagTouchById[tagId] : null;
-          apriltagPoints.push({
-            handId: String(tagId),
-            isApriltag: true,
-            tagId: tagId,
-            isTouch: touchInfo ? !!touchInfo.isTouch : null
-          });
+          var primaryTagId = parseInt(state.stage3ParticipantTagIds[t], 10);
+          var triggerTagId = Array.isArray(state.stage3ParticipantTriggerTagIds) ? parseInt(state.stage3ParticipantTriggerTagIds[t], 10) : NaN;
+
+          if (isFinite(primaryTagId)) {
+            secondaryVisibleByPrimaryTag[String(primaryTagId)] = isFinite(triggerTagId) ? !!detectionVisibleById[triggerTagId] : false;
+          }
+          if (isFinite(triggerTagId)) {
+            secondaryVisibleByPrimaryTag[String(triggerTagId)] = isFinite(primaryTagId) ? !!detectionVisibleById[primaryTagId] : false;
+          }
+
+          var pairTagIds = [primaryTagId, triggerTagId];
+          for (var pi = 0; pi < pairTagIds.length; pi++) {
+            var tagId = pairTagIds[pi];
+            if (!isFinite(tagId)) continue;
+            if (emittedTagIds[tagId]) continue;
+            emittedTagIds[tagId] = true;
+
+            var detByTag = detectionById[tagId];
+            if (!detByTag || !detByTag.center) continue;
+
+            var touchInfo = state.apriltagTouchById && state.apriltagTouchById[tagId] ? state.apriltagTouchById[tagId] : null;
+            var point = {
+              handId: String(tagId),
+              isApriltag: true,
+              tagId: tagId,
+              triggerTagVisible: !!secondaryVisibleByPrimaryTag[String(tagId)],
+              isTouch: touchInfo ? !!touchInfo.isTouch : null
+            };
+
+            if (canProjectToMap) {
+              var uv = applyHomography(state.surfaceHomography, detByTag.center.x, detByTag.center.y);
+              if (uv && uv.x >= -maxExtrapolation && uv.x <= 1 + maxExtrapolation && uv.y >= -maxExtrapolation && uv.y <= 1 + maxExtrapolation) {
+                var x = mapRect.left + uv.x * mapW;
+                var y = mapRect.top + uv.y * mapH;
+
+                if (tagId >= 11 && tagId <= 20) {
+                  var ox = state.apriltagTrackingOffsetX;
+                  var oy = state.apriltagTrackingOffsetY;
+                  if (detByTag.corners && detByTag.corners.length >= 4 && (ox !== 0 || oy !== 0)) {
+                    var c0 = applyHomography(state.surfaceHomography, detByTag.corners[0].x, detByTag.corners[0].y);
+                    var c1 = applyHomography(state.surfaceHomography, detByTag.corners[1].x, detByTag.corners[1].y);
+                    if (c0 && c1) {
+                      var angle = Math.atan2((c1.y - c0.y) * mapH, (c1.x - c0.x) * mapW);
+                      var cosA = Math.cos(angle);
+                      var sinA = Math.sin(angle);
+                      x += ox * cosA - oy * sinA;
+                      y += ox * sinA + oy * cosA;
+                    } else {
+                      x += ox;
+                      y += oy;
+                    }
+                  } else {
+                    x += ox;
+                    y += oy;
+                  }
+                }
+
+                point.x = x;
+                point.y = y;
+              }
+            }
+
+            apriltagPoints.push(point);
+          }
         }
       }
+      state.stage3SecondaryVisibleByPrimaryTag = secondaryVisibleByPrimaryTag;
       handleStage3Gestures(apriltagPoints);
     } else {
+      state.stage3SecondaryVisibleByPrimaryTag = {};
       resetStage3Gestures();
     }
-
-    var detections = Array.isArray(state.lastApriltagDetections) ? state.lastApriltagDetections : [];
 
     // Stage 2: allow AprilTags 1-4 to define surface corners automatically (single camera).
     // Uses the tag corner closest to each image corner.
@@ -1298,9 +1371,6 @@ export function initApp() {
 
     if (state.viewMode === 'camera') {
       updateApriltagHud(dom.apriltagHudEl, detections, width, height);
-      if (detections.length > 0) {
-        drawDetections(state.overlayCtx, detections);
-      }
     } else {
       updateApriltagHud(dom.apriltagHudEl, null, width, height);
     }

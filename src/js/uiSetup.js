@@ -66,12 +66,15 @@ export function initUiSetup(options) {
 
     if (!count) {
       state.stage3ParticipantTagIds = [];
+      state.stage3ParticipantTriggerTagIds = [];
       return;
     }
 
     // Ensure array has correct length
     if (!Array.isArray(state.stage3ParticipantTagIds)) state.stage3ParticipantTagIds = [];
+    if (!Array.isArray(state.stage3ParticipantTriggerTagIds)) state.stage3ParticipantTriggerTagIds = [];
     state.stage3ParticipantTagIds.length = count;
+    state.stage3ParticipantTriggerTagIds.length = count;
 
     for (var i = 0; i < count; i++) {
       var wrap = document.createElement('div');
@@ -81,35 +84,76 @@ export function initUiSetup(options) {
       label.className = 'ui-setup-participant__label';
       label.textContent = 'P' + (i + 1);
 
-      var selectEl = document.createElement('select');
-      selectEl.className = 'ui-setup-select';
-      selectEl.setAttribute('aria-label', 'Participant ' + (i + 1) + ' AprilTag ID');
+      var primaryGroupEl = document.createElement('div');
+      primaryGroupEl.className = 'ui-setup-participant__tag-group';
+
+      var primaryLabelEl = document.createElement('span');
+      primaryLabelEl.className = 'ui-setup-participant__tag-label';
+      primaryLabelEl.textContent = 'Primary';
+
+      var primarySelectEl = document.createElement('select');
+      primarySelectEl.className = 'ui-setup-select';
+      primarySelectEl.setAttribute('aria-label', 'Participant ' + (i + 1) + ' primary AprilTag ID');
+
+      var triggerGroupEl = document.createElement('div');
+      triggerGroupEl.className = 'ui-setup-participant__tag-group';
+
+      var triggerLabelEl = document.createElement('span');
+      triggerLabelEl.className = 'ui-setup-participant__tag-label';
+      triggerLabelEl.textContent = 'Trigger';
+
+      var triggerSelectEl = document.createElement('select');
+      triggerSelectEl.className = 'ui-setup-select';
+      triggerSelectEl.setAttribute('aria-label', 'Participant ' + (i + 1) + ' trigger AprilTag ID');
 
       for (var tagId = 11; tagId <= 20; tagId++) {
-        var opt = document.createElement('option');
-        opt.value = String(tagId);
-        opt.textContent = String(tagId);
-        selectEl.appendChild(opt);
+        var optPrimary = document.createElement('option');
+        optPrimary.value = String(tagId);
+        optPrimary.textContent = String(tagId);
+        primarySelectEl.appendChild(optPrimary);
+
+        var optTrigger = document.createElement('option');
+        optTrigger.value = String(tagId);
+        optTrigger.textContent = String(tagId);
+        triggerSelectEl.appendChild(optTrigger);
       }
 
-      var current = parseInt(state.stage3ParticipantTagIds[i], 10);
-      if (!isFinite(current) || current < 11 || current > 20) {
-        current = 11 + i;
-        if (current > 20) current = 11;
+      var currentPrimary = parseInt(state.stage3ParticipantTagIds[i], 10);
+      if (!isFinite(currentPrimary) || currentPrimary < 11 || currentPrimary > 20) {
+        currentPrimary = 11 + i;
+        if (currentPrimary > 20) currentPrimary = 11;
       }
-      state.stage3ParticipantTagIds[i] = current;
-      selectEl.value = String(current);
+      state.stage3ParticipantTagIds[i] = currentPrimary;
+      primarySelectEl.value = String(currentPrimary);
 
-      (function (index, sel) {
-        sel.addEventListener('change', function () {
-          var v = parseInt(sel.value, 10);
+      var currentTrigger = parseInt(state.stage3ParticipantTriggerTagIds[i], 10);
+      if (!isFinite(currentTrigger) || currentTrigger < 11 || currentTrigger > 20) {
+        currentTrigger = 11 + i + 1;
+        if (currentTrigger > 20) currentTrigger = 11;
+      }
+      state.stage3ParticipantTriggerTagIds[i] = currentTrigger;
+      triggerSelectEl.value = String(currentTrigger);
+
+      (function (index, primarySel, triggerSel) {
+        primarySel.addEventListener('change', function () {
+          var v = parseInt(primarySel.value, 10);
           if (!isFinite(v)) return;
           state.stage3ParticipantTagIds[index] = v;
         });
-      })(i, selectEl);
+        triggerSel.addEventListener('change', function () {
+          var v = parseInt(triggerSel.value, 10);
+          if (!isFinite(v)) return;
+          state.stage3ParticipantTriggerTagIds[index] = v;
+        });
+      })(i, primarySelectEl, triggerSelectEl);
 
       wrap.appendChild(label);
-      wrap.appendChild(selectEl);
+      primaryGroupEl.appendChild(primaryLabelEl);
+      primaryGroupEl.appendChild(primarySelectEl);
+      triggerGroupEl.appendChild(triggerLabelEl);
+      triggerGroupEl.appendChild(triggerSelectEl);
+      wrap.appendChild(primaryGroupEl);
+      wrap.appendChild(triggerGroupEl);
       participantSelectsRowEl.appendChild(wrap);
     }
   }

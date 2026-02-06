@@ -83,6 +83,8 @@ export var state = {
   // Stage 3 participant setup (AprilTags)
   stage3ParticipantCount: 0,
   stage3ParticipantTagIds: [],
+  stage3ParticipantTriggerTagIds: [],
+  stage3SecondaryVisibleByPrimaryTag: {},
 
   // AprilTag tracking offset (for tags 11-20)
   apriltagTrackingOffsetX: loadNumberSetting('apriltagTrackingOffsetX', 0, -200, 200),

@@ -222,7 +222,23 @@ function getInteractionCandidate(pointer, radiusPx) {
 // Main gesture handling function called each frame - handles multiple pointers
 export function handleStage3Gestures(usableIndexTipPoints) {
   var nowMs = performance.now();
-  var viewportPoints = getAllMapPointerViewportPoints();
+  var viewportPoints = [];
+  if (Array.isArray(usableIndexTipPoints)) {
+    for (var up = 0; up < usableIndexTipPoints.length; up++) {
+      var pt = usableIndexTipPoints[up];
+      if (!pt || !pt.handId) continue;
+      if (!isFinite(pt.x) || !isFinite(pt.y)) continue;
+      viewportPoints.push({
+        index: viewportPoints.length,
+        handId: String(pt.handId),
+        x: pt.x,
+        y: pt.y
+      });
+    }
+  }
+  if (viewportPoints.length < 1) {
+    viewportPoints = getAllMapPointerViewportPoints();
+  }
 
   // Build a map from handId to hand data for quick lookup
   var handDataByHandId = {};
@@ -256,12 +272,38 @@ export function handleStage3Gestures(usableIndexTipPoints) {
         var isDrawingMode = state.stage === 4 && getDrawColorForPointer(ps.dragPointerId);
         var hasStickerArmed = !!ps.armedStickerTemplate;
         var hasAnyToolActive = isDrawingMode || hasStickerArmed;
+        var secondaryVisibleForTrigger = !!(state.stage3SecondaryVisibleByPrimaryTag && state.stage3SecondaryVisibleByPrimaryTag[handId]);
 
         // Stop current drawing stroke after brief delay
         var strokeStopDelay = typeof state.strokeStopDelayMs === 'number' ? state.strokeStopDelayMs : 50;
         if (ps.isDrawing && missingDuration >= strokeStopDelay) {
           ps.isDrawing = false;
           stopDrawingForPointer(ps.dragPointerId);
+        }
+
+        // Trigger only when primary disappeared AND configured trigger tag is currently visible.
+        if (!secondaryVisibleForTrigger) {
+          ps.triggerFillStartMs = 0;
+          ps.triggerFired = false;
+          updatePointerCursor(handId, ps.lastPointer, 0, null);
+
+          var keepAliveNoTrigger = !!ps.armedStickerTemplate || !!getDrawColorForPointer(ps.dragPointerId);
+          var noTriggerTimeout = APRILTAG_TRIGGER_DELAY_MS + 200;
+          var noTriggerMaxTimeout = keepAliveNoTrigger ? drawingTimeoutMs : noTriggerTimeout;
+          if (missingDuration < noTriggerMaxTimeout) continue;
+
+          if (ps.cursorEl) {
+            ps.cursorEl.classList.add('hidden');
+            ps.cursorEl.setAttribute('aria-hidden', 'true');
+            ps.cursorEl.style.transform = 'translate(-9999px, -9999px)';
+          }
+          if (handId === primaryCursorHandId) primaryCursorHandId = null;
+          if (ps.cursorEl && ps.cursorEl !== state.dom.mapFingerCursorEl && ps.cursorEl.parentNode) {
+            ps.cursorEl.parentNode.removeChild(ps.cursorEl);
+          }
+          dearmStickerTemplate(ps);
+          delete pointerStates[handId];
+          continue;
         }
 
         // Determine if we should show blue fill:

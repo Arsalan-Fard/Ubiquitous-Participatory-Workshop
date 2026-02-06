@@ -1312,7 +1312,7 @@ h1 {
 
 .ui-setup-participant {
     display: inline-flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
 }
 
@@ -1322,6 +1322,20 @@ h1 {
     color: rgba(255, 255, 255, 0.85);
     min-width: 22px;
     text-align: right;
+}
+
+.ui-setup-participant__tag-group {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.ui-setup-participant__tag-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: rgba(255, 255, 255, 0.7);
 }
 
 .ui-setup-detection-toggle {
