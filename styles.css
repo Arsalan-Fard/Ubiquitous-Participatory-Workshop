@@ -741,6 +741,11 @@ h1 {
     box-shadow: 0 0 0 3px rgba(43, 184, 255, 0.22);
 }
 
+.modal-input option {
+    background: #121212;
+    color: #ffffff;
+}
+
 .modal-actions {
     margin-top: 12px;
     display: flex;
@@ -755,6 +760,13 @@ h1 {
 
 .modal-actions .btn:not(.btn-secondary):hover {
     background-color: #45a049;
+}
+
+.results-modal-error {
+    margin-top: 10px;
+    text-align: left;
+    font-size: 13px;
+    color: #ff8a8a;
 }
 
 .toggle-inline {
@@ -868,6 +880,22 @@ h1 {
     background-color: #d32f2f;
 }
 
+#showResultsBtn {
+    background-color: #1976d2;
+}
+
+#showResultsBtn:hover {
+    background-color: #1769bb;
+}
+
+#resultsExitBtn {
+    background-color: #f44336;
+}
+
+#resultsExitBtn:hover {
+    background-color: #d32f2f;
+}
+
 #error {
     color: #ff6b6b;
     margin-top: 10px;
@@ -955,6 +983,47 @@ h1 {
 
 .leaflet-map.leaflet-map--draw-active {
     cursor: crosshair;
+}
+
+.results-viewer {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 1100;
+    min-width: min(520px, calc(100vw - 32px));
+    max-width: min(760px, calc(100vw - 32px));
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.66);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    backdrop-filter: blur(10px);
+    color: #ffffff;
+}
+
+.results-viewer__title {
+    font-size: 16px;
+    font-weight: 800;
+}
+
+.results-viewer__meta {
+    margin-top: 2px;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.86);
+}
+
+.results-viewer__actions {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.results-viewer__actions .btn {
+    margin: 0;
+    padding: 8px 14px;
+    font-size: 14px;
 }
 
 .map-tag-masks {

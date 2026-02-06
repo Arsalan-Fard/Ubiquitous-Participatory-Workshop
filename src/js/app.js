@@ -45,6 +45,8 @@ import {
 
 var BACKEND_CAMERA_FEED_URL = '/video_feed';
 var BACKEND_APRILTAG_API_URL = '/api/apriltags';
+var BACKEND_WORKSHOP_SESSION_API_URL = '/api/workshop_session';
+var BACKEND_WORKSHOPS_API_URL = '/api/workshops';
 var BACKEND_APRILTAG_POLL_CAMERA_MS = 60;
 var BACKEND_APRILTAG_POLL_MAP_MS = 16;
 var MAP_TAG_MASK_HOLD_MS = 500;
@@ -80,10 +82,17 @@ export function initApp() {
 
   // Event listeners
   dom.startBtn.addEventListener('click', startCamera);
+  dom.showResultsBtn.addEventListener('click', onShowResultsClicked);
   dom.nextBtn.addEventListener('click', onNextClicked);
   dom.backBtn.addEventListener('click', onBackClicked);
   dom.stopBtn.addEventListener('click', stopCamera);
   dom.viewToggleEl.addEventListener('change', onViewToggleChanged);
+  dom.resultsCancelBtnEl.addEventListener('click', closeResultsModal);
+  dom.resultsModalBackdropEl.addEventListener('click', closeResultsModal);
+  dom.resultsOpenBtnEl.addEventListener('click', onResultsOpenClicked);
+  dom.resultsPrevBtnEl.addEventListener('click', showPrevResultsMapView);
+  dom.resultsNextBtnEl.addEventListener('click', showNextResultsMapView);
+  dom.resultsExitBtnEl.addEventListener('click', exitResultsMode);
 
   // Surface corner buttons
   dom.surfaceBtn1.addEventListener('click', function() { armCorner(0, setViewMode); });
@@ -107,6 +116,10 @@ export function initApp() {
 
   document.addEventListener('keydown', function(e) {
     if (e.key !== 'Escape') return;
+    if (resultsModeActive) {
+      exitResultsMode();
+      return;
+    }
     if (state.stage4DrawMode) setStage4DrawMode(false);
   });
 
@@ -247,6 +260,9 @@ export function initApp() {
   updateToolTagControlsVisibility();
   updateHamburgerMenuVisibility();
   updateBackState();
+  updateShowResultsButton();
+  setResultsViewerVisible(false);
+  closeResultsModal();
 
   // Gesture control sliders
   dom.holdStillThresholdSliderEl.value = String(Math.round(state.holdStillThresholdPx));
@@ -450,6 +466,12 @@ export function initApp() {
   var mapSessions = [];
   var mapSessionCounter = 0;
   var currentMapSessionIndex = -1;
+  var workshopFinishInProgress = false;
+  var resultsModeActive = false;
+  var resultsWorkshopId = '';
+  var resultsMapViews = [];
+  var resultsMapViewIndex = 0;
+  var resultsLayerGroup = null;
 
   // Tool tag detection state (for edge-triggered actions)
   var toolTagInSurface = {}; // tagId -> boolean (was in surface last frame)
@@ -540,11 +562,607 @@ export function initApp() {
 
   function goToNextMapSession() {
     if (mapSessions.length === 0) return;
+    if (state.stage === 4 && currentMapSessionIndex >= 0 && currentMapSessionIndex >= mapSessions.length - 1) {
+      finishWorkshopSession();
+      return;
+    }
     currentMapSessionIndex++;
     if (currentMapSessionIndex >= mapSessions.length) {
       currentMapSessionIndex = 0; // Wrap around
     }
     activateMapSession(currentMapSessionIndex);
+  }
+
+  function showWorkshopFinishedPopup(extraMessage) {
+    var base = 'Workshop/survey is finished. Thank you for your participation.';
+    var extra = String(extraMessage || '').trim();
+    window.alert(extra ? (base + '\n\n' + extra) : base);
+  }
+
+  function finishWorkshopSession() {
+    if (workshopFinishInProgress) return;
+    workshopFinishInProgress = true;
+    dom.nextBtn.disabled = true;
+
+    exportWorkshopInputsGeoJSON().then(function(result) {
+      if (result && result.saved && result.sessionFile) {
+        showWorkshopFinishedPopup('Saved to: ' + String(result.sessionFile));
+        return;
+      }
+      var errorText = result && result.error ? String(result.error) : 'Unknown error';
+      showWorkshopFinishedPopup('Warning: failed to save workshop directory on backend.\n' +
+        'Please run this UI from the project backend (`python app.py`) and retry.\n' +
+        'Error: ' + errorText);
+    }).finally(function() {
+      workshopFinishInProgress = false;
+      dom.nextBtn.disabled = false;
+    });
+  }
+
+  function flattenLatLngsForGeoJson(latlngs, out) {
+    if (!Array.isArray(latlngs)) return;
+    for (var i = 0; i < latlngs.length; i++) {
+      var v = latlngs[i];
+      if (!v) continue;
+      if (Array.isArray(v)) {
+        flattenLatLngsForGeoJson(v, out);
+        continue;
+      }
+      if (typeof v.lat === 'number' && typeof v.lng === 'number') {
+        out.push(v);
+      }
+    }
+  }
+
+  function downloadGeoJsonFile(featureCollection, filename) {
+    var text = JSON.stringify(featureCollection, null, 2);
+    var blob = new Blob([text], { type: 'application/geo+json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function() { URL.revokeObjectURL(url); }, 0);
+  }
+
+  function stableStringify(value) {
+    if (value === null) return 'null';
+    if (typeof value === 'number') {
+      if (!isFinite(value)) return 'null';
+      return String(value);
+    }
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    if (typeof value === 'string') return JSON.stringify(value);
+    if (Array.isArray(value)) {
+      var arrParts = [];
+      for (var ai = 0; ai < value.length; ai++) {
+        arrParts.push(stableStringify(value[ai]));
+      }
+      return '[' + arrParts.join(',') + ']';
+    }
+    if (typeof value === 'object') {
+      var keys = Object.keys(value).sort();
+      var objParts = [];
+      for (var ki = 0; ki < keys.length; ki++) {
+        var k = keys[ki];
+        objParts.push(JSON.stringify(k) + ':' + stableStringify(value[k]));
+      }
+      return '{' + objParts.join(',') + '}';
+    }
+    return 'null';
+  }
+
+  function fnv1aHashHex(text) {
+    var hash = 0x811c9dc5;
+    for (var i = 0; i < text.length; i++) {
+      hash ^= text.charCodeAt(i);
+      hash = (hash * 0x01000193) >>> 0;
+    }
+    return ('00000000' + hash.toString(16)).slice(-8);
+  }
+
+  function collectWorkshopSetupDefinition() {
+    var setupItems = [];
+    if (dom.uiSetupOverlayEl) {
+      var els = dom.uiSetupOverlayEl.querySelectorAll('.ui-label, .ui-dot, .ui-draw, .ui-note, .ui-eraser');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (!el || !el.dataset || el.classList.contains('ui-sticker-instance')) continue;
+
+        var type = el.dataset.uiType || '';
+        var left = parseFloat(el.style.left || '0');
+        var top = parseFloat(el.style.top || '0');
+        var rotationDeg = parseFloat(el.dataset.rotationDeg || '0');
+        var item = {
+          type: type || 'unknown',
+          x: isFinite(left) ? left : 0,
+          y: isFinite(top) ? top : 0,
+          rotationDeg: isFinite(rotationDeg) ? rotationDeg : 0,
+          color: el.dataset.color || null,
+          text: type === 'label' ? (el.textContent || '') : '',
+          noteText: type === 'note' ? (el.dataset.noteText || '') : ''
+        };
+        setupItems.push(item);
+      }
+    }
+
+    setupItems.sort(function(a, b) {
+      var ak = [a.type, a.text, a.noteText, a.color, a.x, a.y, a.rotationDeg].join('|');
+      var bk = [b.type, b.text, b.noteText, b.color, b.x, b.y, b.rotationDeg].join('|');
+      if (ak < bk) return -1;
+      if (ak > bk) return 1;
+      return 0;
+    });
+
+    return {
+      participantCount: state.stage3ParticipantCount || 0,
+      participantPrimaryTagIds: Array.isArray(state.stage3ParticipantTagIds) ? state.stage3ParticipantTagIds.slice() : [],
+      participantTriggerTagIds: Array.isArray(state.stage3ParticipantTriggerTagIds) ? state.stage3ParticipantTriggerTagIds.slice() : [],
+      toolTagBindings: {
+        isovist: dom.isovistTagSelectEl.value || null,
+        shortestPath: dom.shortestPathTagSelectEl.value || null,
+        pan: dom.panTagSelectEl.value || null,
+        zoom: dom.zoomTagSelectEl.value || null,
+        eraser: dom.eraserTagSelectEl.value || null,
+        next: dom.nextTagSelectEl.value || null,
+        back: dom.backTagSelectEl.value || null
+      },
+      setupItems: setupItems
+    };
+  }
+
+  function buildWorkshopIdFromSetup(setupDefinition) {
+    var normalized = stableStringify(setupDefinition || {});
+    return 'workshop-' + fnv1aHashHex(normalized);
+  }
+
+  function saveWorkshopSessionToBackend(workshopId, featureCollection, setupDefinition) {
+    return fetch(BACKEND_WORKSHOP_SESSION_API_URL, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workshopId: workshopId,
+        setupDefinition: setupDefinition,
+        geojson: featureCollection
+      })
+    }).then(function(resp) {
+      return resp.text().then(function(bodyText) {
+        var payload = null;
+        try {
+          payload = bodyText ? JSON.parse(bodyText) : null;
+        } catch (e) {
+          payload = null;
+        }
+        if (!resp.ok || !payload || payload.ok === false) {
+          var detail = payload && payload.error ? payload.error : ('HTTP ' + resp.status + ' ' + (resp.statusText || ''));
+          throw new Error(detail);
+        }
+        return payload;
+      });
+    });
+  }
+
+  function buildWorkshopResultsApiUrl(workshopId) {
+    return BACKEND_WORKSHOPS_API_URL + '/' + encodeURIComponent(workshopId) + '/results';
+  }
+
+  function setResultsModalError(text) {
+    var message = String(text || '').trim();
+    dom.resultsErrorEl.textContent = message;
+    dom.resultsErrorEl.classList.toggle('hidden', !message);
+  }
+
+  function setResultsViewerVisible(visible) {
+    dom.resultsViewerControlsEl.classList.toggle('hidden', !visible);
+    dom.resultsViewerControlsEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  }
+
+  function openResultsModal() {
+    dom.resultsModalEl.classList.remove('hidden');
+    dom.resultsModalEl.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeResultsModal() {
+    dom.resultsModalEl.classList.add('hidden');
+    dom.resultsModalEl.setAttribute('aria-hidden', 'true');
+    setResultsModalError('');
+  }
+
+  function updateResultsWorkshopSelect(workshops) {
+    dom.resultsWorkshopSelectEl.textContent = '';
+    var items = Array.isArray(workshops) ? workshops : [];
+    for (var i = 0; i < items.length; i++) {
+      var workshop = items[i];
+      if (!workshop || !workshop.workshopId) continue;
+      var option = document.createElement('option');
+      option.value = String(workshop.workshopId);
+      option.textContent = String(workshop.directory || workshop.workshopId) + ' (' + String(workshop.sessionCount || 0) + ' sessions)';
+      dom.resultsWorkshopSelectEl.appendChild(option);
+    }
+  }
+
+  function onShowResultsClicked() {
+    if (resultsModeActive) return;
+    if (state.stage !== 1 || state.cameraReady || state.cameraStarting) return;
+
+    setError('');
+    setResultsModalError('');
+    openResultsModal();
+
+    dom.resultsWorkshopSelectEl.disabled = true;
+    dom.resultsOpenBtnEl.disabled = true;
+    dom.resultsWorkshopSelectEl.textContent = '';
+    var loadingOption = document.createElement('option');
+    loadingOption.value = '';
+    loadingOption.textContent = 'Loading workshops...';
+    dom.resultsWorkshopSelectEl.appendChild(loadingOption);
+
+    fetch(BACKEND_WORKSHOPS_API_URL, { cache: 'no-store' }).then(function(resp) {
+      return resp.json().then(function(payload) {
+        if (!resp.ok || !payload || payload.ok === false) {
+          var detail = payload && payload.error ? payload.error : ('HTTP ' + resp.status);
+          throw new Error(detail);
+        }
+        return payload;
+      });
+    }).then(function(payload) {
+      var workshops = Array.isArray(payload.workshops) ? payload.workshops : [];
+      updateResultsWorkshopSelect(workshops);
+      dom.resultsWorkshopSelectEl.disabled = workshops.length === 0;
+      dom.resultsOpenBtnEl.disabled = workshops.length === 0;
+      if (!workshops.length) {
+        setResultsModalError('No workshop directories found in workshops/.');
+      }
+    }).catch(function(err) {
+      console.warn('Failed to list workshops:', err);
+      updateResultsWorkshopSelect([]);
+      dom.resultsWorkshopSelectEl.disabled = true;
+      dom.resultsOpenBtnEl.disabled = true;
+      setResultsModalError('Failed to load workshop directories.');
+    });
+  }
+
+  function onResultsOpenClicked() {
+    if (resultsModeActive) return;
+    var workshopId = String(dom.resultsWorkshopSelectEl.value || '').trim();
+    if (!workshopId) {
+      setResultsModalError('Please select a workshop directory.');
+      return;
+    }
+
+    dom.resultsOpenBtnEl.disabled = true;
+    setResultsModalError('');
+
+    fetch(buildWorkshopResultsApiUrl(workshopId), { cache: 'no-store' }).then(function(resp) {
+      return resp.json().then(function(payload) {
+        if (!resp.ok || !payload || payload.ok === false) {
+          var detail = payload && payload.error ? payload.error : ('HTTP ' + resp.status);
+          throw new Error(detail);
+        }
+        return payload;
+      });
+    }).then(function(payload) {
+      closeResultsModal();
+      enterResultsMode(workshopId, payload);
+    }).catch(function(err) {
+      console.warn('Failed to load workshop results:', err);
+      setResultsModalError('Failed to load workshop results.');
+      dom.resultsOpenBtnEl.disabled = false;
+    });
+  }
+
+  function ensureResultsLayerGroup() {
+    if (!state.leafletMap || !state.leafletGlobal) return null;
+    if (!resultsLayerGroup) {
+      resultsLayerGroup = state.leafletGlobal.layerGroup().addTo(state.leafletMap);
+    }
+    return resultsLayerGroup;
+  }
+
+  function clearResultsLayerGroup() {
+    if (!resultsLayerGroup) return;
+    if (typeof resultsLayerGroup.clearLayers === 'function') {
+      resultsLayerGroup.clearLayers();
+    }
+  }
+
+  function getResultsFeatureColor(feature) {
+    var props = feature && feature.properties ? feature.properties : {};
+    if (props && typeof props.color === 'string' && props.color.trim()) {
+      return props.color;
+    }
+    if (props && props.sourceType === 'annotation') return '#ffc857';
+    if (props && props.sourceType === 'drawing') return '#2bb8ff';
+    return '#ff3b30';
+  }
+
+  function renderResultsMapView() {
+    if (!resultsModeActive) return;
+
+    var totalViews = resultsMapViews.length;
+    dom.resultsViewTitleEl.textContent = 'Workshop: ' + resultsWorkshopId;
+    dom.resultsPrevBtnEl.disabled = totalViews < 2;
+    dom.resultsNextBtnEl.disabled = totalViews < 2;
+
+    clearResultsLayerGroup();
+
+    if (totalViews < 1) {
+      dom.resultsViewMetaEl.textContent = 'No map views with saved inputs.';
+      return;
+    }
+
+    if (resultsMapViewIndex >= totalViews) resultsMapViewIndex = 0;
+    if (resultsMapViewIndex < 0) resultsMapViewIndex = totalViews - 1;
+
+    var currentMapView = resultsMapViews[resultsMapViewIndex] || {};
+    var features = Array.isArray(currentMapView.features) ? currentMapView.features : [];
+    var mapViewName = currentMapView.mapViewName ? String(currentMapView.mapViewName) : ('View ' + String(resultsMapViewIndex + 1));
+    var sessionCount = isFinite(currentMapView.sessionCount) ? Number(currentMapView.sessionCount) : 0;
+
+    dom.resultsViewMetaEl.textContent =
+      'Map view ' + String(resultsMapViewIndex + 1) + '/' + String(totalViews) +
+      ': ' + mapViewName +
+      ' | features: ' + String(features.length) +
+      ' | sessions: ' + String(sessionCount);
+
+    var group = ensureResultsLayerGroup();
+    if (!group || !state.leafletGlobal || !state.leafletMap || features.length < 1) return;
+
+    var L = state.leafletGlobal;
+    var geoLayer = L.geoJSON(
+      { type: 'FeatureCollection', features: features },
+      {
+        pointToLayer: function(feature, latlng) {
+          var color = getResultsFeatureColor(feature);
+          return L.circleMarker(latlng, {
+            radius: 7,
+            color: '#111111',
+            weight: 1,
+            fillColor: color,
+            fillOpacity: 0.95
+          });
+        },
+        style: function(feature) {
+          var color = getResultsFeatureColor(feature);
+          var sourceType = feature && feature.properties ? feature.properties.sourceType : '';
+          return {
+            color: color,
+            weight: sourceType === 'drawing' ? 6 : 3,
+            opacity: 0.95
+          };
+        }
+      }
+    );
+
+    group.addLayer(geoLayer);
+
+    if (typeof geoLayer.getBounds === 'function') {
+      var bounds = geoLayer.getBounds();
+      if (bounds && typeof bounds.isValid === 'function' && bounds.isValid()) {
+        state.leafletMap.fitBounds(bounds, { padding: [36, 36], maxZoom: 18 });
+      }
+    }
+  }
+
+  function enterResultsMode(workshopId, payload) {
+    initMaptasticIfNeeded();
+    initLeafletIfNeeded();
+    if (!state.leafletMap || !state.leafletGlobal) {
+      setError('Map is not available.');
+      return;
+    }
+
+    resultsModeActive = true;
+    resultsWorkshopId = String(workshopId || '').trim();
+    resultsMapViews = Array.isArray(payload && payload.mapViews) ? payload.mapViews.slice() : [];
+    resultsMapViewIndex = 0;
+
+    setViewMode('map');
+    setResultsViewerVisible(true);
+    dom.pageTitleEl.textContent = 'Workshop Results';
+    document.title = 'Workshop Results';
+    updateShowResultsButton();
+
+    setTimeout(function() {
+      if (state.leafletMap) state.leafletMap.invalidateSize();
+      renderResultsMapView();
+    }, 0);
+  }
+
+  function exitResultsMode() {
+    if (!resultsModeActive) return;
+    resultsModeActive = false;
+    resultsWorkshopId = '';
+    resultsMapViews = [];
+    resultsMapViewIndex = 0;
+    clearResultsLayerGroup();
+    setResultsViewerVisible(false);
+
+    setStage(state.stage);
+    setButtonsRunning(!!state.cameraReady);
+    updateShowResultsButton();
+  }
+
+  function showNextResultsMapView() {
+    if (!resultsModeActive || resultsMapViews.length < 2) return;
+    resultsMapViewIndex++;
+    if (resultsMapViewIndex >= resultsMapViews.length) resultsMapViewIndex = 0;
+    renderResultsMapView();
+  }
+
+  function showPrevResultsMapView() {
+    if (!resultsModeActive || resultsMapViews.length < 2) return;
+    resultsMapViewIndex--;
+    if (resultsMapViewIndex < 0) resultsMapViewIndex = resultsMapViews.length - 1;
+    renderResultsMapView();
+  }
+
+  function exportWorkshopInputsGeoJSON() {
+    try {
+      var features = [];
+      var exportedStrokeIds = {};
+      var mapSessionById = {};
+      for (var ms = 0; ms < mapSessions.length; ms++) {
+        var s = mapSessions[ms];
+        if (!s || !isFinite(s.id)) continue;
+        mapSessionById[String(s.id)] = s;
+      }
+
+      function getMapViewInfo(sessionIdRaw) {
+        var id = (sessionIdRaw === null || sessionIdRaw === undefined || String(sessionIdRaw) === '') ? null : String(sessionIdRaw);
+        var session = id ? mapSessionById[id] : null;
+        return {
+          mapViewId: id,
+          mapViewName: session ? session.name : (id ? ('View ' + id) : 'Unassigned')
+        };
+      }
+
+      // Export sticker inputs (dot / annotation / draw sticker instances)
+      if (dom.uiSetupOverlayEl) {
+        var stickerEls = dom.uiSetupOverlayEl.querySelectorAll('.ui-sticker-instance.ui-dot, .ui-sticker-instance.ui-note, .ui-sticker-instance.ui-draw');
+        for (var i = 0; i < stickerEls.length; i++) {
+          var el = stickerEls[i];
+          var lat = parseFloat(el.dataset.mapLat || '');
+          var lng = parseFloat(el.dataset.mapLng || '');
+          if (!isFinite(lat) || !isFinite(lng)) continue;
+
+          var type = el.dataset.uiType || '';
+          var viewInfo = getMapViewInfo(el.dataset.sessionId || null);
+          var props = {
+            sourceType: type === 'note' ? 'annotation' : 'sticker',
+            itemType: type || 'unknown',
+            color: el.dataset.color || null,
+            noteText: type === 'note' ? (el.dataset.noteText || '') : '',
+            sessionId: el.dataset.sessionId || null,
+            mapViewId: viewInfo.mapViewId,
+            mapViewName: viewInfo.mapViewName
+          };
+
+          features.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [lng, lat] },
+            properties: props
+          });
+        }
+      }
+
+      // Export drawings from Leaflet draw layer
+      if (state.stage4DrawLayer && typeof state.stage4DrawLayer.eachLayer === 'function') {
+        state.stage4DrawLayer.eachLayer(function(layer) {
+          if (!layer || typeof layer.getLatLngs !== 'function') return;
+
+          var strokeId = layer.strokeId ? String(layer.strokeId) : '';
+          if (strokeId) {
+            if (exportedStrokeIds[strokeId]) return;
+            exportedStrokeIds[strokeId] = true;
+          } else {
+            // Old strokes may not have strokeId; avoid glow duplicates by skipping thick glow layers.
+            var weightLegacy = layer.options && isFinite(layer.options.weight) ? Number(layer.options.weight) : 0;
+            if (weightLegacy > 10) return;
+          }
+
+          var flat = [];
+          flattenLatLngsForGeoJson(layer.getLatLngs(), flat);
+          if (flat.length < 2) return;
+
+          var coords = [];
+          for (var li = 0; li < flat.length; li++) {
+            coords.push([flat[li].lng, flat[li].lat]);
+          }
+
+          var drawingViewInfo = getMapViewInfo(layer.sessionId || null);
+
+          features.push({
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: coords },
+            properties: {
+              sourceType: 'drawing',
+              color: layer.options && layer.options.color ? layer.options.color : null,
+              strokeWidth: layer.options && isFinite(layer.options.weight) ? Number(layer.options.weight) : null,
+              sessionId: layer.sessionId || null,
+              mapViewId: drawingViewInfo.mapViewId,
+              mapViewName: drawingViewInfo.mapViewName
+            }
+          });
+        });
+      }
+
+      var byMapView = {};
+      for (var fi = 0; fi < features.length; fi++) {
+        var f = features[fi];
+        if (!f || !f.properties) continue;
+        var key = f.properties.mapViewId !== null && f.properties.mapViewId !== undefined ? String(f.properties.mapViewId) : 'unassigned';
+        if (!byMapView[key]) {
+          byMapView[key] = {
+            mapViewId: f.properties.mapViewId || null,
+            mapViewName: f.properties.mapViewName || 'Unassigned',
+            featureCount: 0,
+            stickersCount: 0,
+            annotationsCount: 0,
+            drawingsCount: 0
+          };
+        }
+        byMapView[key].featureCount++;
+        if (f.properties.sourceType === 'drawing') byMapView[key].drawingsCount++;
+        else if (f.properties.sourceType === 'annotation') byMapView[key].annotationsCount++;
+        else byMapView[key].stickersCount++;
+      }
+
+      var mapViewSummaries = [];
+      for (var mvKey in byMapView) {
+        mapViewSummaries.push(byMapView[mvKey]);
+      }
+
+      var featureCollection = {
+        type: 'FeatureCollection',
+        properties: {
+          exportedAt: new Date().toISOString(),
+          appStage: state.stage,
+          mapViewCount: mapSessions.length,
+          mapViews: mapViewSummaries
+        },
+        features: features
+      };
+
+      var setupDefinition = collectWorkshopSetupDefinition();
+      var workshopId = buildWorkshopIdFromSetup(setupDefinition);
+      featureCollection.properties.workshopId = workshopId;
+
+      var iso = new Date().toISOString().replace(/[:.]/g, '-');
+      downloadGeoJsonFile(featureCollection, workshopId + '-session-' + iso + '.geojson');
+
+      return saveWorkshopSessionToBackend(workshopId, featureCollection, setupDefinition).then(function(payload) {
+        if (payload && payload.sessionFile) {
+          console.info('Workshop session saved:', payload.sessionFile);
+        }
+        return {
+          saved: true,
+          workshopId: workshopId,
+          sessionFile: payload && payload.sessionFile ? String(payload.sessionFile) : ''
+        };
+      }).catch(function(err) {
+        console.warn('Failed to save workshop session on backend:', err);
+        var message = err && err.message ? err.message : String(err || 'Unknown error');
+        setError('Failed to save workshop session on backend: ' + message);
+        return {
+          saved: false,
+          workshopId: workshopId,
+          error: message
+        };
+      });
+    } catch (err) {
+      console.error('Failed to export workshop GeoJSON:', err);
+      var message = err && err.message ? err.message : String(err || 'Unknown error');
+      setError('Failed to export workshop GeoJSON: ' + message);
+      return Promise.resolve({
+        saved: false,
+        workshopId: '',
+        error: message
+      });
+    }
   }
 
   function goToPrevMapSession() {
@@ -722,12 +1340,19 @@ export function initApp() {
   function setButtonsRunning(isRunning) {
     dom.startBtn.style.display = isRunning ? 'none' : 'inline-block';
     dom.stopBtn.style.display = isRunning ? 'inline-block' : 'none';
+    updateShowResultsButton();
   }
 
   function updateBackState() {
     var visible = state.stage !== 1;
     dom.backBtn.classList.toggle('hidden', !visible);
     dom.backBtn.disabled = !visible;
+  }
+
+  function updateShowResultsButton() {
+    var visible = state.stage === 1 && !state.cameraReady && !state.cameraStarting && !resultsModeActive;
+    dom.showResultsBtn.style.display = visible ? 'inline-block' : 'none';
+    dom.showResultsBtn.disabled = !visible;
   }
 
   // ============== Stage Management ==============
@@ -764,9 +1389,11 @@ export function initApp() {
     updateToolTagControlsVisibility();
     updateHamburgerMenuVisibility();
     updateBackState();
+    updateShowResultsButton();
   }
 
   function onNextClicked() {
+    if (resultsModeActive) return;
     if (!state.cameraReady) return;
     if (state.stage === 1) { resetSurfaceCorners(); setStage(2); }
     else if (state.stage === 2) { clearArmedCorner(); setStage(3); }
@@ -774,6 +1401,7 @@ export function initApp() {
   }
 
   function onBackClicked() {
+    if (resultsModeActive) return;
     if (!state.cameraReady) return;
     if (state.stage === 2) { setStage(1); }
     else if (state.stage === 3) { dom.viewToggleEl.checked = false; setStage(2); }
@@ -781,6 +1409,7 @@ export function initApp() {
   }
 
   function onViewToggleChanged() {
+    if (resultsModeActive) return;
     if (state.stage !== 2 && state.stage !== 3 && state.stage !== 4) return;
     setViewMode(dom.viewToggleEl.checked ? 'map' : 'camera');
   }
@@ -942,12 +1571,14 @@ export function initApp() {
       setError('');
       state.cameraStarting = true;
       updateLoadingMessage();
+      updateShowResultsButton();
       await startIpCamera();
     } catch (err) {
       state.cameraStarting = false;
       state.cameraReady = false;
       updateLoadingMessage();
       dom.startBtn.disabled = false;
+      updateShowResultsButton();
       setNextEnabled(false);
       console.error('Error starting backend camera feed:', err);
       setError('Error starting backend camera feed.');
@@ -1002,6 +1633,7 @@ export function initApp() {
       state.cameraReady = false;
       updateLoadingMessage();
       dom.startBtn.disabled = false;
+      updateShowResultsButton();
       setNextEnabled(false);
       setError('Failed to load backend camera feed.');
       return;

@@ -1,11 +1,13 @@
 import argparse
 import atexit
+import json
 from pathlib import Path
+import re
 import threading
 import time
 
 import cv2
-from flask import Flask, Response, abort, jsonify, send_from_directory
+from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
 try:
   from pupil_apriltags import Detector
@@ -14,6 +16,8 @@ except Exception:
 
 
 ROOT_DIR = Path(__file__).resolve().parent
+WORKSHOPS_DIR = ROOT_DIR / "workshops"
+WORKSHOP_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 app = Flask(__name__, static_folder=str(ROOT_DIR), static_url_path="")
 
@@ -47,6 +51,50 @@ def parse_source(value: str):
     return int(value)
   except (TypeError, ValueError):
     return value
+
+
+def sanitize_workshop_id(raw):
+  if not isinstance(raw, str):
+    return None
+  candidate = raw.strip()
+  if not candidate:
+    return None
+  if not WORKSHOP_ID_RE.fullmatch(candidate):
+    return None
+  return candidate
+
+
+def next_workshop_session_index(workshop_dir: Path) -> int:
+  max_index = 0
+  for p in workshop_dir.glob("session-*.geojson"):
+    m = re.match(r"^session-(\d+)\.geojson$", p.name)
+    if not m:
+      continue
+    idx = int(m.group(1))
+    if idx > max_index:
+      max_index = idx
+  return max_index + 1
+
+
+def list_workshop_session_files(workshop_dir: Path):
+  pairs = []
+  for p in workshop_dir.glob("session-*.geojson"):
+    m = re.match(r"^session-(\d+)\.geojson$", p.name)
+    if not m:
+      continue
+    idx = int(m.group(1))
+    pairs.append((idx, p))
+  pairs.sort(key=lambda it: it[0])
+  return pairs
+
+
+def normalize_map_view_id(raw):
+  if raw is None:
+    return None
+  text = str(raw).strip()
+  if text == "":
+    return None
+  return text
 
 
 def init_camera(source) -> None:
@@ -266,6 +314,179 @@ def api_apriltags():
     "streamClients": active_stream_clients,
   }
   return jsonify(payload)
+
+
+@app.route("/api/workshop_session", methods=["POST"])
+def api_workshop_session():
+  payload = request.get_json(silent=True)
+  if not isinstance(payload, dict):
+    return jsonify({"ok": False, "error": "invalid_json"}), 400
+
+  workshop_id = sanitize_workshop_id(payload.get("workshopId"))
+  if not workshop_id:
+    return jsonify({"ok": False, "error": "invalid_workshop_id"}), 400
+
+  geojson_payload = payload.get("geojson")
+  if not isinstance(geojson_payload, dict):
+    return jsonify({"ok": False, "error": "invalid_geojson"}), 400
+
+  setup_definition = payload.get("setupDefinition")
+  if setup_definition is not None and not isinstance(setup_definition, dict):
+    setup_definition = None
+
+  try:
+    workshop_dir = WORKSHOPS_DIR / workshop_id
+    workshop_dir.mkdir(parents=True, exist_ok=True)
+
+    session_index = next_workshop_session_index(workshop_dir)
+    session_filename = f"session-{session_index:04d}.geojson"
+    session_path = workshop_dir / session_filename
+
+    props = geojson_payload.get("properties")
+    if not isinstance(props, dict):
+      props = {}
+      geojson_payload["properties"] = props
+
+    props["workshopId"] = workshop_id
+    props["sessionIndex"] = int(session_index)
+    props["savedAtEpochMs"] = int(time.time() * 1000)
+
+    session_path.write_text(
+      json.dumps(geojson_payload, ensure_ascii=False, indent=2),
+      encoding="utf-8"
+    )
+
+    workshop_meta_path = workshop_dir / "workshop.json"
+    if not workshop_meta_path.exists():
+      workshop_meta = {
+        "workshopId": workshop_id,
+        "createdAtEpochMs": int(time.time() * 1000),
+        "setupDefinition": setup_definition,
+      }
+      workshop_meta_path.write_text(
+        json.dumps(workshop_meta, ensure_ascii=False, indent=2),
+        encoding="utf-8"
+      )
+  except Exception as exc:
+    return jsonify({"ok": False, "error": str(exc)}), 500
+
+  return jsonify({
+    "ok": True,
+    "workshopId": workshop_id,
+    "sessionIndex": session_index,
+    "sessionFile": str(Path("workshops") / workshop_id / session_filename),
+  })
+
+
+@app.route("/api/workshops")
+def api_workshops():
+  try:
+    WORKSHOPS_DIR.mkdir(parents=True, exist_ok=True)
+    workshops = []
+    for p in WORKSHOPS_DIR.iterdir():
+      if not p.is_dir():
+        continue
+      workshop_id = p.name
+      if sanitize_workshop_id(workshop_id) is None:
+        continue
+
+      session_pairs = list_workshop_session_files(p)
+      latest_session_idx = session_pairs[-1][0] if session_pairs else 0
+      workshops.append({
+        "workshopId": workshop_id,
+        "directory": str(Path("workshops") / workshop_id),
+        "sessionCount": len(session_pairs),
+        "latestSessionIndex": latest_session_idx,
+      })
+
+    workshops.sort(key=lambda w: w["workshopId"])
+    return jsonify({"ok": True, "workshops": workshops})
+  except Exception as exc:
+    return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/workshops/<workshop_id>/results")
+def api_workshop_results(workshop_id: str):
+  workshop_id = sanitize_workshop_id(workshop_id)
+  if not workshop_id:
+    return jsonify({"ok": False, "error": "invalid_workshop_id"}), 400
+
+  workshop_dir = WORKSHOPS_DIR / workshop_id
+  if not workshop_dir.exists() or not workshop_dir.is_dir():
+    return jsonify({"ok": False, "error": "workshop_not_found"}), 404
+
+  try:
+    session_pairs = list_workshop_session_files(workshop_dir)
+    sessions = []
+    map_view_groups = {}
+
+    for session_idx, session_path in session_pairs:
+      try:
+        payload = json.loads(session_path.read_text(encoding="utf-8"))
+      except Exception:
+        continue
+
+      features = payload.get("features")
+      if not isinstance(features, list):
+        features = []
+
+      sessions.append({
+        "sessionIndex": int(session_idx),
+        "sessionFile": session_path.name,
+        "featureCount": len(features),
+      })
+
+      for feature in features:
+        if not isinstance(feature, dict):
+          continue
+        props = feature.get("properties")
+        if not isinstance(props, dict):
+          props = {}
+          feature["properties"] = props
+
+        map_view_id = normalize_map_view_id(props.get("mapViewId"))
+        map_view_name = props.get("mapViewName")
+        if not isinstance(map_view_name, str) or not map_view_name.strip():
+          map_view_name = f"View {map_view_id}" if map_view_id else "Unassigned"
+
+        key = map_view_id if map_view_id is not None else "unassigned"
+        if key not in map_view_groups:
+          map_view_groups[key] = {
+            "mapViewId": map_view_id,
+            "mapViewName": map_view_name,
+            "features": [],
+            "sessionCount": 0,
+            "_session_seen": set(),
+          }
+
+        copied_feature = json.loads(json.dumps(feature))
+        copied_props = copied_feature.get("properties")
+        if not isinstance(copied_props, dict):
+          copied_props = {}
+          copied_feature["properties"] = copied_props
+        copied_props["sessionIndex"] = int(session_idx)
+        copied_props["sessionFile"] = session_path.name
+        copied_props["workshopId"] = workshop_id
+
+        map_view_groups[key]["features"].append(copied_feature)
+        map_view_groups[key]["_session_seen"].add(session_idx)
+
+    map_views = []
+    for key in sorted(map_view_groups.keys(), key=lambda x: (x == "unassigned", str(x))):
+      group = map_view_groups[key]
+      group["sessionCount"] = len(group["_session_seen"])
+      del group["_session_seen"]
+      map_views.append(group)
+
+    return jsonify({
+      "ok": True,
+      "workshopId": workshop_id,
+      "directory": str(Path("workshops") / workshop_id),
+      "sessions": sessions,
+      "mapViews": map_views,
+    })
+  except Exception as exc:
+    return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/<path:path>")

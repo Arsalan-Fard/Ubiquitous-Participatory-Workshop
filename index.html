@@ -76,6 +76,7 @@
         <div class="controls">
             <button id="backBtn" class="btn btn-secondary" type="button" disabled>Back</button>
             <button id="startBtn" class="btn">Start Camera</button>
+            <button id="showResultsBtn" class="btn btn-secondary" type="button">Show Results</button>
             <button id="nextBtn" class="btn btn-secondary" disabled>Next</button>
             <button id="stopBtn" class="btn">Close Camera</button>
         </div>
@@ -187,6 +188,15 @@
             </svg>
             <div class="map-finger-cursor__dot" aria-hidden="true"></div>
         </div>
+        <div id="resultsViewerControls" class="results-viewer hidden" aria-hidden="true">
+            <div id="resultsViewTitle" class="results-viewer__title">Workshop Results</div>
+            <div id="resultsViewMeta" class="results-viewer__meta">No map views</div>
+            <div class="results-viewer__actions">
+                <button id="resultsPrevBtn" class="btn btn-secondary" type="button">Back View</button>
+                <button id="resultsNextBtn" class="btn btn-secondary" type="button">Next View</button>
+                <button id="resultsExitBtn" class="btn" type="button">Exit</button>
+            </div>
+        </div>
     </div>
 
     <div id="hamburgerMenu" class="hamburger-menu hidden" aria-hidden="true">
@@ -205,5 +215,19 @@
     <script type="module" src="src/js/main.js"></script>
 
     <input id="geojsonFileInput" type="file" accept=".geojson,.json" style="display:none" aria-hidden="true" />
+
+    <div id="resultsModal" class="modal hidden" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="resultsModalTitle">
+        <div id="resultsModalBackdrop" class="modal-backdrop"></div>
+        <div class="modal-card">
+            <div id="resultsModalTitle" class="modal-title">Show Workshop Results</div>
+            <div class="modal-subtitle">Select a workshop directory from <code>workshops/</code>.</div>
+            <select id="resultsWorkshopSelect" class="modal-input" aria-label="Select workshop directory"></select>
+            <div id="resultsError" class="results-modal-error hidden" aria-live="polite"></div>
+            <div class="modal-actions">
+                <button id="resultsCancelBtn" class="btn btn-secondary" type="button">Cancel</button>
+                <button id="resultsOpenBtn" class="btn" type="button">Open Results</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
