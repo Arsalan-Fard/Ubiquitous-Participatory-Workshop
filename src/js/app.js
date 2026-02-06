@@ -1683,8 +1683,10 @@ export function initApp() {
     // Map AprilTag debug dots for configured participant IDs
     if (isMapViewWithHomography) {
       updateMapApriltagDots(state.lastApriltagDetections || []);
+      updateMapTagMasks(state.lastApriltagDetections || []);
     } else {
       setMapApriltagDotsVisible(false);
+      updateMapTagMasks([]);
     }
 
     // Process tool tag actions (next/back, etc.)
@@ -1810,6 +1812,69 @@ export function initApp() {
     }
 
     setMapApriltagDotsVisible(anyVisible);
+  }
+
+  // Update black masks over detected AprilTag positions in the projected map view
+  function updateMapTagMasks(detections) {
+    if (!dom.mapTagMasksEl) return;
+    if (!state.surfaceHomography) {
+      dom.mapTagMasksEl.innerHTML = '';
+      return;
+    }
+
+    var w = dom.mapWarpEl.offsetWidth;
+    var h = dom.mapWarpEl.offsetHeight;
+    if (!w || !h) {
+      dom.mapTagMasksEl.innerHTML = '';
+      return;
+    }
+
+    // Use SVG for the masks
+    var svg = dom.mapTagMasksEl.querySelector('svg');
+    if (!svg) {
+      svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;';
+      dom.mapTagMasksEl.appendChild(svg);
+    }
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    svg.setAttribute('preserveAspectRatio', 'none');
+
+    var polygons = [];
+    var tagScale = 1.4; // Make detected tag masks 40% larger
+
+    // Draw masks for all detected tags
+    if (Array.isArray(detections)) {
+      for (var di = 0; di < detections.length; di++) {
+        var det = detections[di];
+        if (!det || !det.corners || det.corners.length < 4 || !det.center) continue;
+
+        // Transform all 4 corners of the tag
+        var screenCorners = [];
+        var allValid = true;
+        for (var j = 0; j < 4; j++) {
+          var uv = applyHomography(state.surfaceHomography, det.corners[j].x, det.corners[j].y);
+          if (!uv) { allValid = false; break; }
+          screenCorners.push({ x: uv.x * w, y: uv.y * h });
+        }
+        if (!allValid) continue;
+
+        // Calculate center in screen coordinates
+        var cx = (screenCorners[0].x + screenCorners[1].x + screenCorners[2].x + screenCorners[3].x) / 4;
+        var cy = (screenCorners[0].y + screenCorners[1].y + screenCorners[2].y + screenCorners[3].y) / 4;
+
+        // Scale corners outward from center
+        var points = [];
+        for (var k = 0; k < 4; k++) {
+          var sx = cx + (screenCorners[k].x - cx) * tagScale;
+          var sy = cy + (screenCorners[k].y - cy) * tagScale;
+          points.push(sx + ',' + sy);
+        }
+
+        polygons.push('<polygon points="' + points.join(' ') + '" fill="#000000"/>');
+      }
+    }
+
+    svg.innerHTML = polygons.join('');
   }
 
   function updateApriltagHud(containerEl, detections, w, h) {

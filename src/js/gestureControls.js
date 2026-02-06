@@ -15,13 +15,18 @@ import {
   continueDrawingAtPoint,
   stopDrawingForPointer,
   cloneSticker,
-  startStickerDrag
+  startStickerDrag,
+  bindStickerLatLngFromCurrentPosition,
+  updateStickerMappingForCurrentView
 } from './stage4Drawing.js';
 
 // Multi-pointer tracking: keyed by hand index
 // Each entry: { dwellAnchor, dwellStartMs, dwellFired, pinchStartMs, pinchAnchor, dragActive, dragTarget, dragPointerId, lastPointer, cursorEl }
 var pointerStates = {};
 var nextPointerId = 100; // Start at 100 to avoid conflicts with real pointer IDs
+
+// AprilTag trigger-on-disappearance delay (ms)
+var APRILTAG_TRIGGER_DELAY_MS = 1000;
 
 // Get all visible finger dot positions in viewport coordinates
 export function getAllMapPointerViewportPoints() {
@@ -77,10 +82,24 @@ function getPointerState(handIndex) {
       prevPointerTimeMs: 0,
       cursorEl: null,
       isDrawing: false,  // Multi-hand drawing state
-      currentInteractionTarget: null  // Track current target to detect changes
+      currentInteractionTarget: null,  // Track current target to detect changes
+      // AprilTag trigger-on-disappearance state
+      isApriltag: false,
+      triggerFillStartMs: 0,  // When the disappearance fill animation started
+      triggerFired: false,    // Whether the trigger already fired this disappearance
+      armedStickerTemplate: null,  // Template element for dot/note placement (two-step flow)
+      drawingStarted: false  // Whether drawing has been started by a trigger (2nd trigger enables actual drawing)
     };
   }
   return pointerStates[handIndex];
+}
+
+// Remove active highlight from armed sticker template and clear the reference
+function dearmStickerTemplate(ps) {
+  if (ps.armedStickerTemplate) {
+    ps.armedStickerTemplate.classList.remove('ui-dot--active', 'ui-note--active');
+    ps.armedStickerTemplate = null;
+  }
 }
 
 function shouldPinchClickTarget(target) {
@@ -228,16 +247,194 @@ export function handleStage3Gestures(usableIndexTipPoints) {
       var ps = pointerStates[handId];
       if (ps.missingSinceMs === null) ps.missingSinceMs = nowMs;
 
-      // Hide cursor while missing (keep DOM/state so we can resume if it reappears).
+      var missingDuration = nowMs - ps.missingSinceMs;
+      var pointerTimeoutMs = typeof state.pointerLostTimeoutMs === 'number' ? state.pointerLostTimeoutMs : 300;
+      var drawingTimeoutMs = typeof state.drawingDeselectTimeoutMs === 'number' ? state.drawingDeselectTimeoutMs : 3000;
+
+      // --- AprilTag trigger-on-disappearance ---
+      if (ps.isApriltag && ps.lastPointer) {
+        var isDrawingMode = state.stage === 4 && getDrawColorForPointer(ps.dragPointerId);
+        var hasStickerArmed = !!ps.armedStickerTemplate;
+        var hasAnyToolActive = isDrawingMode || hasStickerArmed;
+
+        // Stop current drawing stroke after brief delay
+        var strokeStopDelay = typeof state.strokeStopDelayMs === 'number' ? state.strokeStopDelayMs : 50;
+        if (ps.isDrawing && missingDuration >= strokeStopDelay) {
+          ps.isDrawing = false;
+          stopDrawingForPointer(ps.dragPointerId);
+        }
+
+        // Determine if we should show blue fill:
+        // - Always show when a tool is active (drawing/sticker/annotation armed)
+        // - When nothing is active, only show if pointing at one of the 3 buttons
+        var shouldShowFill = hasAnyToolActive;
+        if (!shouldShowFill && state.stage === 4) {
+          var interactionCheck = getInteractionCandidate(ps.lastPointer, 20);
+          if (interactionCheck && interactionCheck.target) {
+            var t = interactionCheck.target;
+            var onDrawBtn = t.closest && t.closest('.ui-draw') && !t.closest('.ui-draw').classList.contains('ui-sticker-instance');
+            var onDotBtn = t.closest && t.closest('.ui-dot') && !t.closest('.ui-dot').classList.contains('ui-sticker-instance');
+            var onNoteBtn = t.closest && t.closest('.ui-note') && !t.closest('.ui-note').classList.contains('ui-sticker-instance');
+            shouldShowFill = onDrawBtn || onDotBtn || onNoteBtn;
+          }
+        } else if (!shouldShowFill && state.stage !== 4) {
+          // In stage 3, show fill on interactive elements
+          var interactionCheck = getInteractionCandidate(ps.lastPointer, 20);
+          if (interactionCheck && interactionCheck.action === 'click') {
+            shouldShowFill = true;
+          }
+        }
+
+        if (!shouldShowFill) {
+          // Not on a button and no tool active - just show cursor, no fill, no trigger
+          updatePointerCursor(handId, ps.lastPointer, 0, null);
+
+          // Still need cleanup timeout
+          var triggerTimeout = APRILTAG_TRIGGER_DELAY_MS + 200;
+          if (missingDuration < triggerTimeout) continue;
+
+          if (ps.cursorEl) {
+            ps.cursorEl.classList.add('hidden');
+            ps.cursorEl.setAttribute('aria-hidden', 'true');
+            ps.cursorEl.style.transform = 'translate(-9999px, -9999px)';
+          }
+          if (handId === primaryCursorHandId) primaryCursorHandId = null;
+          if (ps.cursorEl && ps.cursorEl !== state.dom.mapFingerCursorEl && ps.cursorEl.parentNode) {
+            ps.cursorEl.parentNode.removeChild(ps.cursorEl);
+          }
+          dearmStickerTemplate(ps);
+          delete pointerStates[handId];
+          continue;
+        }
+
+        // Start fill timer on first frame of disappearance
+        if (!ps.triggerFillStartMs) {
+          ps.triggerFillStartMs = nowMs;
+          ps.triggerFired = false;
+        }
+
+        var fillProgress = Math.min(1, (nowMs - ps.triggerFillStartMs) / APRILTAG_TRIGGER_DELAY_MS);
+
+        // Show cursor at last known position with fill animation
+        updatePointerCursor(handId, ps.lastPointer, fillProgress, 'pinch');
+
+        // Fire trigger after fill completes
+        if (!ps.triggerFired && fillProgress >= 1) {
+          ps.triggerFired = true;
+
+          if (isDrawingMode) {
+            // Drawing 3-trigger flow:
+            //   Trigger 1 (on button): activates drawing, drawingStarted = false
+            //   Trigger 2 (this): sets drawingStarted = true, next appearance will draw
+            //   Trigger 3 (this): deactivates drawing entirely
+            if (!ps.drawingStarted) {
+              // 2nd trigger: enable actual drawing for next appearance
+              ps.drawingStarted = true;
+            } else {
+              // 3rd trigger: stop and deactivate drawing
+              deactivateDrawingForPointer(ps.dragPointerId);
+              ps.drawingStarted = false;
+            }
+            // Stroke was already stopped above
+          } else if (hasStickerArmed) {
+            // Sticker/annotation armed (activated by previous trigger on button).
+            // This is the 2nd trigger - place the sticker at last position.
+            var clonedEl = cloneSticker(ps.armedStickerTemplate);
+            if (clonedEl) {
+              clonedEl.style.left = (ps.lastPointer.x - (clonedEl.offsetWidth || 20) / 2) + 'px';
+              clonedEl.style.top = (ps.lastPointer.y - (clonedEl.offsetHeight || 20) / 2) + 'px';
+              // Bind to map coordinates
+              if (state.viewMode === 'map' && (state.stage === 3 || state.stage === 4)) {
+                bindStickerLatLngFromCurrentPosition(clonedEl);
+                updateStickerMappingForCurrentView();
+              }
+              // Auto-expand notes
+              if (clonedEl.classList.contains('ui-note')) {
+                setTimeout(function() {
+                  clonedEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                }, 50);
+              }
+            }
+            dearmStickerTemplate(ps); // Dearm after placement
+          } else {
+            // Nothing activated - check what's at the last position (only 3 buttons)
+            var interaction = getInteractionCandidate(ps.lastPointer, 20);
+            if (interaction && interaction.target) {
+              var target = interaction.target;
+
+              if (state.stage === 4) {
+                // Check if pointing at a drawing button
+                var drawButton = target.closest ? target.closest('.ui-draw') : null;
+                if (drawButton && !drawButton.classList.contains('ui-sticker-instance')) {
+                  // 1st trigger: activate drawing mode for this pointer
+                  var color = drawButton.dataset && drawButton.dataset.color ? drawButton.dataset.color : '#2bb8ff';
+                  var currentColor = getDrawColorForPointer(ps.dragPointerId);
+                  if (currentColor === color) {
+                    deactivateDrawingForPointer(ps.dragPointerId);
+                    ps.drawingStarted = false;
+                  } else {
+                    activateDrawingForPointer(ps.dragPointerId, color, drawButton);
+                    ps.drawingStarted = false;
+                  }
+                }
+                // Check if pointing at a dot template button - arm it (1st trigger)
+                else if (target.closest && target.closest('.ui-dot') && !target.closest('.ui-dot').classList.contains('ui-sticker-instance')) {
+                  ps.armedStickerTemplate = target.closest('.ui-dot');
+                  ps.armedStickerTemplate.classList.add('ui-dot--active');
+                }
+                // Check if pointing at a note template button - arm it (1st trigger)
+                else if (target.closest && target.closest('.ui-note') && !target.closest('.ui-note').classList.contains('ui-sticker-instance')) {
+                  ps.armedStickerTemplate = target.closest('.ui-note');
+                  ps.armedStickerTemplate.classList.add('ui-note--active');
+                }
+                // Not one of the 3 buttons - do nothing (Case 2: no trigger outside buttons)
+              } else if (interaction.action === 'click') {
+                // Stage 3 or other: dispatch click on interactive elements
+                dispatchClickAt(ps.lastPointer, ps.dragPointerId);
+              }
+            }
+            // No interaction target: do nothing
+          }
+        }
+
+        // Clean up after all timeouts + trigger delay have passed.
+        // If a sticker is armed or drawing mode is active, keep the state alive longer
+        // so it persists when the tag reappears for the next step.
+        var hasDrawingActiveNow = getDrawColorForPointer(ps.dragPointerId);
+        var triggerTimeout = APRILTAG_TRIGGER_DELAY_MS + 200; // extra buffer
+        var keepAlive = !!ps.armedStickerTemplate || !!hasDrawingActiveNow;
+        var maxTimeout = keepAlive ? drawingTimeoutMs : triggerTimeout;
+        if (missingDuration < maxTimeout) continue;
+
+        // Hide cursor
+        if (ps.cursorEl) {
+          ps.cursorEl.classList.add('hidden');
+          ps.cursorEl.setAttribute('aria-hidden', 'true');
+          ps.cursorEl.style.transform = 'translate(-9999px, -9999px)';
+        }
+
+        // Reset primary cursor assignment if this was the primary hand
+        if (handId === primaryCursorHandId) {
+          primaryCursorHandId = null;
+        }
+
+        // Clean up secondary cursors
+        if (ps.cursorEl && ps.cursorEl !== state.dom.mapFingerCursorEl && ps.cursorEl.parentNode) {
+          ps.cursorEl.parentNode.removeChild(ps.cursorEl);
+        }
+
+        dearmStickerTemplate(ps);
+        delete pointerStates[handId];
+        continue;
+      }
+
+      // --- Non-AprilTag (hand tracking) pointer lost handling ---
+      // Hide cursor while missing
       if (ps.cursorEl) {
         ps.cursorEl.classList.add('hidden');
         ps.cursorEl.setAttribute('aria-hidden', 'true');
         ps.cursorEl.style.transform = 'translate(-9999px, -9999px)';
       }
-
-      var missingDuration = nowMs - ps.missingSinceMs;
-      var pointerTimeoutMs = typeof state.pointerLostTimeoutMs === 'number' ? state.pointerLostTimeoutMs : 300;
-      var drawingTimeoutMs = typeof state.drawingDeselectTimeoutMs === 'number' ? state.drawingDeselectTimeoutMs : 3000;
 
       // End drag after short timeout
       if (ps.dragActive && missingDuration >= pointerTimeoutMs) {
@@ -245,8 +442,6 @@ export function handleStage3Gestures(usableIndexTipPoints) {
       }
 
       // Stop current stroke after brief delay when tag disappears
-      // This prevents connecting old position to new position when tag reappears
-      // but tolerates momentary tracking glitches
       var strokeStopDelay = typeof state.strokeStopDelayMs === 'number' ? state.strokeStopDelayMs : 50;
       if (ps.isDrawing && missingDuration >= strokeStopDelay) {
         ps.isDrawing = false;
@@ -273,13 +468,25 @@ export function handleStage3Gestures(usableIndexTipPoints) {
         ps.cursorEl.parentNode.removeChild(ps.cursorEl);
       }
 
+      dearmStickerTemplate(ps);
       delete pointerStates[handId];
     }
   }
 
-  // No pointers visible
+  // No pointers visible - but don't hide primary cursor if an AprilTag is showing
+  // its trigger-on-disappearance fill animation (the missing-hands loop above
+  // already positioned and showed the cursor at the last known location).
   if (viewportPoints.length === 0) {
-    updatePrimaryCursor(null);
+    var anyApriltagFilling = false;
+    for (var hid in pointerStates) {
+      if (pointerStates[hid].isApriltag && pointerStates[hid].lastPointer && pointerStates[hid].triggerFillStartMs) {
+        anyApriltagFilling = true;
+        break;
+      }
+    }
+    if (!anyApriltagFilling) {
+      updatePrimaryCursor(null);
+    }
     return;
   }
 
@@ -309,141 +516,48 @@ function processPointerGesture(handIndex, pointer, handData) {
   var nowMs = performance.now();
   var threshold = state.holdStillThresholdPx;
 
-  // In AprilTag mode with stereo touch sensing, hovering should not trigger dwell-clicks or pinch-hold interactions.
+  // In AprilTag mode with stereo touch sensing, hovering should not trigger interactions.
+  // Still show cursor but cancel any active drawing and prevent trigger-on-disappearance.
   if (isApriltag && isTouch === false) {
-    if (ps.dragActive) endDragForPointer(ps, pointer);
+    ps.isApriltag = true;
     if (ps.isDrawing) {
       ps.isDrawing = false;
       stopDrawingForPointer(ps.dragPointerId);
     }
-    ps.dwellStartMs = 0;
-    ps.dwellAnchor = null;
-    ps.dwellFired = false;
-    ps.pinchStartMs = 0;
-    ps.pinchAnchor = null;
-    ps.pinchFired = false;
-    ps.pinchFiredAt = null;
+    ps.triggerFillStartMs = 0;
+    ps.triggerFired = false;
     updatePointerCursor(handIndex, pointer, 0, null);
     ps.prevPointerTimeMs = nowMs;
     return;
   }
 
-  var isPinching = isApriltag ? true : false;
-
+  // AprilTag while visible: show cursor, draw if drawing mode active, but NO pinch-hold arming.
+  // Trigger happens on disappearance (handled in the missing-hands section).
   if (isApriltag) {
-    // Sudden movement cancels pinch/drag immediately.
-    if (ps.prevPointer && ps.prevPointerTimeMs) {
-      var dt = Math.max(1, nowMs - ps.prevPointerTimeMs);
-      var d = distance(pointer, ps.prevPointer);
-      if (dt <= state.apriltagSuddenMoveWindowMs && d > state.apriltagSuddenMoveThresholdPx) {
-        if (ps.dragActive) {
-          endDragForPointer(ps, pointer);
-        }
-        if (ps.isDrawing) {
-          ps.isDrawing = false;
-          stopDrawingForPointer(ps.dragPointerId);
-        }
-        ps.pinchAnchor = pointer;
-        ps.pinchStartMs = nowMs;
-        ps.pinchFired = false;
-        ps.pinchFiredAt = null;
-      }
-    }
-  }
-
-  // Pinch-to-drag (arm by holding pinch)
-  if (isPinching) {
-    ps.dwellStartMs = 0;
-    ps.dwellAnchor = null;
-    ps.dwellFired = false;
+    ps.isApriltag = true;
+    ps.triggerFillStartMs = 0;  // Reset fill since tag is visible again
+    ps.triggerFired = false;
 
     var isDrawingMode = state.stage === 4 && getDrawColorForPointer(ps.dragPointerId);
-    var interaction = null;
-    if (!ps.dragActive && !ps.isDrawing && !isDrawingMode) {
-      interaction = getInteractionCandidate(pointer, 20);
-      if (!interaction) {
-        // Not near anything clickable/draggable; don't show pinch ring or arm gestures.
-        ps.pinchStartMs = 0;
-        ps.pinchAnchor = null;
-        ps.pinchFired = false;
-        ps.pinchFiredAt = null;
-        ps.currentInteractionTarget = null;
-        updatePointerCursor(handIndex, pointer, 0, null);
-        ps.prevPointerTimeMs = nowMs;
-        return;
-      }
 
-      // Check if interaction target changed - reset circle filling for new target
-      var newTarget = interaction.target;
-      if (ps.currentInteractionTarget && ps.currentInteractionTarget !== newTarget) {
-        // Target changed - reset pinch progress for the new item
-        ps.pinchAnchor = pointer;
-        ps.pinchStartMs = nowMs;
-        ps.pinchFired = false;
-        ps.pinchFiredAt = null;
-      }
-      ps.currentInteractionTarget = newTarget;
-    }
-
-    if (!ps.pinchAnchor) {
-      // First pinch frame - set anchor
-      ps.pinchAnchor = pointer;
-      ps.pinchStartMs = nowMs;
-    } else {
-      var pinchDist = distance(pointer, ps.pinchAnchor);
-      if (pinchDist > threshold) {
-        // Moved too far - use rolling anchor (move anchor toward current position)
-        // This allows slow drift while still detecting fast movement as intentional
-        var pullFactor = 0.3; // How much to pull anchor toward current position
-        ps.pinchAnchor = {
-          x: ps.pinchAnchor.x + (pointer.x - ps.pinchAnchor.x) * pullFactor,
-          y: ps.pinchAnchor.y + (pointer.y - ps.pinchAnchor.y) * pullFactor
-        };
-        // Only reset timer if movement is significantly beyond threshold (hands).
-        // For AprilTags, timer reset is handled by the "sudden movement" check above.
-        if (!isApriltag && pinchDist > threshold * 2) {
-          ps.pinchStartMs = nowMs;
-        }
-      }
-    }
-
-    var pinchProgress = Math.min(1, (nowMs - ps.pinchStartMs) / state.pinchHoldMs);
-    var mode = ps.dragActive || ps.isDrawing ? (isDrawingMode ? 'draw' : 'drag') : 'pinch';
-    updatePointerCursor(handIndex, pointer, (ps.dragActive || ps.isDrawing) ? 1 : pinchProgress, mode);
-
-    // In AprilTag mode (especially without touch sensing), allow repeated click/drag by re-arming once moved away.
-    if (isApriltag && ps.pinchFired && !ps.dragActive && !ps.isDrawing) {
-      var rearmDist = Math.max(24, threshold * 2);
-      if (ps.pinchFiredAt && distance(pointer, ps.pinchFiredAt) > rearmDist) {
-        ps.pinchFired = false;
-        ps.pinchFiredAt = null;
-        ps.pinchAnchor = pointer;
-        ps.pinchStartMs = nowMs;
-      }
-    }
-
-    if (!ps.dragActive && !ps.isDrawing && !ps.pinchFired && nowMs - ps.pinchStartMs >= state.pinchHoldMs) {
-      if (isDrawingMode) {
-        // Start drawing instead of dragging
+    // If drawing mode is active AND drawing has been started (2nd trigger),
+    // draw while the tag is visible.
+    if (isDrawingMode && ps.drawingStarted) {
+      if (!ps.isDrawing) {
+        // Start a new stroke
         ps.isDrawing = true;
         startDrawingAtPoint(ps.dragPointerId, pointer.x, pointer.y);
       } else {
-        if (interaction && interaction.action === 'click') {
-          dispatchClickAt(pointer, ps.dragPointerId);
-          ps.pinchFired = true;
-          ps.pinchFiredAt = { x: pointer.x, y: pointer.y };
-        } else {
-          startDragForPointer(ps, pointer, interaction ? interaction.target : null);
-        }
+        // Continue drawing
+        continueDrawingAtPoint(ps.dragPointerId, pointer.x, pointer.y);
       }
+      updatePointerCursor(handIndex, pointer, 1, 'draw');
+      ps.prevPointerTimeMs = nowMs;
+      return;
     }
 
-    if (ps.dragActive) {
-      continueDragForPointer(ps, pointer);
-    }
-    if (ps.isDrawing) {
-      continueDrawingAtPoint(ps.dragPointerId, pointer.x, pointer.y);
-    }
+    // Show cursor dot without ring fill (progress = 0)
+    updatePointerCursor(handIndex, pointer, 0, null);
     ps.prevPointerTimeMs = nowMs;
     return;
   }
@@ -463,14 +577,6 @@ function processPointerGesture(handIndex, pointer, handData) {
   if (ps.isDrawing) {
     ps.isDrawing = false;
     stopDrawingForPointer(ps.dragPointerId);
-    updatePointerCursor(handIndex, pointer, 0, null);
-    ps.prevPointerTimeMs = nowMs;
-    return;
-  }
-
-  // Dwell-to-click with rolling anchor for jitter tolerance
-  if (isApriltag) {
-    // In AprilTag mode we don't dwell-click; only pinch-hold is used.
     updatePointerCursor(handIndex, pointer, 0, null);
     ps.prevPointerTimeMs = nowMs;
     return;
@@ -727,6 +833,8 @@ export function resetStage3Gestures() {
     }
     // Deactivate drawing mode for this hand
     deactivateDrawingForPointer(ps.dragPointerId);
+    // Dearm sticker template
+    dearmStickerTemplate(ps);
     // Remove secondary cursors
     if (ps.cursorEl && ps.cursorEl !== state.dom.mapFingerCursorEl && ps.cursorEl.parentNode) {
       ps.cursorEl.parentNode.removeChild(ps.cursorEl);

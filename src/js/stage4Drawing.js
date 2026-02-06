@@ -208,7 +208,7 @@ function isStickerDragging(el) {
   return el.classList.contains('ui-dot--dragging') || el.classList.contains('ui-note--dragging') || el.classList.contains('ui-draw--dragging');
 }
 
-function bindStickerLatLngFromCurrentPosition(el) {
+export function bindStickerLatLngFromCurrentPosition(el) {
   if (!el || !el.dataset) return null;
   if (!(el.classList.contains('ui-dot') || el.classList.contains('ui-note'))) return null;
   if (!el.classList.contains('ui-sticker-instance')) return null;

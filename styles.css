@@ -959,6 +959,21 @@ h1 {
     cursor: crosshair;
 }
 
+.map-tag-masks {
+    position: absolute;
+    inset: 0;
+    z-index: 900;
+    pointer-events: none;
+    overflow: visible;
+}
+
+.map-tag-mask {
+    position: absolute;
+    background: #000000;
+    pointer-events: none;
+    will-change: transform;
+}
+
 .map-finger-dots {
     position: absolute;
     inset: 0;
@@ -1472,7 +1487,9 @@ h1 {
     opacity: 0.95;
 }
 
-.ui-draw--active {
+.ui-draw--active,
+.ui-dot--active,
+.ui-note--active {
     box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.85), 0 14px 30px rgba(0, 0, 0, 0.35);
     transform: scale(1.1);
     transition: transform 120ms ease, box-shadow 120ms ease;

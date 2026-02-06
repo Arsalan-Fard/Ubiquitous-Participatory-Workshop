@@ -24,7 +24,7 @@ var DOM_IDS = [
   'viewToggleContainer', 'viewToggle',
   'apriltagHud', 'apriltagHud2',
   'mapView', 'mapWarp', 'leafletMap', 'mapFingerDots',
-  'mapApriltagDots',
+  'mapApriltagDots', 'mapTagMasks',
   'mapSessionPanel', 'mapSessionAddBtn', 'mapSessionList',
   'hamburgerMenu', 'hamburgerBtn', 'hamburgerPanel', 'hamburgerContent',
   'uiSetupOverlay', 'uiSetupPanel', 'mapFingerCursor', 'edgeGuides', 'error'
@@ -99,6 +99,7 @@ var ID_TO_PROP = {
   'leafletMap': 'leafletMapEl',
   'mapFingerDots': 'mapFingerDotsEl',
   'mapApriltagDots': 'mapApriltagDotsEl',
+  'mapTagMasks': 'mapTagMasksEl',
   'mapSessionPanel': 'mapSessionPanelEl',
   'mapSessionAddBtn': 'mapSessionAddBtnEl',
   'mapSessionList': 'mapSessionListEl',
