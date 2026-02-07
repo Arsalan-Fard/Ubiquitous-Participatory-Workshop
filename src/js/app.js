@@ -80,10 +80,14 @@ export function initApp() {
   initUiSetup({
     panelEl: dom.uiSetupPanelEl,
     overlayEl: dom.uiSetupOverlayEl,
+    actionsHostEl: dom.stage3ActionBarEl,
+    getSetupExportData: buildMapSetupExportData,
+    applySetupImportData: applyMapSetupImportData,
     onNextStage: function () {
       if (state.stage === 3) setStage(4);
     }
   });
+  mountVgaButtonToActionBar();
 
   // Event listeners
   dom.startBtn.addEventListener('click', startCamera);
@@ -508,6 +512,56 @@ export function initApp() {
     });
   }
 
+  function isRoadFeatureCollection(data) {
+    return !!(data && data.type === 'FeatureCollection' && Array.isArray(data.features));
+  }
+
+  function parseRoadGeojsonText(text) {
+    var rawText = typeof text === 'string' ? text : '';
+    if (rawText.charCodeAt(0) === 0xFEFF) rawText = rawText.slice(1);
+
+    var parsed = null;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (err) {
+      throw new Error('Invalid JSON');
+    }
+    if (!isRoadFeatureCollection(parsed)) {
+      throw new Error('Invalid roads GeoJSON');
+    }
+    return parsed;
+  }
+
+  function setSelectValueIfOptionExists(selectEl, value) {
+    if (!selectEl) return;
+    var normalized = value === null || value === undefined ? '' : String(value);
+    var options = selectEl.querySelectorAll('option');
+    var found = false;
+    for (var i = 0; i < options.length; i++) {
+      if (options[i].value === normalized) {
+        found = true;
+        break;
+      }
+    }
+    selectEl.value = found ? normalized : '';
+  }
+
+  function mountVgaButtonToActionBar() {
+    if (!dom.vgaModeBtnEl || !dom.stage3ActionBarEl) return;
+    var footerEl = dom.stage3ActionBarEl.querySelector('.ui-setup-footer');
+    if (!footerEl) return;
+
+    var previousItemEl = dom.vgaModeBtnEl.closest('.tool-tag-controls__item');
+    dom.vgaModeBtnEl.classList.remove('tool-tag-controls__import-btn');
+    dom.vgaModeBtnEl.classList.add('ui-setup-action-btn');
+    dom.vgaModeBtnEl.textContent = 'VGA';
+    footerEl.insertBefore(dom.vgaModeBtnEl, footerEl.firstChild);
+
+    if (previousItemEl && previousItemEl.parentNode) {
+      previousItemEl.parentNode.removeChild(previousItemEl);
+    }
+  }
+
   // Update disabled state of options when selection changes
   function updateToolTagSelectsDisabled() {
     var allSelects = toolTagSelects.concat(geojsonFileSelects);
@@ -635,21 +689,7 @@ export function initApp() {
 
     readGeojsonFileText(file).then(function(text) {
       if (rowRemoved || roadEntry.removed) return;
-      var rawText = typeof text === 'string' ? text : '';
-      if (rawText.charCodeAt(0) === 0xFEFF) rawText = rawText.slice(1);
-
-      var parsed = null;
-      try {
-        parsed = JSON.parse(rawText);
-      } catch (err) {
-        throw new Error('Invalid JSON');
-      }
-
-      if (!parsed || parsed.type !== 'FeatureCollection' || !Array.isArray(parsed.features)) {
-        throw new Error('Invalid roads GeoJSON');
-      }
-
-      roadEntry.geojsonData = parsed;
+      roadEntry.geojsonData = parseRoadGeojsonText(text);
       updateRoadLayersVisibilityByTags(state.lastApriltagDetections || []);
       setError('');
     }).catch(function(err) {
@@ -658,6 +698,7 @@ export function initApp() {
     });
 
     updateToolTagSelectsDisabled();
+    return roadEntry;
   }
 
   // Map Session functionality
@@ -1453,8 +1494,8 @@ export function initApp() {
   function filterElementsBySession(sessionId) {
     if (!dom.uiSetupOverlayEl) return;
 
-    // Filter sticker instances and labels
-    var elements = dom.uiSetupOverlayEl.querySelectorAll('.ui-sticker-instance, .ui-label');
+    // Filter setup elements and sticker instances.
+    var elements = dom.uiSetupOverlayEl.querySelectorAll('.ui-label, .ui-dot, .ui-draw, .ui-note, .ui-eraser');
     for (var i = 0; i < elements.length; i++) {
       var el = elements[i];
       var elSessionId = el.dataset.sessionId;
@@ -1486,6 +1527,172 @@ export function initApp() {
       var isActive = mapSessions[currentMapSessionIndex] && mapSessions[currentMapSessionIndex].id === itemId;
       item.classList.toggle('map-session-item--active', isActive);
     }
+  }
+
+  function buildMapSetupExportData() {
+    var roads = [];
+    for (var i = 0; i < importedRoadEntries.length; i++) {
+      var entry = importedRoadEntries[i];
+      if (!entry || entry.removed || !isRoadFeatureCollection(entry.geojsonData)) continue;
+      roads.push({
+        fileName: entry.fileName || 'roads.geojson',
+        tagId: entry.tagSelect && entry.tagSelect.value ? entry.tagSelect.value : null,
+        color: entry.colorInput && entry.colorInput.value ? entry.colorInput.value : '#2bb8ff',
+        geojsonData: entry.geojsonData,
+        hasFittedToBounds: !!entry.hasFittedToBounds
+      });
+    }
+
+    var mapViewEntries = [];
+    for (var si = 0; si < mapSessions.length; si++) {
+      var session = mapSessions[si];
+      if (!session || !isFinite(session.id)) continue;
+      mapViewEntries.push({
+        id: session.id,
+        name: session.name || ('View ' + String(session.id)),
+        lat: isFinite(session.lat) ? Number(session.lat) : 0,
+        lng: isFinite(session.lng) ? Number(session.lng) : 0,
+        zoom: isFinite(session.zoom) ? Number(session.zoom) : 17
+      });
+    }
+
+    return {
+      version: 1,
+      trackingOffset: {
+        x: state.apriltagTrackingOffsetX,
+        y: state.apriltagTrackingOffsetY
+      },
+      toolTagBindings: {
+        isovist: dom.isovistTagSelectEl.value || null,
+        shortestPathA: dom.shortestPathTagASelectEl.value || null,
+        shortestPathB: dom.shortestPathTagBSelectEl.value || null,
+        pan: dom.panTagSelectEl.value || null,
+        zoomA: dom.zoomTagASelectEl.value || null,
+        zoomB: dom.zoomTagBSelectEl.value || null,
+        next: dom.nextTagSelectEl.value || null,
+        back: dom.backTagSelectEl.value || null
+      },
+      mapViews: mapViewEntries,
+      activeMapViewId: state.currentMapSessionId || null,
+      roads: roads
+    };
+  }
+
+  function clearImportedRoadEntries() {
+    for (var i = 0; i < importedRoadEntries.length; i++) {
+      var entry = importedRoadEntries[i];
+      if (!entry) continue;
+      entry.removed = true;
+      removeRoadLayer(entry);
+    }
+    importedRoadEntries = [];
+    geojsonFileSelects = [];
+    dom.geojsonFilesListEl.textContent = '';
+  }
+
+  function parseImportedMapSession(raw, fallbackId) {
+    var id = parseInt(raw && raw.id, 10);
+    if (!isFinite(id) || id < 1) id = fallbackId;
+    var lat = parseFloat(raw && raw.lat);
+    var lng = parseFloat(raw && raw.lng);
+    var zoom = parseFloat(raw && raw.zoom);
+    return {
+      id: id,
+      name: (raw && raw.name) ? String(raw.name) : ('View ' + String(id)),
+      lat: isFinite(lat) ? lat : 0,
+      lng: isFinite(lng) ? lng : 0,
+      zoom: isFinite(zoom) ? zoom : 17
+    };
+  }
+
+  function applyMapSetupImportData(mapSetup) {
+    if (!mapSetup || typeof mapSetup !== 'object') return;
+
+    if (mapSetup.trackingOffset && typeof mapSetup.trackingOffset === 'object') {
+      var importedX = clamp(parseFloat(mapSetup.trackingOffset.x), -200, 200);
+      var importedY = clamp(parseFloat(mapSetup.trackingOffset.y), -200, 200);
+      if (!isFinite(importedX)) importedX = 0;
+      if (!isFinite(importedY)) importedY = 0;
+      state.apriltagTrackingOffsetX = importedX;
+      state.apriltagTrackingOffsetY = importedY;
+      dom.trackingOffsetXSliderEl.value = String(Math.round(importedX));
+      dom.trackingOffsetXValueEl.textContent = String(Math.round(importedX));
+      dom.trackingOffsetYSliderEl.value = String(Math.round(importedY));
+      dom.trackingOffsetYValueEl.textContent = String(Math.round(importedY));
+      saveNumberSetting('apriltagTrackingOffsetX', state.apriltagTrackingOffsetX);
+      saveNumberSetting('apriltagTrackingOffsetY', state.apriltagTrackingOffsetY);
+    }
+
+    var bindings = mapSetup.toolTagBindings && typeof mapSetup.toolTagBindings === 'object' ? mapSetup.toolTagBindings : {};
+    setSelectValueIfOptionExists(dom.isovistTagSelectEl, bindings.isovist);
+    setSelectValueIfOptionExists(dom.shortestPathTagASelectEl, bindings.shortestPathA);
+    setSelectValueIfOptionExists(dom.shortestPathTagBSelectEl, bindings.shortestPathB);
+    setSelectValueIfOptionExists(dom.panTagSelectEl, bindings.pan);
+    setSelectValueIfOptionExists(dom.zoomTagASelectEl, bindings.zoomA || bindings.zoom);
+    setSelectValueIfOptionExists(dom.zoomTagBSelectEl, bindings.zoomB);
+    setSelectValueIfOptionExists(dom.nextTagSelectEl, bindings.next);
+    setSelectValueIfOptionExists(dom.backTagSelectEl, bindings.back);
+
+    clearImportedRoadEntries();
+
+    var roads = Array.isArray(mapSetup.roads) ? mapSetup.roads : [];
+    for (var ri = 0; ri < roads.length; ri++) {
+      var road = roads[ri];
+      if (!road || !isRoadFeatureCollection(road.geojsonData)) continue;
+
+      var text = JSON.stringify(road.geojsonData);
+      var pseudoFile = {
+        name: road.fileName ? String(road.fileName) : ('roads-' + String(ri + 1) + '.geojson'),
+        text: (function(rawText) {
+          return function() { return Promise.resolve(rawText); };
+        })(text)
+      };
+
+      var roadEntry = addGeojsonFileRow(pseudoFile);
+      if (!roadEntry) continue;
+      if (road.color) {
+        roadEntry.colorInput.value = String(road.color);
+        roadEntry.rowEl.dataset.roadColor = roadEntry.colorInput.value;
+      }
+      setSelectValueIfOptionExists(roadEntry.tagSelect, road.tagId);
+      roadEntry.hasFittedToBounds = !!road.hasFittedToBounds;
+    }
+
+    mapSessions = [];
+    mapSessionCounter = 0;
+    currentMapSessionIndex = -1;
+    state.currentMapSessionId = null;
+
+    var importedMapViews = Array.isArray(mapSetup.mapViews) ? mapSetup.mapViews : [];
+    var usedSessionIds = {};
+    for (var si = 0; si < importedMapViews.length; si++) {
+      var fallbackId = si + 1;
+      var parsedSession = parseImportedMapSession(importedMapViews[si], fallbackId);
+      while (usedSessionIds[String(parsedSession.id)]) {
+        parsedSession.id++;
+      }
+      usedSessionIds[String(parsedSession.id)] = true;
+      if (parsedSession.id > mapSessionCounter) mapSessionCounter = parsedSession.id;
+      mapSessions.push(parsedSession);
+    }
+    renderMapSessionList();
+
+    var activeMapViewId = parseInt(mapSetup.activeMapViewId, 10);
+    var activeIndex = -1;
+    if (isFinite(activeMapViewId)) {
+      for (var ai = 0; ai < mapSessions.length; ai++) {
+        if (mapSessions[ai].id === activeMapViewId) {
+          activeIndex = ai;
+          break;
+        }
+      }
+    }
+    if (activeIndex < 0 && mapSessions.length > 0) activeIndex = 0;
+    if (activeIndex >= 0) activateMapSession(activeIndex);
+    else filterElementsBySession(null);
+
+    updateToolTagSelectsDisabled();
+    updateRoadLayersVisibilityByTags(state.lastApriltagDetections || []);
   }
 
   function setVgaPanelVisible(visible) {
@@ -2519,7 +2726,8 @@ export function initApp() {
 
     if (newStage === 2) {
       dom.surfaceButtonsEl.classList.remove('hidden');
-      setViewMode(dom.viewToggleEl.checked ? 'map' : 'camera');
+      dom.viewToggleEl.checked = false;
+      setViewMode('camera');
     } else if (newStage === 3 || newStage === 4) {
       dom.surfaceButtonsEl.classList.add('hidden');
       dom.viewToggleEl.checked = true;
@@ -2622,6 +2830,7 @@ export function initApp() {
     dom.mapSessionPanelEl.classList.toggle('hidden', !panelVisible);
     dom.mapSessionPanelEl.setAttribute('aria-hidden', panelVisible ? 'false' : 'true');
 
+    updateStage3WorkspaceVisibility();
     if (!overlayVisible) resetStage3Gestures();
   }
 
@@ -2641,12 +2850,24 @@ export function initApp() {
     var visible = state.stage === 3 && state.viewMode === 'map' && !vgaModeActive;
     dom.trackingOffsetControlsEl.classList.toggle('hidden', !visible);
     dom.trackingOffsetControlsEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    updateStage3WorkspaceVisibility();
   }
 
   function updateToolTagControlsVisibility() {
     var visible = state.stage === 3 && state.viewMode === 'map' && !vgaModeActive;
     dom.toolTagControlsEl.classList.toggle('hidden', !visible);
     dom.toolTagControlsEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    updateStage3WorkspaceVisibility();
+  }
+
+  function updateStage3WorkspaceVisibility() {
+    if (!dom.stage3WorkspacePanelEl) return;
+    var visible = state.stage === 3 && state.viewMode === 'map' && !vgaModeActive;
+    dom.stage3WorkspacePanelEl.classList.toggle('hidden', !visible);
+    dom.stage3WorkspacePanelEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    if (dom.stage3ActionBarEl) {
+      dom.stage3ActionBarEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    }
   }
 
   function updateHamburgerMenuVisibility() {

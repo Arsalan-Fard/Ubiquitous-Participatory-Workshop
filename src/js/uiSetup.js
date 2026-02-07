@@ -4,12 +4,16 @@ export function initUiSetup(options) {
   options = options || {};
   var panelEl = options.panelEl;
   var overlayEl = options.overlayEl;
+  var actionsHostEl = options.actionsHostEl || null;
   var onNextStage = options.onNextStage || null;
+  var getSetupExportData = typeof options.getSetupExportData === 'function' ? options.getSetupExportData : null;
+  var applySetupImportData = typeof options.applySetupImportData === 'function' ? options.applySetupImportData : null;
 
   if (!panelEl) throw new Error('initUiSetup: missing panelEl');
   if (!overlayEl) throw new Error('initUiSetup: missing overlayEl');
 
   panelEl.textContent = '';
+  if (actionsHostEl) actionsHostEl.textContent = '';
 
   var currentColor = '#ff3b30';
   var currentDrawColor = '#2bb8ff';
@@ -18,15 +22,22 @@ export function initUiSetup(options) {
   var participantsRowEl = document.createElement('div');
   participantsRowEl.className = 'ui-setup-row';
 
+  var participantsLabelEl = document.createElement('label');
+  participantsLabelEl.className = 'ui-setup-row-label';
+  participantsLabelEl.textContent = 'Number of participants';
+
   var participantsInputEl = document.createElement('input');
   participantsInputEl.className = 'ui-setup-input ui-setup-input--narrow';
+  participantsInputEl.id = 'uiSetupParticipantsCountInput';
   participantsInputEl.type = 'number';
   participantsInputEl.min = '1';
   participantsInputEl.max = '10';
   participantsInputEl.inputMode = 'numeric';
   participantsInputEl.placeholder = 'Participants (1-10)';
   participantsInputEl.value = state.stage3ParticipantCount ? String(state.stage3ParticipantCount) : '';
+  participantsLabelEl.setAttribute('for', participantsInputEl.id);
 
+  participantsRowEl.appendChild(participantsLabelEl);
   participantsRowEl.appendChild(participantsInputEl);
   panelEl.appendChild(participantsRowEl);
 
@@ -311,8 +322,13 @@ export function initUiSetup(options) {
   footer.appendChild(exportBtn);
   footer.appendChild(importBtn);
   footer.appendChild(nextBtn);
-  panelEl.appendChild(footer);
-  panelEl.appendChild(importFileEl);
+  if (actionsHostEl) {
+    actionsHostEl.appendChild(footer);
+    actionsHostEl.appendChild(importFileEl);
+  } else {
+    panelEl.appendChild(footer);
+    panelEl.appendChild(importFileEl);
+  }
 
   nextBtn.addEventListener('click', function () {
     if (onNextStage) onNextStage();
@@ -357,6 +373,26 @@ export function initUiSetup(options) {
     importFromFile(file);
   });
 
+  function normalizeSessionId(value) {
+    if (value === null || value === undefined) return '';
+    var text = String(value).trim();
+    return text;
+  }
+
+  function assignCurrentSessionId(el) {
+    if (!el || !el.dataset) return;
+    var sessionId = normalizeSessionId(state.currentMapSessionId);
+    if (sessionId) el.dataset.sessionId = sessionId;
+    else delete el.dataset.sessionId;
+  }
+
+  function assignImportedSessionId(el, rawSessionId) {
+    if (!el || !el.dataset) return;
+    var sessionId = normalizeSessionId(rawSessionId);
+    if (sessionId) el.dataset.sessionId = sessionId;
+    else delete el.dataset.sessionId;
+  }
+
   function createLabelFromInput() {
     var text = String(inputEl.value || '').trim();
     if (!text) return;
@@ -365,9 +401,7 @@ export function initUiSetup(options) {
     labelEl.className = 'ui-label';
     labelEl.textContent = text;
     labelEl.dataset.uiType = 'label';
-    // Tag with current session ID
-    var sessionId = state.currentMapSessionId;
-    if (sessionId) labelEl.dataset.sessionId = String(sessionId);
+    assignCurrentSessionId(labelEl);
     overlayEl.appendChild(labelEl);
 
     positionLabelAboveInput(labelEl);
@@ -403,6 +437,7 @@ export function initUiSetup(options) {
     dotEl.style.background = currentColor;
     dotEl.dataset.uiType = 'dot';
     dotEl.dataset.color = currentColor;
+    assignCurrentSessionId(dotEl);
     overlayEl.appendChild(dotEl);
 
     positionDotAboveSwatch(dotEl);
@@ -442,6 +477,7 @@ export function initUiSetup(options) {
     drawEl.height = 48;
     drawEl.dataset.uiType = 'draw';
     drawEl.dataset.color = currentDrawColor;
+    assignCurrentSessionId(drawEl);
     overlayEl.appendChild(drawEl);
 
     positionDrawAboveSwatch(drawEl);
@@ -475,6 +511,7 @@ export function initUiSetup(options) {
     noteEl.dataset.expanded = 'false';
     noteEl.dataset.color = currentNoteColor;
     noteEl.style.background = currentNoteColor;
+    assignCurrentSessionId(noteEl);
 
     var iconEl = document.createElement('div');
     iconEl.className = 'ui-note__icon';
@@ -492,6 +529,7 @@ export function initUiSetup(options) {
     var eraserEl = document.createElement('div');
     eraserEl.className = 'ui-eraser';
     eraserEl.dataset.uiType = 'eraser';
+    assignCurrentSessionId(eraserEl);
 
     var iconEl = document.createElement('div');
     iconEl.className = 'ui-eraser__icon';
@@ -650,22 +688,62 @@ export function initUiSetup(options) {
       if (type === 'label') {
         var rotationDeg = parseFloat(el.dataset.rotationDeg || '0');
         if (!isFinite(rotationDeg)) rotationDeg = 0;
-        items.push({ type: 'label', text: el.textContent || '', x: left, y: top, rotationDeg: rotationDeg });
+        items.push({
+          type: 'label',
+          text: el.textContent || '',
+          x: left,
+          y: top,
+          rotationDeg: rotationDeg,
+          sessionId: normalizeSessionId(el.dataset.sessionId)
+        });
       } else if (type === 'dot') {
-        items.push({ type: 'dot', color: el.dataset.color || '#ff3b30', x: left, y: top });
+        items.push({
+          type: 'dot',
+          color: el.dataset.color || '#ff3b30',
+          x: left,
+          y: top,
+          sessionId: normalizeSessionId(el.dataset.sessionId)
+        });
       } else if (type === 'draw') {
-        items.push({ type: 'draw', color: el.dataset.color || '#2bb8ff', x: left, y: top });
+        items.push({
+          type: 'draw',
+          color: el.dataset.color || '#2bb8ff',
+          x: left,
+          y: top,
+          sessionId: normalizeSessionId(el.dataset.sessionId)
+        });
       } else if (type === 'note') {
-        items.push({ type: 'note', text: el.dataset.noteText || '', color: el.dataset.color || '#ffc857', x: left, y: top });
+        items.push({
+          type: 'note',
+          text: el.dataset.noteText || '',
+          color: el.dataset.color || '#ffc857',
+          x: left,
+          y: top,
+          sessionId: normalizeSessionId(el.dataset.sessionId)
+        });
       } else if (type === 'eraser') {
-        items.push({ type: 'eraser', x: left, y: top });
+        items.push({
+          type: 'eraser',
+          x: left,
+          y: top,
+          sessionId: normalizeSessionId(el.dataset.sessionId)
+        });
       }
     }
 
+    var participants = {
+      count: state.stage3ParticipantCount || 0,
+      primaryTagIds: Array.isArray(state.stage3ParticipantTagIds) ? state.stage3ParticipantTagIds.slice() : [],
+      triggerTagIds: Array.isArray(state.stage3ParticipantTriggerTagIds) ? state.stage3ParticipantTriggerTagIds.slice() : []
+    };
+    var mapSetup = getSetupExportData ? getSetupExportData() : null;
+
     var payload = {
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       items: items,
+      participants: participants,
+      mapSetup: mapSetup
     };
 
     downloadTextFile(JSON.stringify(payload, null, 2), fileNameForExport());
@@ -688,6 +766,19 @@ export function initUiSetup(options) {
       return;
     }
 
+    var participants = data.participants && typeof data.participants === 'object' ? data.participants : null;
+    if (participants) {
+      var importedCount = sanitizeParticipantCount(participants.count);
+      state.stage3ParticipantCount = importedCount;
+
+      var primaryIds = Array.isArray(participants.primaryTagIds) ? participants.primaryTagIds.slice() : [];
+      var triggerIds = Array.isArray(participants.triggerTagIds) ? participants.triggerTagIds.slice() : [];
+      state.stage3ParticipantTagIds = primaryIds;
+      state.stage3ParticipantTriggerTagIds = triggerIds;
+      participantsInputEl.value = importedCount ? String(importedCount) : '';
+      updateParticipantsUi();
+    }
+
     overlayEl.textContent = '';
 
     for (var i = 0; i < data.items.length; i++) {
@@ -704,6 +795,7 @@ export function initUiSetup(options) {
         var importedRotationDeg = parseFloat(item.rotationDeg);
         if (!isFinite(importedRotationDeg)) importedRotationDeg = 0;
         setElementRotation(labelEl, importedRotationDeg);
+        assignImportedSessionId(labelEl, item.sessionId);
         overlayEl.appendChild(labelEl);
         makeDraggable(labelEl);
         continue;
@@ -717,6 +809,7 @@ export function initUiSetup(options) {
         dotEl.style.background = dotEl.dataset.color;
         dotEl.style.left = String(item.x || 0) + 'px';
         dotEl.style.top = String(item.y || 0) + 'px';
+        assignImportedSessionId(dotEl, item.sessionId);
         overlayEl.appendChild(dotEl);
         makeDraggable(dotEl, { draggingClass: 'ui-dot--dragging' });
         continue;
@@ -731,6 +824,7 @@ export function initUiSetup(options) {
         drawEl.dataset.color = String(item.color || '#2bb8ff');
         drawEl.style.left = String(item.x || 0) + 'px';
         drawEl.style.top = String(item.y || 0) + 'px';
+        assignImportedSessionId(drawEl, item.sessionId);
         overlayEl.appendChild(drawEl);
         renderDrawIcon(drawEl, drawEl.dataset.color);
         makeDraggable(drawEl, { draggingClass: 'ui-draw--dragging' });
@@ -747,6 +841,7 @@ export function initUiSetup(options) {
         noteEl.style.background = noteEl.dataset.color;
         noteEl.style.left = String(item.x || 0) + 'px';
         noteEl.style.top = String(item.y || 0) + 'px';
+        assignImportedSessionId(noteEl, item.sessionId);
 
         var iconEl = document.createElement('div');
         iconEl.className = 'ui-note__icon';
@@ -765,6 +860,7 @@ export function initUiSetup(options) {
         eraserEl.dataset.uiType = 'eraser';
         eraserEl.style.left = String(item.x || 0) + 'px';
         eraserEl.style.top = String(item.y || 0) + 'px';
+        assignImportedSessionId(eraserEl, item.sessionId);
 
         var eraserIcon = document.createElement('div');
         eraserIcon.className = 'ui-eraser__icon';
@@ -774,6 +870,10 @@ export function initUiSetup(options) {
         overlayEl.appendChild(eraserEl);
         makeDraggable(eraserEl, { draggingClass: 'ui-eraser--dragging' });
       }
+    }
+
+    if (applySetupImportData) {
+      applySetupImportData(data.mapSetup || null);
     }
   }
 }

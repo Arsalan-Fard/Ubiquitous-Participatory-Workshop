@@ -105,91 +105,103 @@
             <div id="mapApriltagDots" class="map-finger-dots hidden" aria-hidden="true"></div>
             <div id="mapFingerDots" class="map-finger-dots hidden" aria-hidden="true"></div>
         </div>
-        <div id="trackingOffsetControls" class="tracking-offset-controls hidden" aria-hidden="true">
-            <div class="tracking-offset-controls__item">
-                <div class="tracking-offset-controls__header">
-                    <span class="tracking-offset-controls__label">Offset X</span>
-                    <span id="trackingOffsetXValue" class="tracking-offset-controls__value">0</span>
-                </div>
-                <input id="trackingOffsetXSlider" class="tracking-offset-controls__slider" type="range" min="-200" max="200" step="1" value="0" aria-label="AprilTag tracking horizontal offset in pixels" />
-            </div>
-            <div class="tracking-offset-controls__item">
-                <div class="tracking-offset-controls__header">
-                    <span class="tracking-offset-controls__label">Offset Y</span>
-                    <span id="trackingOffsetYValue" class="tracking-offset-controls__value">0</span>
-                </div>
-                <input id="trackingOffsetYSlider" class="tracking-offset-controls__slider" type="range" min="-200" max="200" step="1" value="0" aria-label="AprilTag tracking vertical offset in pixels" />
-            </div>
-        </div>
-        <div id="toolTagControls" class="tool-tag-controls hidden" aria-hidden="true">
-            <div class="tool-tag-controls__row">
-                <div class="tool-tag-controls__item">
-                    <span class="tool-tag-controls__label">Isovist</span>
-                    <select id="isovistTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Isovist">
-                        <option value="">None</option>
-                    </select>
-                </div>
-                <div class="tool-tag-controls__item">
-                    <span class="tool-tag-controls__label">Shortest-path A</span>
-                    <select id="shortestPathTagASelect" class="tool-tag-controls__select" aria-label="Select AprilTag A for Shortest-path">
-                        <option value="">None</option>
-                    </select>
-                </div>
-                <div class="tool-tag-controls__item">
-                    <span class="tool-tag-controls__label">Shortest-path B</span>
-                    <select id="shortestPathTagBSelect" class="tool-tag-controls__select" aria-label="Select AprilTag B for Shortest-path">
-                        <option value="">None</option>
-                    </select>
-                </div>
-                <div class="tool-tag-controls__item">
-                    <span class="tool-tag-controls__label">Pan</span>
-                    <select id="panTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Pan">
-                        <option value="">None</option>
-                    </select>
-                </div>
-                <div class="tool-tag-controls__item">
-                    <span class="tool-tag-controls__label">Zoom A</span>
-                    <select id="zoomTagASelect" class="tool-tag-controls__select" aria-label="Select AprilTag A for Zoom">
-                        <option value="">None</option>
-                    </select>
-                </div>
-                <div class="tool-tag-controls__item">
-                    <span class="tool-tag-controls__label">Zoom B</span>
-                    <select id="zoomTagBSelect" class="tool-tag-controls__select" aria-label="Select AprilTag B for Zoom">
-                        <option value="">None</option>
-                    </select>
-                </div>
-                <div class="tool-tag-controls__item">
-                    <span class="tool-tag-controls__label">Next</span>
-                    <select id="nextTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Next">
-                        <option value="">None</option>
-                    </select>
-                </div>
-                <div class="tool-tag-controls__item">
-                    <span class="tool-tag-controls__label">Back</span>
-                    <select id="backTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Back">
-                        <option value="">None</option>
-                    </select>
-                </div>
-                <div class="tool-tag-controls__item">
-                    <span class="tool-tag-controls__label">Roads</span>
-                    <button id="geojsonImportBtn" class="tool-tag-controls__import-btn" type="button" aria-label="Load roads GeoJSON file">+</button>
-                </div>
-                <div class="tool-tag-controls__item">
-                    <span class="tool-tag-controls__label">VGA</span>
-                    <button id="vgaModeBtn" class="tool-tag-controls__import-btn" type="button" aria-label="Enter VGA mode">VGA</button>
-                </div>
-            </div>
-            <div id="geojsonFilesList" class="tool-tag-controls__files"></div>
-        </div>
         <div id="uiSetupOverlay" class="ui-setup-overlay hidden" aria-hidden="true"></div>
-        <div id="uiSetupPanel" class="ui-setup-panel hidden" aria-hidden="true"></div>
-        <div id="mapSessionPanel" class="map-session-panel hidden" aria-hidden="true">
-            <div class="map-session-panel__header">
-                <span class="map-session-panel__title">Map Session</span>
-                <button id="mapSessionAddBtn" class="map-session-panel__add-btn" type="button" aria-label="Save current map view">+</button>
+        <div id="stage3WorkspacePanel" class="stage3-workspace hidden" aria-hidden="true">
+            <div class="stage3-workspace__main">
+                <section class="stage3-panel-section stage3-panel-section--input" aria-label="Input section">
+                    <div class="stage3-panel-section__title">Input</div>
+                    <div id="trackingOffsetControls" class="tracking-offset-controls hidden" aria-hidden="true">
+                        <div class="tracking-offset-controls__item">
+                            <div class="tracking-offset-controls__header">
+                                <span class="tracking-offset-controls__label">Offset X</span>
+                                <span id="trackingOffsetXValue" class="tracking-offset-controls__value">0</span>
+                            </div>
+                            <input id="trackingOffsetXSlider" class="tracking-offset-controls__slider" type="range" min="-200" max="200" step="1" value="0" aria-label="AprilTag tracking horizontal offset in pixels" />
+                        </div>
+                        <div class="tracking-offset-controls__item">
+                            <div class="tracking-offset-controls__header">
+                                <span class="tracking-offset-controls__label">Offset Y</span>
+                                <span id="trackingOffsetYValue" class="tracking-offset-controls__value">0</span>
+                            </div>
+                            <input id="trackingOffsetYSlider" class="tracking-offset-controls__slider" type="range" min="-200" max="200" step="1" value="0" aria-label="AprilTag tracking vertical offset in pixels" />
+                        </div>
+                    </div>
+                    <div id="uiSetupPanel" class="ui-setup-panel hidden" aria-hidden="true"></div>
+                </section>
+                <section class="stage3-panel-section stage3-panel-section--layer" aria-label="Layer section">
+                    <div class="stage3-panel-section__title">Layer</div>
+                    <div id="toolTagControls" class="tool-tag-controls hidden" aria-hidden="true">
+                        <div class="tool-tag-controls__row">
+                            <div class="tool-tag-controls__item">
+                                <span class="tool-tag-controls__label">Isovist</span>
+                                <select id="isovistTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Isovist">
+                                    <option value="">None</option>
+                                </select>
+                            </div>
+                            <div class="tool-tag-controls__item tool-tag-controls__item--pair">
+                                <span class="tool-tag-controls__label">Shortest-path</span>
+                                <div class="tool-tag-controls__pair">
+                                    <select id="shortestPathTagASelect" class="tool-tag-controls__select tool-tag-controls__select--pair" aria-label="Select AprilTag A for Shortest-path">
+                                        <option value="">None</option>
+                                    </select>
+                                    <select id="shortestPathTagBSelect" class="tool-tag-controls__select tool-tag-controls__select--pair" aria-label="Select AprilTag B for Shortest-path">
+                                        <option value="">None</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="tool-tag-controls__item">
+                                <span class="tool-tag-controls__label">Pan</span>
+                                <select id="panTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Pan">
+                                    <option value="">None</option>
+                                </select>
+                            </div>
+                            <div class="tool-tag-controls__item tool-tag-controls__item--pair">
+                                <span class="tool-tag-controls__label">Zoom</span>
+                                <div class="tool-tag-controls__pair">
+                                    <select id="zoomTagASelect" class="tool-tag-controls__select tool-tag-controls__select--pair" aria-label="Select AprilTag A for Zoom">
+                                        <option value="">None</option>
+                                    </select>
+                                    <select id="zoomTagBSelect" class="tool-tag-controls__select tool-tag-controls__select--pair" aria-label="Select AprilTag B for Zoom">
+                                        <option value="">None</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="tool-tag-controls__item">
+                                <span class="tool-tag-controls__label">Next</span>
+                                <select id="nextTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Next">
+                                    <option value="">None</option>
+                                </select>
+                            </div>
+                            <div class="tool-tag-controls__item">
+                                <span class="tool-tag-controls__label">Back</span>
+                                <select id="backTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Back">
+                                    <option value="">None</option>
+                                </select>
+                            </div>
+                            <div class="tool-tag-controls__item">
+                                <span class="tool-tag-controls__label">Roads</span>
+                                <button id="geojsonImportBtn" class="tool-tag-controls__import-btn" type="button" aria-label="Load roads GeoJSON file">+</button>
+                            </div>
+                            <div class="tool-tag-controls__item">
+                                <span class="tool-tag-controls__label">VGA</span>
+                                <button id="vgaModeBtn" class="tool-tag-controls__import-btn" type="button" aria-label="Enter VGA mode">VGA</button>
+                            </div>
+                        </div>
+                        <div id="geojsonFilesList" class="tool-tag-controls__files"></div>
+                    </div>
+                </section>
+                <section class="stage3-panel-section stage3-panel-section--map-view" aria-label="Map view section">
+                    <div class="stage3-panel-section__title">Map View</div>
+                    <div id="mapSessionPanel" class="map-session-panel hidden" aria-hidden="true">
+                        <div class="map-session-panel__header">
+                            <span class="map-session-panel__title">Map Session</span>
+                            <button id="mapSessionAddBtn" class="map-session-panel__add-btn" type="button" aria-label="Save current map view">+</button>
+                        </div>
+                        <div id="mapSessionList" class="map-session-panel__list"></div>
+                    </div>
+                </section>
             </div>
-            <div id="mapSessionList" class="map-session-panel__list"></div>
+            <div id="stage3ActionBar" class="stage3-workspace__actions" aria-label="Stage 3 actions"></div>
         </div>
         <div id="mapFingerCursor" class="map-finger-cursor hidden" aria-hidden="true">
             <svg class="map-finger-cursor__ring" viewBox="0 0 36 36" aria-hidden="true">
