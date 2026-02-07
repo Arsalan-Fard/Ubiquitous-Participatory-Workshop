@@ -1,0 +1,13 @@
+{
+  "type": "FeatureCollection",
+  "properties": {
+    "exportedAt": "2026-02-07T13:07:34.848Z",
+    "appStage": 4,
+    "mapViewCount": 2,
+    "mapViews": [],
+    "workshopId": "workshop-b68fb26c",
+    "sessionIndex": 1,
+    "savedAtEpochMs": 1770469654858
+  },
+  "features": []
+}

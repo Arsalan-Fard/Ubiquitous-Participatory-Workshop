@@ -759,9 +759,10 @@ export function initApp() {
   };
   var ZOOM_PAIR_MIN_DISTANCE_METERS = 0.15;
   var ZOOM_PAIR_DEADBAND_RATIO = 0.07;
+  var ZOOM_BASELINE_RANGE_UNITS = 1;
   var ZOOM_MIN_UPDATE_INTERVAL_MS = 160;
   var ZOOM_MISSING_HOLD_MS = 900;
-  var ZOOM_MAX_STEP_LEVEL = 0.28;
+  var ZOOM_TAG_MAX_EXTRAPOLATION = 1.5;
   var zoomTagRuntime = {
     configuredTagAId: null,
     configuredTagBId: null,
@@ -2308,7 +2309,8 @@ export function initApp() {
     zoomTagRuntime.missingSinceMs = 0;
   }
 
-  function projectDetectionToMapContainerPoint(det) {
+  function projectDetectionToMapContainerPoint(det, options) {
+    options = options || {};
     if (!det || !det.center) return null;
     if (!state.surfaceHomography || !state.leafletMap) return null;
 
@@ -2318,7 +2320,17 @@ export function initApp() {
 
     var uv = applyHomography(state.surfaceHomography, det.center.x, det.center.y);
     if (!uv) return null;
-    if (uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1) return null;
+    var allowExtrapolation = !!options.allowExtrapolation;
+    if (allowExtrapolation) {
+      var maxExtrapolation = parseFloat(options.maxExtrapolation);
+      if (!isFinite(maxExtrapolation) || maxExtrapolation < 0) maxExtrapolation = ZOOM_TAG_MAX_EXTRAPOLATION;
+      if (uv.x < -maxExtrapolation || uv.x > (1 + maxExtrapolation) ||
+          uv.y < -maxExtrapolation || uv.y > (1 + maxExtrapolation)) {
+        return null;
+      }
+    } else if (uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1) {
+      return null;
+    }
 
     var containerX = uv.x * mapW;
     var containerY = uv.y * mapH;
@@ -2326,8 +2338,8 @@ export function initApp() {
     return { x: containerX, y: containerY };
   }
 
-  function projectDetectionToMapLatLng(det) {
-    var containerPt = projectDetectionToMapContainerPoint(det);
+  function projectDetectionToMapLatLng(det, options) {
+    var containerPt = projectDetectionToMapContainerPoint(det, options);
     if (!containerPt) return null;
     var pt = state.leafletGlobal && state.leafletGlobal.point
       ? state.leafletGlobal.point(containerPt.x, containerPt.y)
@@ -2376,16 +2388,20 @@ export function initApp() {
     return projectDetectionToMapLatLng(det);
   }
 
-  function collectShortestPathEndpointsForTagIds(detById, tagAId, tagBId) {
+  function collectShortestPathEndpointsForTagIds(detById, tagAId, tagBId, options) {
+    options = options || {};
     if (!isFinite(tagAId) || !isFinite(tagBId) || tagAId === tagBId) return null;
     var detA = detById[tagAId];
     var detB = detById[tagBId];
     if (!detA || !detA.center || !detB || !detB.center) return null;
-    if (!isPointInSurface(detA.center.x, detA.center.y)) return null;
-    if (!isPointInSurface(detB.center.x, detB.center.y)) return null;
+    if (options.requireInSurface !== false) {
+      if (!isPointInSurface(detA.center.x, detA.center.y)) return null;
+      if (!isPointInSurface(detB.center.x, detB.center.y)) return null;
+    }
 
-    var pointA = projectDetectionToMapLatLng(detA);
-    var pointB = projectDetectionToMapLatLng(detB);
+    var projectionOptions = options.projectionOptions || null;
+    var pointA = projectDetectionToMapLatLng(detA, projectionOptions);
+    var pointB = projectDetectionToMapLatLng(detB, projectionOptions);
     if (!pointA || !pointB) return null;
     return { a: pointA, b: pointB };
   }
@@ -2586,7 +2602,18 @@ export function initApp() {
         }
 
         var zoomNowMs = performance.now();
-        var zoomEndpoints = collectShortestPathEndpointsForTagIds(detById, zoomTagAId, zoomTagBId);
+        var zoomEndpoints = collectShortestPathEndpointsForTagIds(
+          detById,
+          zoomTagAId,
+          zoomTagBId,
+          {
+            requireInSurface: false,
+            projectionOptions: {
+              allowExtrapolation: true,
+              maxExtrapolation: ZOOM_TAG_MAX_EXTRAPOLATION
+            }
+          }
+        );
         if (!zoomEndpoints) {
           if (!zoomTagRuntime.missingSinceMs) {
             zoomTagRuntime.missingSinceMs = zoomNowMs;
@@ -2607,30 +2634,29 @@ export function initApp() {
               zoomTagRuntime.baselineZoom = state.leafletMap.getZoom();
               zoomTagRuntime.lastApplyAtMs = zoomNowMs;
             } else {
-              var relativeShift = Math.abs((zoomDistance - zoomTagRuntime.baselineDistanceMeters) / zoomTagRuntime.baselineDistanceMeters);
+              var distanceRatioDelta = (zoomDistance - zoomTagRuntime.baselineDistanceMeters) / zoomTagRuntime.baselineDistanceMeters;
+              var relativeShift = Math.abs(distanceRatioDelta);
               if (relativeShift >= ZOOM_PAIR_DEADBAND_RATIO &&
                   (zoomNowMs - zoomTagRuntime.lastApplyAtMs) >= ZOOM_MIN_UPDATE_INTERVAL_MS) {
-                var ratio = zoomTagRuntime.baselineDistanceMeters / zoomDistance;
-                if (isFinite(ratio) && ratio > 0) {
-                  var targetZoom = zoomTagRuntime.baselineZoom + (Math.log(ratio) / Math.LN2);
-                  var minZoom = typeof state.leafletMap.getMinZoom === 'function' ? state.leafletMap.getMinZoom() : 0;
-                  var maxZoom = typeof state.leafletMap.getMaxZoom === 'function' ? state.leafletMap.getMaxZoom() : 22;
-                  if (!isFinite(minZoom)) minZoom = 0;
-                  if (!isFinite(maxZoom)) maxZoom = 22;
-                  targetZoom = clamp(targetZoom, minZoom, maxZoom);
+                // Linear zoom mapping around baseline:
+                // distance +100% (2x baseline) -> zoom -1
+                // distance -100% (0x baseline) -> zoom +1
+                var linearZoomDelta = clamp(-distanceRatioDelta, -ZOOM_BASELINE_RANGE_UNITS, ZOOM_BASELINE_RANGE_UNITS);
+                var targetZoom = zoomTagRuntime.baselineZoom + linearZoomDelta;
+                var baseMinZoom = zoomTagRuntime.baselineZoom - ZOOM_BASELINE_RANGE_UNITS;
+                var baseMaxZoom = zoomTagRuntime.baselineZoom + ZOOM_BASELINE_RANGE_UNITS;
+                targetZoom = clamp(targetZoom, baseMinZoom, baseMaxZoom);
 
-                  var currentZoom = state.leafletMap.getZoom();
-                  if (isFinite(currentZoom)) {
-                    var zoomDelta = targetZoom - currentZoom;
-                    if (Math.abs(zoomDelta) >= 0.03) {
-                      var steppedDelta = clamp(zoomDelta, -ZOOM_MAX_STEP_LEVEL, ZOOM_MAX_STEP_LEVEL);
-                      var nextZoom = clamp(currentZoom + steppedDelta, minZoom, maxZoom);
-                      if (Math.abs(nextZoom - currentZoom) >= 0.01) {
-                        state.leafletMap.setZoom(nextZoom, { animate: false });
-                        zoomTagRuntime.lastApplyAtMs = zoomNowMs;
-                      }
-                    }
-                  }
+                var mapMinZoom = typeof state.leafletMap.getMinZoom === 'function' ? state.leafletMap.getMinZoom() : 0;
+                var mapMaxZoom = typeof state.leafletMap.getMaxZoom === 'function' ? state.leafletMap.getMaxZoom() : 22;
+                if (!isFinite(mapMinZoom)) mapMinZoom = 0;
+                if (!isFinite(mapMaxZoom)) mapMaxZoom = 22;
+                targetZoom = clamp(targetZoom, mapMinZoom, mapMaxZoom);
+
+                var currentZoom = state.leafletMap.getZoom();
+                if (isFinite(currentZoom) && Math.abs(targetZoom - currentZoom) >= 0.01) {
+                  state.leafletMap.setZoom(targetZoom, { animate: false });
+                  zoomTagRuntime.lastApplyAtMs = zoomNowMs;
                 }
               }
             }
