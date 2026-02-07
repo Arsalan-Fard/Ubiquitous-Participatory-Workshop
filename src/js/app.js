@@ -366,7 +366,8 @@ export function initApp() {
     dom.shortestPathTagASelectEl,
     dom.shortestPathTagBSelectEl,
     dom.panTagSelectEl,
-    dom.zoomTagSelectEl,
+    dom.zoomTagASelectEl,
+    dom.zoomTagBSelectEl,
     dom.nextTagSelectEl,
     dom.backTagSelectEl
   ];
@@ -705,6 +706,19 @@ export function initApp() {
     lastRequestAtMs: 0,
     missingSinceMs: 0
   };
+  var ZOOM_PAIR_MIN_DISTANCE_METERS = 0.15;
+  var ZOOM_PAIR_DEADBAND_RATIO = 0.07;
+  var ZOOM_MIN_UPDATE_INTERVAL_MS = 160;
+  var ZOOM_MISSING_HOLD_MS = 900;
+  var ZOOM_MAX_STEP_LEVEL = 0.28;
+  var zoomTagRuntime = {
+    configuredTagAId: null,
+    configuredTagBId: null,
+    baselineDistanceMeters: 0,
+    baselineZoom: 0,
+    lastApplyAtMs: 0,
+    missingSinceMs: 0
+  };
 
   dom.mapSessionAddBtnEl.addEventListener('click', function(e) {
     e.preventDefault();
@@ -935,7 +949,9 @@ export function initApp() {
         shortestPathA: dom.shortestPathTagASelectEl.value || null,
         shortestPathB: dom.shortestPathTagBSelectEl.value || null,
         pan: dom.panTagSelectEl.value || null,
-        zoom: dom.zoomTagSelectEl.value || null,
+        zoomA: dom.zoomTagASelectEl.value || null,
+        zoomB: dom.zoomTagBSelectEl.value || null,
+        zoom: dom.zoomTagASelectEl.value || null,
         next: dom.nextTagSelectEl.value || null,
         back: dom.backTagSelectEl.value || null
       },
@@ -2029,6 +2045,13 @@ export function initApp() {
     if (clearRoute) clearStage4ShortestPath();
   }
 
+  function resetZoomTagRuntime() {
+    zoomTagRuntime.baselineDistanceMeters = 0;
+    zoomTagRuntime.baselineZoom = 0;
+    zoomTagRuntime.lastApplyAtMs = 0;
+    zoomTagRuntime.missingSinceMs = 0;
+  }
+
   function projectDetectionToMapLatLng(det) {
     if (!det || !det.center) return null;
     if (!state.surfaceHomography || !state.leafletMap) return null;
@@ -2191,6 +2214,82 @@ export function initApp() {
             shortestPathTagRuntime.lastEndpointA = cloneShortestPathLatLng(endpoints.a);
             shortestPathTagRuntime.lastEndpointB = cloneShortestPathLatLng(endpoints.b);
             shortestPathTagRuntime.lastRequestAtMs = nowMs;
+          }
+        }
+      }
+    }
+
+    // Process zoom tags in Stage 3 and Stage 4.
+    if (state.stage === 3 || state.stage === 4) {
+      var zoomTagAId = dom.zoomTagASelectEl.value ? parseInt(dom.zoomTagASelectEl.value, 10) : null;
+      var zoomTagBId = dom.zoomTagBSelectEl.value ? parseInt(dom.zoomTagBSelectEl.value, 10) : null;
+      var zoomPairValid = isFinite(zoomTagAId) && isFinite(zoomTagBId) && zoomTagAId !== zoomTagBId;
+
+      if (!zoomPairValid) {
+        if (zoomTagRuntime.configuredTagAId !== null ||
+            zoomTagRuntime.configuredTagBId !== null ||
+            zoomTagRuntime.baselineDistanceMeters > 0) {
+          zoomTagRuntime.configuredTagAId = null;
+          zoomTagRuntime.configuredTagBId = null;
+          resetZoomTagRuntime();
+        }
+      } else {
+        if (zoomTagRuntime.configuredTagAId !== zoomTagAId ||
+            zoomTagRuntime.configuredTagBId !== zoomTagBId) {
+          zoomTagRuntime.configuredTagAId = zoomTagAId;
+          zoomTagRuntime.configuredTagBId = zoomTagBId;
+          resetZoomTagRuntime();
+        }
+
+        var zoomNowMs = performance.now();
+        var zoomEndpoints = collectShortestPathEndpointsForTagIds(detById, zoomTagAId, zoomTagBId);
+        if (!zoomEndpoints) {
+          if (!zoomTagRuntime.missingSinceMs) {
+            zoomTagRuntime.missingSinceMs = zoomNowMs;
+          }
+          if (zoomTagRuntime.baselineDistanceMeters > 0 &&
+              (zoomNowMs - zoomTagRuntime.missingSinceMs) >= ZOOM_MISSING_HOLD_MS) {
+            resetZoomTagRuntime();
+            zoomTagRuntime.configuredTagAId = zoomTagAId;
+            zoomTagRuntime.configuredTagBId = zoomTagBId;
+          }
+        } else if (state.leafletMap) {
+          zoomTagRuntime.missingSinceMs = 0;
+          var zoomDistance = shortestPathDistanceMeters(zoomEndpoints.a, zoomEndpoints.b);
+          if (isFinite(zoomDistance) && zoomDistance >= ZOOM_PAIR_MIN_DISTANCE_METERS) {
+            if (!(zoomTagRuntime.baselineDistanceMeters > 0)) {
+              // First valid pair distance defines neutral zoom baseline.
+              zoomTagRuntime.baselineDistanceMeters = zoomDistance;
+              zoomTagRuntime.baselineZoom = state.leafletMap.getZoom();
+              zoomTagRuntime.lastApplyAtMs = zoomNowMs;
+            } else {
+              var relativeShift = Math.abs((zoomDistance - zoomTagRuntime.baselineDistanceMeters) / zoomTagRuntime.baselineDistanceMeters);
+              if (relativeShift >= ZOOM_PAIR_DEADBAND_RATIO &&
+                  (zoomNowMs - zoomTagRuntime.lastApplyAtMs) >= ZOOM_MIN_UPDATE_INTERVAL_MS) {
+                var ratio = zoomTagRuntime.baselineDistanceMeters / zoomDistance;
+                if (isFinite(ratio) && ratio > 0) {
+                  var targetZoom = zoomTagRuntime.baselineZoom + (Math.log(ratio) / Math.LN2);
+                  var minZoom = typeof state.leafletMap.getMinZoom === 'function' ? state.leafletMap.getMinZoom() : 0;
+                  var maxZoom = typeof state.leafletMap.getMaxZoom === 'function' ? state.leafletMap.getMaxZoom() : 22;
+                  if (!isFinite(minZoom)) minZoom = 0;
+                  if (!isFinite(maxZoom)) maxZoom = 22;
+                  targetZoom = clamp(targetZoom, minZoom, maxZoom);
+
+                  var currentZoom = state.leafletMap.getZoom();
+                  if (isFinite(currentZoom)) {
+                    var zoomDelta = targetZoom - currentZoom;
+                    if (Math.abs(zoomDelta) >= 0.03) {
+                      var steppedDelta = clamp(zoomDelta, -ZOOM_MAX_STEP_LEVEL, ZOOM_MAX_STEP_LEVEL);
+                      var nextZoom = clamp(currentZoom + steppedDelta, minZoom, maxZoom);
+                      if (Math.abs(nextZoom - currentZoom) >= 0.01) {
+                        state.leafletMap.setZoom(nextZoom, { animate: false });
+                        zoomTagRuntime.lastApplyAtMs = zoomNowMs;
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

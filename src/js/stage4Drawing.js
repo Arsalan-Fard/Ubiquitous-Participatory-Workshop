@@ -1332,7 +1332,9 @@ export function initLeafletIfNeeded() {
     zoomControl: false,
     attributionControl: false,
     inertia: true,
-    dragging: true
+    dragging: true,
+    zoomSnap: 0.05,
+    zoomDelta: 0.25
   });
 
   // IP Paris campus, Palaiseau
