@@ -270,6 +270,26 @@ h1 {
     max-width: 150px;
 }
 
+.tool-tag-controls__file-color {
+    width: 28px;
+    height: 22px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.08);
+    padding: 0;
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+
+.tool-tag-controls__file-color::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+
+.tool-tag-controls__file-color::-webkit-color-swatch {
+    border: none;
+    border-radius: 5px;
+}
+
 .tool-tag-controls__file-remove {
     width: 20px;
     height: 20px;

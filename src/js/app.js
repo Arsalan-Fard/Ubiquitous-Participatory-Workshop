@@ -351,7 +351,6 @@ export function initApp() {
     dom.shortestPathTagSelectEl,
     dom.panTagSelectEl,
     dom.zoomTagSelectEl,
-    dom.eraserTagSelectEl,
     dom.nextTagSelectEl,
     dom.backTagSelectEl
   ];
@@ -365,8 +364,132 @@ export function initApp() {
     }
   }
 
-  // Track all tag selects including dynamically added ones for geojson files
+  // Track all tag selects including dynamically added ones for roads files
   var geojsonFileSelects = [];
+  var roadColorPalette = ['#ff5a5f', '#2bb8ff', '#2ec27e', '#f6c945', '#ff8a3d', '#9c6dff'];
+  var importedRoadEntries = [];
+
+  function removeRoadLayer(entry) {
+    if (!entry || !entry.roadLayer || !state.leafletMap) return;
+    if (typeof state.leafletMap.hasLayer === 'function' && state.leafletMap.hasLayer(entry.roadLayer)) {
+      state.leafletMap.removeLayer(entry.roadLayer);
+    }
+    entry.roadLayer = null;
+  }
+
+  function ensureRoadLayerOnMap(entry) {
+    if (!entry || entry.removed) return;
+    if (!entry.geojsonData) return;
+    if (!state.leafletGlobal || !state.leafletMap) return;
+
+    var L = state.leafletGlobal;
+    var color = entry.colorInput && entry.colorInput.value ? entry.colorInput.value : '#2bb8ff';
+
+    if (!entry.roadLayer) {
+      entry.roadLayer = L.geoJSON(entry.geojsonData, {
+        pointToLayer: function(feature, latlng) {
+          return L.circleMarker(latlng, {
+            radius: 4,
+            color: color,
+            weight: 1,
+            fillColor: color,
+            fillOpacity: 0.95,
+            opacity: 0.95
+          });
+        },
+        style: function() {
+          return {
+            color: color,
+            weight: 3,
+            opacity: 0.95
+          };
+        }
+      });
+    } else if (typeof entry.roadLayer.setStyle === 'function') {
+      entry.roadLayer.setStyle({ color: color, fillColor: color });
+    }
+  }
+
+  function setRoadLayerVisible(entry, visible) {
+    if (!entry || entry.removed || !state.leafletMap) return;
+
+    if (!visible) {
+      if (entry.roadLayer && typeof state.leafletMap.hasLayer === 'function' && state.leafletMap.hasLayer(entry.roadLayer)) {
+        state.leafletMap.removeLayer(entry.roadLayer);
+      }
+      return;
+    }
+
+    ensureRoadLayerOnMap(entry);
+    if (!entry.roadLayer) return;
+
+    if (typeof state.leafletMap.hasLayer !== 'function' || !state.leafletMap.hasLayer(entry.roadLayer)) {
+      entry.roadLayer.addTo(state.leafletMap);
+    }
+
+    if (!entry.hasFittedToBounds && typeof entry.roadLayer.getBounds === 'function') {
+      var bounds = entry.roadLayer.getBounds();
+      if (bounds && typeof bounds.isValid === 'function' && bounds.isValid()) {
+        state.leafletMap.fitBounds(bounds, { padding: [24, 24], maxZoom: 18 });
+      }
+      entry.hasFittedToBounds = true;
+    }
+  }
+
+  function updateRoadLayersVisibilityByTags(detections) {
+    if (!Array.isArray(importedRoadEntries) || importedRoadEntries.length < 1) return;
+
+    var shouldEvaluateTags = state.viewMode === 'map' && (state.stage === 3 || state.stage === 4) && !!state.surfaceHomography;
+    var detById = {};
+    if (Array.isArray(detections)) {
+      for (var i = 0; i < detections.length; i++) {
+        var d = detections[i];
+        if (!d || !d.center) continue;
+        var id = typeof d.id === 'number' ? d.id : parseInt(d.id, 10);
+        if (isFinite(id)) detById[id] = d;
+      }
+    }
+
+    for (var ei = 0; ei < importedRoadEntries.length; ei++) {
+      var entry = importedRoadEntries[ei];
+      if (!entry || entry.removed) continue;
+      if (!shouldEvaluateTags) {
+        setRoadLayerVisible(entry, false);
+        continue;
+      }
+
+      var tagId = entry.tagSelect && entry.tagSelect.value ? parseInt(entry.tagSelect.value, 10) : NaN;
+      if (!isFinite(tagId)) {
+        setRoadLayerVisible(entry, false);
+        continue;
+      }
+
+      var det = detById[tagId];
+      var inSurface = !!(det && det.center && isPointInSurface(det.center.x, det.center.y));
+      setRoadLayerVisible(entry, inSurface);
+    }
+  }
+
+  function readGeojsonFileText(file) {
+    if (file && typeof file.text === 'function') {
+      return file.text();
+    }
+
+    return new Promise(function(resolve, reject) {
+      if (typeof FileReader === 'undefined') {
+        reject(new Error('FileReader not supported'));
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function() {
+        resolve(typeof reader.result === 'string' ? reader.result : '');
+      };
+      reader.onerror = function() {
+        reject(new Error('Failed to read file'));
+      };
+      reader.readAsText(file);
+    });
+  }
 
   // Update disabled state of options when selection changes
   function updateToolTagSelectsDisabled() {
@@ -392,7 +515,7 @@ export function initApp() {
     toolTagSelects[si].addEventListener('change', updateToolTagSelectsDisabled);
   }
 
-  // GeoJSON file import
+  // Roads GeoJSON file import
   dom.geojsonImportBtnEl.addEventListener('click', function(e) {
     e.preventDefault();
     e.stopPropagation();
@@ -417,6 +540,7 @@ export function initApp() {
   function addGeojsonFileRow(file) {
     var row = document.createElement('div');
     row.className = 'tool-tag-controls__file-row';
+    var rowRemoved = false;
 
     var nameSpan = document.createElement('span');
     nameSpan.className = 'tool-tag-controls__file-name';
@@ -439,8 +563,35 @@ export function initApp() {
       sel.appendChild(opt);
     }
 
-    sel.addEventListener('change', updateToolTagSelectsDisabled);
+    sel.addEventListener('change', function() {
+      updateToolTagSelectsDisabled();
+      updateRoadLayersVisibilityByTags(state.lastApriltagDetections || []);
+    });
     geojsonFileSelects.push(sel);
+
+    var colorInput = document.createElement('input');
+    colorInput.className = 'tool-tag-controls__file-color';
+    colorInput.type = 'color';
+    colorInput.value = roadColorPalette[(geojsonFileSelects.length - 1) % roadColorPalette.length];
+    colorInput.setAttribute('aria-label', 'Pick display color for ' + file.name);
+    row.dataset.roadColor = colorInput.value;
+    var roadEntry = {
+      fileName: file && file.name ? String(file.name) : 'roads.geojson',
+      rowEl: row,
+      tagSelect: sel,
+      colorInput: colorInput,
+      roadLayer: null,
+      geojsonData: null,
+      hasFittedToBounds: false,
+      removed: false
+    };
+    importedRoadEntries.push(roadEntry);
+
+    colorInput.addEventListener('input', function() {
+      row.dataset.roadColor = colorInput.value;
+      ensureRoadLayerOnMap(roadEntry);
+      updateRoadLayersVisibilityByTags(state.lastApriltagDetections || []);
+    });
 
     var removeBtn = document.createElement('button');
     removeBtn.className = 'tool-tag-controls__file-remove';
@@ -450,14 +601,44 @@ export function initApp() {
     removeBtn.addEventListener('click', function() {
       var idx = geojsonFileSelects.indexOf(sel);
       if (idx !== -1) geojsonFileSelects.splice(idx, 1);
+      rowRemoved = true;
+      roadEntry.removed = true;
+      removeRoadLayer(roadEntry);
+      var roadIdx = importedRoadEntries.indexOf(roadEntry);
+      if (roadIdx !== -1) importedRoadEntries.splice(roadIdx, 1);
       row.parentNode.removeChild(row);
       updateToolTagSelectsDisabled();
     });
 
     row.appendChild(nameSpan);
     row.appendChild(sel);
+    row.appendChild(colorInput);
     row.appendChild(removeBtn);
     dom.geojsonFilesListEl.appendChild(row);
+
+    readGeojsonFileText(file).then(function(text) {
+      if (rowRemoved || roadEntry.removed) return;
+      var rawText = typeof text === 'string' ? text : '';
+      if (rawText.charCodeAt(0) === 0xFEFF) rawText = rawText.slice(1);
+
+      var parsed = null;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch (err) {
+        throw new Error('Invalid JSON');
+      }
+
+      if (!parsed || parsed.type !== 'FeatureCollection' || !Array.isArray(parsed.features)) {
+        throw new Error('Invalid roads GeoJSON');
+      }
+
+      roadEntry.geojsonData = parsed;
+      updateRoadLayersVisibilityByTags(state.lastApriltagDetections || []);
+      setError('');
+    }).catch(function(err) {
+      console.warn('Failed to load roads GeoJSON:', file.name, err);
+      setError('Failed to load roads GeoJSON: ' + file.name);
+    });
 
     updateToolTagSelectsDisabled();
   }
@@ -705,7 +886,6 @@ export function initApp() {
         shortestPath: dom.shortestPathTagSelectEl.value || null,
         pan: dom.panTagSelectEl.value || null,
         zoom: dom.zoomTagSelectEl.value || null,
-        eraser: dom.eraserTagSelectEl.value || null,
         next: dom.nextTagSelectEl.value || null,
         back: dom.backTagSelectEl.value || null
       },
@@ -1424,6 +1604,7 @@ export function initApp() {
       dom.viewToggleContainerEl.classList.add('toggle-floating');
       initMaptasticIfNeeded();
       initLeafletIfNeeded();
+      updateRoadLayersVisibilityByTags(state.lastApriltagDetections || []);
       updateUiSetupPanelVisibility();
       updateEdgeGuidesVisibility();
       updateGestureControlsVisibility();
@@ -2021,6 +2202,7 @@ export function initApp() {
 
     // Process tool tag actions (next/back, etc.)
     processToolTagActions(state.lastApriltagDetections || []);
+    updateRoadLayersVisibilityByTags(state.lastApriltagDetections || []);
 
     state.animationId = requestAnimationFrame(processFrame);
   }
