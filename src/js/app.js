@@ -706,6 +706,16 @@ export function initApp() {
     lastRequestAtMs: 0,
     missingSinceMs: 0
   };
+  var PAN_JITTER_PIXELS = 2.5;
+  var PAN_MIN_UPDATE_INTERVAL_MS = 45;
+  var PAN_MISSING_HOLD_MS = 850;
+  var panTagRuntime = {
+    configuredTagId: null,
+    anchorMapLatLng: null,
+    lastTagPoint: null,
+    lastApplyAtMs: 0,
+    missingSinceMs: 0
+  };
   var ZOOM_PAIR_MIN_DISTANCE_METERS = 0.15;
   var ZOOM_PAIR_DEADBAND_RATIO = 0.07;
   var ZOOM_MIN_UPDATE_INTERVAL_MS = 160;
@@ -2045,6 +2055,13 @@ export function initApp() {
     if (clearRoute) clearStage4ShortestPath();
   }
 
+  function resetPanTagRuntime() {
+    panTagRuntime.anchorMapLatLng = null;
+    panTagRuntime.lastTagPoint = null;
+    panTagRuntime.lastApplyAtMs = 0;
+    panTagRuntime.missingSinceMs = 0;
+  }
+
   function resetZoomTagRuntime() {
     zoomTagRuntime.baselineDistanceMeters = 0;
     zoomTagRuntime.baselineZoom = 0;
@@ -2052,7 +2069,7 @@ export function initApp() {
     zoomTagRuntime.missingSinceMs = 0;
   }
 
-  function projectDetectionToMapLatLng(det) {
+  function projectDetectionToMapContainerPoint(det) {
     if (!det || !det.center) return null;
     if (!state.surfaceHomography || !state.leafletMap) return null;
 
@@ -2066,14 +2083,42 @@ export function initApp() {
 
     var containerX = uv.x * mapW;
     var containerY = uv.y * mapH;
+    if (!isFinite(containerX) || !isFinite(containerY)) return null;
+    return { x: containerX, y: containerY };
+  }
+
+  function projectDetectionToMapLatLng(det) {
+    var containerPt = projectDetectionToMapContainerPoint(det);
+    if (!containerPt) return null;
     var pt = state.leafletGlobal && state.leafletGlobal.point
-      ? state.leafletGlobal.point(containerX, containerY)
-      : { x: containerX, y: containerY };
+      ? state.leafletGlobal.point(containerPt.x, containerPt.y)
+      : { x: containerPt.x, y: containerPt.y };
 
     try {
       return cloneShortestPathLatLng(state.leafletMap.containerPointToLatLng(pt));
     } catch (err) {
       return null;
+    }
+  }
+
+  function applyPanAnchorToTagPoint(anchorLatLng, tagPoint) {
+    if (!anchorLatLng || !tagPoint) return;
+    if (!state.leafletMap || !state.leafletGlobal) return;
+    var map = state.leafletMap;
+    var L = state.leafletGlobal;
+    var zoom = map.getZoom();
+    if (!isFinite(zoom)) return;
+
+    try {
+      var anchor = L.latLng(anchorLatLng.lat, anchorLatLng.lng);
+      var anchorProjected = map.project(anchor, zoom);
+      var tagProjected = L.point(tagPoint.x, tagPoint.y);
+      var size = map.getSize();
+      var targetCenterProjected = anchorProjected.subtract(tagProjected).add(size.divideBy(2));
+      var targetCenter = map.unproject(targetCenterProjected, zoom);
+      map.setView(targetCenter, zoom, { animate: false });
+    } catch (err) {
+      // Ignore transient projection errors.
     }
   }
 
@@ -2214,6 +2259,66 @@ export function initApp() {
             shortestPathTagRuntime.lastEndpointA = cloneShortestPathLatLng(endpoints.a);
             shortestPathTagRuntime.lastEndpointB = cloneShortestPathLatLng(endpoints.b);
             shortestPathTagRuntime.lastRequestAtMs = nowMs;
+          }
+        }
+      }
+    }
+
+    // Process pan tag in Stage 3 and Stage 4.
+    if (state.stage === 3 || state.stage === 4) {
+      var panTagId = dom.panTagSelectEl.value ? parseInt(dom.panTagSelectEl.value, 10) : null;
+      var panTagValid = isFinite(panTagId);
+
+      if (!panTagValid) {
+        if (panTagRuntime.configuredTagId !== null || panTagRuntime.anchorMapLatLng) {
+          panTagRuntime.configuredTagId = null;
+          resetPanTagRuntime();
+        }
+      } else {
+        if (panTagRuntime.configuredTagId !== panTagId) {
+          panTagRuntime.configuredTagId = panTagId;
+          resetPanTagRuntime();
+        }
+
+        var panNowMs = performance.now();
+        var panDet = detById[panTagId];
+        var panReady = !!(panDet && panDet.center && isPointInSurface(panDet.center.x, panDet.center.y));
+        var panTagPoint = panReady ? projectDetectionToMapContainerPoint(panDet) : null;
+
+        if (!panTagPoint || !state.leafletMap) {
+          if (!panTagRuntime.missingSinceMs) {
+            panTagRuntime.missingSinceMs = panNowMs;
+          }
+          if (panTagRuntime.anchorMapLatLng &&
+              (panNowMs - panTagRuntime.missingSinceMs) >= PAN_MISSING_HOLD_MS) {
+            resetPanTagRuntime();
+            panTagRuntime.configuredTagId = panTagId;
+          }
+        } else {
+          panTagRuntime.missingSinceMs = 0;
+
+          if (!panTagRuntime.anchorMapLatLng) {
+            var panAnchor = state.leafletMap.containerPointToLatLng(
+              state.leafletGlobal && state.leafletGlobal.point
+                ? state.leafletGlobal.point(panTagPoint.x, panTagPoint.y)
+                : { x: panTagPoint.x, y: panTagPoint.y }
+            );
+            panTagRuntime.anchorMapLatLng = cloneShortestPathLatLng(panAnchor);
+            panTagRuntime.lastTagPoint = { x: panTagPoint.x, y: panTagPoint.y };
+            panTagRuntime.lastApplyAtMs = panNowMs;
+          } else {
+            var panMovedPx = Infinity;
+            if (panTagRuntime.lastTagPoint) {
+              var panDx = panTagPoint.x - panTagRuntime.lastTagPoint.x;
+              var panDy = panTagPoint.y - panTagRuntime.lastTagPoint.y;
+              panMovedPx = Math.sqrt(panDx * panDx + panDy * panDy);
+            }
+            var panIntervalOk = (panNowMs - panTagRuntime.lastApplyAtMs) >= PAN_MIN_UPDATE_INTERVAL_MS;
+            if (panMovedPx >= PAN_JITTER_PIXELS && panIntervalOk) {
+              applyPanAnchorToTagPoint(panTagRuntime.anchorMapLatLng, panTagPoint);
+              panTagRuntime.lastTagPoint = { x: panTagPoint.x, y: panTagPoint.y };
+              panTagRuntime.lastApplyAtMs = panNowMs;
+            }
           }
         }
       }
