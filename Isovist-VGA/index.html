@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Isovist VGA Test</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css">
+    <link rel="stylesheet" href="./isovist.css">
+</head>
+<body>
+    <div id="map"></div>
+    <div class="panel">
+        <div class="panel-title">Isovist VGA Test</div>
+        <div class="panel-text">Click the map to set the view point.</div>
+        <label class="panel-label" for="radius-input">Radius: <span id="radius-value">150</span> m</label>
+        <input id="radius-input" type="range" min="50" max="400" step="10" value="150">
+        <button id="reset-view" type="button">Reset view</button>
+        <div class="panel-hint">Buildings from OSM tiles; visibility via visibility-polygon.</div>
+    </div>
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js" crossorigin="anonymous"></script>
+    <script type="module" src="./isovist-demo.js"></script>
+</body>
+</html>

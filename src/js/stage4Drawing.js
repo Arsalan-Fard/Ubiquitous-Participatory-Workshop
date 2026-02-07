@@ -6,6 +6,7 @@
  */
 
 import { state } from './state.js';
+import { compute, convertToSegments, breakIntersections } from '../../Isovist-VGA/visibility-polygon.esm.js';
 
 // Multi-hand drawing state: keyed by pointerId
 // Each entry: { color, isDrawing, lastContainerPt, activeStroke, buttonEl }
@@ -15,6 +16,14 @@ var handDrawStates = {};
 var stickerSyncRafId = 0;
 var nextStrokeId = 1;
 var OSRM_ROUTE_BASE_URL = 'https://router.project-osrm.org/route/v1/driving/';
+var ISOVIST_RADIUS_METERS = 180;
+var ISOVIST_BOUNDARY_SIDES = 48;
+var OSM_BUILDINGS_MIN_ZOOM = 15;
+var OSM_BUILDINGS_REFRESH_DEBOUNCE_MS = 250;
+var OSM_BUILDINGS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter'
+];
 
 var stage4RouteState = {
   start: null,
@@ -23,6 +32,17 @@ var stage4RouteState = {
   endMarker: null,
   routeLine: null,
   requestId: 0
+};
+
+var stage4IsovistState = {
+  originMarker: null,
+  polygon: null
+};
+
+var stage4OsmBuildingsState = {
+  debounceId: 0,
+  fetchAbortController: null,
+  lastRequestKey: ''
 };
 
 // Get or create drawing state for a pointer
@@ -467,6 +487,198 @@ function cloneLatLng(latlng) {
   return { lat: lat, lng: lng };
 }
 
+function buildOverpassBuildingQuery(south, west, north, east) {
+  return '[out:json][timeout:20];(way["building"](' + south + ',' + west + ',' + north + ',' + east + ');relation["building"](' + south + ',' + west + ',' + north + ',' + east + '););out geom;';
+}
+
+function closeRingCoordinates(coords) {
+  if (!Array.isArray(coords) || coords.length < 3) return null;
+  var out = [];
+  for (var i = 0; i < coords.length; i++) {
+    var c = coords[i];
+    if (!Array.isArray(c) || c.length < 2) continue;
+    var lng = parseFloat(c[0]);
+    var lat = parseFloat(c[1]);
+    if (!isFinite(lat) || !isFinite(lng)) continue;
+    out.push([lng, lat]);
+  }
+  if (out.length < 3) return null;
+  var first = out[0];
+  var last = out[out.length - 1];
+  if (first[0] !== last[0] || first[1] !== last[1]) {
+    out.push([first[0], first[1]]);
+  }
+  return out.length >= 4 ? out : null;
+}
+
+function wayElementToPolygonFeature(element) {
+  if (!element || !Array.isArray(element.geometry)) return null;
+  var ring = [];
+  for (var i = 0; i < element.geometry.length; i++) {
+    var pt = element.geometry[i];
+    if (!pt) continue;
+    ring.push([pt.lon, pt.lat]);
+  }
+  var closed = closeRingCoordinates(ring);
+  if (!closed) return null;
+  return {
+    type: 'Feature',
+    properties: {
+      osmType: 'way',
+      osmId: element.id || null
+    },
+    geometry: {
+      type: 'Polygon',
+      coordinates: [closed]
+    }
+  };
+}
+
+function relationElementToPolygonFeatures(element) {
+  var features = [];
+  if (!element || !Array.isArray(element.members)) return features;
+  for (var i = 0; i < element.members.length; i++) {
+    var member = element.members[i];
+    if (!member || member.type !== 'way' || member.role === 'inner') continue;
+    if (!Array.isArray(member.geometry)) continue;
+    var ring = [];
+    for (var j = 0; j < member.geometry.length; j++) {
+      var pt = member.geometry[j];
+      if (!pt) continue;
+      ring.push([pt.lon, pt.lat]);
+    }
+    var closed = closeRingCoordinates(ring);
+    if (!closed) continue;
+    features.push({
+      type: 'Feature',
+      properties: {
+        osmType: 'relation',
+        osmId: element.id || null
+      },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [closed]
+      }
+    });
+  }
+  return features;
+}
+
+function overpassElementsToGeoJSON(elements) {
+  var features = [];
+  if (!Array.isArray(elements)) return { type: 'FeatureCollection', features: features };
+  for (var i = 0; i < elements.length; i++) {
+    var el = elements[i];
+    if (!el) continue;
+    if (el.type === 'way') {
+      var wayFeature = wayElementToPolygonFeature(el);
+      if (wayFeature) features.push(wayFeature);
+      continue;
+    }
+    if (el.type === 'relation') {
+      var relationFeatures = relationElementToPolygonFeatures(el);
+      for (var ri = 0; ri < relationFeatures.length; ri++) {
+        features.push(relationFeatures[ri]);
+      }
+    }
+  }
+  return {
+    type: 'FeatureCollection',
+    features: features
+  };
+}
+
+function fetchOverpassBuildingsWithFallback(queryText, signal) {
+  var body = 'data=' + encodeURIComponent(queryText);
+
+  function tryEndpoint(idx) {
+    if (idx >= OSM_BUILDINGS_ENDPOINTS.length) {
+      return Promise.reject(new Error('All Overpass endpoints failed'));
+    }
+    var endpoint = OSM_BUILDINGS_ENDPOINTS[idx];
+    return fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      body: body,
+      cache: 'no-store',
+      signal: signal
+    }).then(function(resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status + ' from ' + endpoint);
+      return resp.json();
+    }).catch(function(err) {
+      if (signal && signal.aborted) throw err;
+      return tryEndpoint(idx + 1);
+    });
+  }
+
+  return tryEndpoint(0);
+}
+
+function refreshStage4OsmBuildingsNow() {
+  if (!state.leafletMap || !state.stage4OsmBuildingsLayer) return;
+  var map = state.leafletMap;
+  var zoom = typeof map.getZoom === 'function' ? map.getZoom() : 0;
+  if (!isFinite(zoom) || zoom < OSM_BUILDINGS_MIN_ZOOM) {
+    if (typeof state.stage4OsmBuildingsLayer.clearLayers === 'function') {
+      state.stage4OsmBuildingsLayer.clearLayers();
+    }
+    stage4OsmBuildingsState.lastRequestKey = '';
+    return;
+  }
+
+  var bounds = map.getBounds();
+  if (!bounds) return;
+
+  var south = bounds.getSouth();
+  var west = bounds.getWest();
+  var north = bounds.getNorth();
+  var east = bounds.getEast();
+  if (![south, west, north, east].every(function(v) { return isFinite(v); })) return;
+
+  var key = [
+    Math.floor(zoom * 2) / 2,
+    south.toFixed(3),
+    west.toFixed(3),
+    north.toFixed(3),
+    east.toFixed(3)
+  ].join('|');
+
+  if (key === stage4OsmBuildingsState.lastRequestKey) return;
+  stage4OsmBuildingsState.lastRequestKey = key;
+
+  if (stage4OsmBuildingsState.fetchAbortController) {
+    stage4OsmBuildingsState.fetchAbortController.abort();
+  }
+  var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  stage4OsmBuildingsState.fetchAbortController = controller;
+
+  var query = buildOverpassBuildingQuery(south, west, north, east);
+  fetchOverpassBuildingsWithFallback(query, controller ? controller.signal : undefined).then(function(payload) {
+    if (controller && controller.signal && controller.signal.aborted) return;
+    var geojson = overpassElementsToGeoJSON(payload && payload.elements ? payload.elements : []);
+    if (typeof state.stage4OsmBuildingsLayer.clearLayers === 'function') {
+      state.stage4OsmBuildingsLayer.clearLayers();
+    }
+    if (typeof state.stage4OsmBuildingsLayer.addData === 'function') {
+      state.stage4OsmBuildingsLayer.addData(geojson);
+    }
+  }).catch(function(err) {
+    if (controller && controller.signal && controller.signal.aborted) return;
+    console.warn('Failed to load OSM building obstacles:', err);
+  });
+}
+
+function scheduleStage4OsmBuildingsRefresh() {
+  if (stage4OsmBuildingsState.debounceId) {
+    clearTimeout(stage4OsmBuildingsState.debounceId);
+    stage4OsmBuildingsState.debounceId = 0;
+  }
+  stage4OsmBuildingsState.debounceId = setTimeout(function() {
+    stage4OsmBuildingsState.debounceId = 0;
+    refreshStage4OsmBuildingsNow();
+  }, OSM_BUILDINGS_REFRESH_DEBOUNCE_MS);
+}
+
 function removeLayerFromRouteLayer(layer) {
   if (!layer || !state.stage4RouteLayer) return;
   try {
@@ -625,23 +837,235 @@ export function setStage4ShortestPathEndpoints(startLatLng, endLatLng) {
   requestStage4ShortestPath(start, end, stage4RouteState.requestId);
 }
 
-function handleStage4MapCtrlClickForShortestPath(e) {
+function removeLayerFromIsovistLayer(layer) {
+  if (!layer || !state.stage4IsovistLayer) return;
+  try {
+    state.stage4IsovistLayer.removeLayer(layer);
+  } catch (err) { /* ignore */ }
+}
+
+function clearStage4Isovist() {
+  if (stage4IsovistState.polygon) {
+    removeLayerFromIsovistLayer(stage4IsovistState.polygon);
+    stage4IsovistState.polygon = null;
+  }
+  if (stage4IsovistState.originMarker) {
+    removeLayerFromIsovistLayer(stage4IsovistState.originMarker);
+    stage4IsovistState.originMarker = null;
+  }
+}
+
+function metersToPixels(meters, latitude, zoom) {
+  var metersPerPixel = 156543.03392 * Math.cos(latitude * Math.PI / 180) / Math.pow(2, zoom);
+  if (!isFinite(metersPerPixel) || metersPerPixel <= 0) return 0;
+  return meters / metersPerPixel;
+}
+
+function collectLatLngPaths(latlngs, out) {
+  if (!Array.isArray(latlngs) || latlngs.length < 1) return;
+  var first = latlngs[0];
+  if (first && typeof first.lat === 'number' && typeof first.lng === 'number') {
+    out.push(latlngs);
+    return;
+  }
+  for (var i = 0; i < latlngs.length; i++) {
+    collectLatLngPaths(latlngs[i], out);
+  }
+}
+
+function projectPathToContainer(path) {
+  if (!Array.isArray(path) || path.length < 1 || !state.leafletMap) return [];
+  var projected = [];
+  for (var i = 0; i < path.length; i++) {
+    var ll = path[i];
+    if (!ll || !isFinite(ll.lat) || !isFinite(ll.lng)) continue;
+    var pt = state.leafletMap.latLngToContainerPoint(ll);
+    if (!pt || !isFinite(pt.x) || !isFinite(pt.y)) continue;
+    var prev = projected.length > 0 ? projected[projected.length - 1] : null;
+    if (prev) {
+      var dx = pt.x - prev[0];
+      var dy = pt.y - prev[1];
+      if ((dx * dx + dy * dy) < 0.25) continue;
+    }
+    projected.push([pt.x, pt.y]);
+  }
+  if (projected.length > 1) {
+    var first = projected[0];
+    var last = projected[projected.length - 1];
+    var fdx = first[0] - last[0];
+    var fdy = first[1] - last[1];
+    if ((fdx * fdx + fdy * fdy) < 0.25) projected.pop();
+  }
+  return projected;
+}
+
+function windowBbox(originPt, radiusPx) {
+  return {
+    minX: originPt.x - radiusPx,
+    minY: originPt.y - radiusPx,
+    maxX: originPt.x + radiusPx,
+    maxY: originPt.y + radiusPx
+  };
+}
+
+function segmentIntersectsWindow(a, b, win) {
+  if (!a || !b || !win) return false;
+  var minX = Math.min(a[0], b[0]);
+  var minY = Math.min(a[1], b[1]);
+  var maxX = Math.max(a[0], b[0]);
+  var maxY = Math.max(a[1], b[1]);
+  if (maxX < win.minX || minX > win.maxX || maxY < win.minY || minY > win.maxY) return false;
+  return true;
+}
+
+function polygonIntersectsWindow(points, win) {
+  if (!Array.isArray(points) || points.length < 3 || !win) return false;
+  var minX = Infinity;
+  var minY = Infinity;
+  var maxX = -Infinity;
+  var maxY = -Infinity;
+  for (var i = 0; i < points.length; i++) {
+    var p = points[i];
+    minX = Math.min(minX, p[0]);
+    minY = Math.min(minY, p[1]);
+    maxX = Math.max(maxX, p[0]);
+    maxY = Math.max(maxY, p[1]);
+  }
+  if (maxX < win.minX || minX > win.maxX || maxY < win.minY || minY > win.maxY) return false;
+  return true;
+}
+
+function appendGeometryFromPath(path, closeRing, polygons, segments, win) {
+  if (!Array.isArray(path) || path.length < 2) return;
+  var points = projectPathToContainer(path);
+  if (points.length < 2) return;
+
+  if (closeRing && points.length >= 3 && polygonIntersectsWindow(points, win)) {
+    polygons.push(points);
+    return;
+  }
+
+  for (var i = 1; i < points.length; i++) {
+    var a = points[i - 1];
+    var b = points[i];
+    if (!segmentIntersectsWindow(a, b, win)) continue;
+    segments.push([[a[0], a[1]], [b[0], b[1]]]);
+  }
+}
+
+function collectGeometryFromLayer(layer, polygons, segments, visitedLayers, win) {
+  if (!layer) return;
+  if (visitedLayers.indexOf(layer) !== -1) return;
+  visitedLayers.push(layer);
+
+  if (layer === state.leafletTileLayer || layer === state.stage4RouteLayer || layer === state.stage4IsovistLayer) return;
+
+  if (typeof layer.eachLayer === 'function' && typeof layer.getLatLngs !== 'function') {
+    layer.eachLayer(function(subLayer) {
+      collectGeometryFromLayer(subLayer, polygons, segments, visitedLayers, win);
+    });
+    return;
+  }
+
+  if (typeof layer.getLatLngs !== 'function') return;
+  var raw = layer.getLatLngs();
+  if (!raw) return;
+  var paths = [];
+  collectLatLngPaths(raw, paths);
+  var closeRing = !!(layer.options && layer.options.fill);
+  for (var i = 0; i < paths.length; i++) {
+    appendGeometryFromPath(paths[i], closeRing, polygons, segments, win);
+  }
+}
+
+function collectIsovistGeometry(originPt, radiusPx) {
+  var polygons = [];
+  var segments = [];
+  if (!state.leafletMap) return { polygons: polygons, segments: segments };
+  var visitedLayers = [];
+  var win = windowBbox(originPt, radiusPx * 1.2);
+  state.leafletMap.eachLayer(function(layer) {
+    collectGeometryFromLayer(layer, polygons, segments, visitedLayers, win);
+  });
+  return { polygons: polygons, segments: segments };
+}
+
+function buildBoundaryPolygon(originPt, radiusPx, sides) {
+  var n = Math.max(8, Math.floor(sides || 24));
+  var points = [];
+  for (var i = 0; i < n; i++) {
+    var a = (i / n) * Math.PI * 2;
+    points.push([
+      originPt.x + Math.cos(a) * radiusPx,
+      originPt.y + Math.sin(a) * radiusPx
+    ]);
+  }
+  return points;
+}
+
+function renderStage4IsovistAtLatLng(latlng) {
+  if (!state.leafletMap || !state.leafletGlobal || !state.stage4IsovistLayer) return;
+  var L = state.leafletGlobal;
+  var origin = cloneLatLng(latlng);
+  if (!origin) return;
+
+  clearStage4Isovist();
+
+  var map = state.leafletMap;
+  var originPt = map.latLngToContainerPoint([origin.lat, origin.lng]);
+  var radiusPx = metersToPixels(ISOVIST_RADIUS_METERS, origin.lat, map.getZoom());
+  if (!isFinite(radiusPx) || radiusPx <= 1) return;
+
+  var geom = collectIsovistGeometry(originPt, radiusPx);
+  var boundaryPolygon = buildBoundaryPolygon(originPt, radiusPx, ISOVIST_BOUNDARY_SIDES);
+  var polygons = [boundaryPolygon].concat(geom.polygons || []);
+  var segments = convertToSegments(polygons);
+  if (Array.isArray(geom.segments) && geom.segments.length > 0) {
+    for (var si = 0; si < geom.segments.length; si++) segments.push(geom.segments[si]);
+  }
+
+  var normalizedSegments = breakIntersections(segments);
+  var visibility = compute([originPt.x, originPt.y], normalizedSegments);
+  if (Array.isArray(visibility) && visibility.length >= 3) {
+    var polygonLatLngs = [];
+    for (var i = 0; i < visibility.length; i++) {
+      var pt = visibility[i];
+      if (!pt || pt.length < 2) continue;
+      var ll = map.containerPointToLatLng(state.leafletGlobal.point(pt[0], pt[1]));
+      polygonLatLngs.push([ll.lat, ll.lng]);
+    }
+    if (polygonLatLngs.length >= 3) {
+      stage4IsovistState.polygon = L.polygon(polygonLatLngs, {
+        color: '#0ea5a0',
+        weight: 2,
+        fillColor: '#14b8a6',
+        fillOpacity: 0.22,
+        opacity: 0.9,
+        interactive: false
+      }).addTo(state.stage4IsovistLayer);
+    }
+  }
+
+  stage4IsovistState.originMarker = L.circleMarker([origin.lat, origin.lng], {
+    radius: 6,
+    color: '#ffffff',
+    weight: 2,
+    fillColor: '#0ea5a0',
+    fillOpacity: 1,
+    interactive: false
+  }).addTo(state.stage4IsovistLayer);
+}
+
+function handleStage4MapCtrlClickForIsovist(e) {
   if (state.stage !== 4 || state.viewMode !== 'map') return;
-  if (!state.leafletMap || !state.stage4RouteLayer) return;
+  if (!state.leafletMap || !state.stage4IsovistLayer) return;
   if (!e || !e.latlng) return;
   var originalEvent = e.originalEvent;
   var isCtrlClick = !!(originalEvent && (originalEvent.ctrlKey || originalEvent.metaKey));
   if (!isCtrlClick) return;
   if (originalEvent && typeof originalEvent.preventDefault === 'function') originalEvent.preventDefault();
   if (originalEvent && typeof originalEvent.stopPropagation === 'function') originalEvent.stopPropagation();
-
-  if (!stage4RouteState.start || stage4RouteState.end) {
-    clearStage4ShortestPath();
-    upsertStage4RouteMarker('start', e.latlng);
-    return;
-  }
-
-  setStage4ShortestPathEndpoints(stage4RouteState.start, e.latlng);
+  renderStage4IsovistAtLatLng(e.latlng);
 }
 
 function distancePointToSegmentPx(px, py, x1, y1, x2, y2) {
@@ -844,6 +1268,7 @@ export function initLeafletIfNeeded() {
 
   if (state.leafletMap) {
     if (state.leafletMap) state.leafletMap.invalidateSize();
+    scheduleStage4OsmBuildingsRefresh();
     updateStickerMappingForCurrentView();
     return;
   }
@@ -872,12 +1297,28 @@ export function initLeafletIfNeeded() {
   state.leafletTileLayer.addTo(state.leafletMap);
 
   if (typeof L !== 'undefined') {
+    state.stage4OsmBuildingsLayer = L.geoJSON(null, {
+      style: function() {
+        return {
+          color: '#5a677a',
+          weight: 1,
+          opacity: 0.9,
+          fillColor: '#7a8699',
+          fillOpacity: 0.28,
+          interactive: false
+        };
+      }
+    }).addTo(state.leafletMap);
     state.stage4DrawLayer = L.layerGroup().addTo(state.leafletMap);
     state.stage4RouteLayer = L.layerGroup().addTo(state.leafletMap);
+    state.stage4IsovistLayer = L.layerGroup().addTo(state.leafletMap);
   }
 
   clearStage4ShortestPath();
-  state.leafletMap.on('click', handleStage4MapCtrlClickForShortestPath);
+  clearStage4Isovist();
+  state.leafletMap.on('click', handleStage4MapCtrlClickForIsovist);
+  state.leafletMap.on('moveend', scheduleStage4OsmBuildingsRefresh);
+  scheduleStage4OsmBuildingsRefresh();
 
   if (state.leafletMap) state.leafletMap.invalidateSize();
   updateStickerMappingForCurrentView();

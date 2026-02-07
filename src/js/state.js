@@ -80,6 +80,8 @@ export var state = {
   stage4ActiveStroke: null,
   stage4DrawLayer: null,
   stage4RouteLayer: null,
+  stage4IsovistLayer: null,
+  stage4OsmBuildingsLayer: null,
 
   // Stage 3 participant setup (AprilTags)
   stage3ParticipantCount: 0,
