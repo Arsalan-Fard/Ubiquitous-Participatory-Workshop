@@ -42,7 +42,9 @@ import {
   startStickerDrag,
   filterPolylinesBySession,
   setStage4ShortestPathEndpoints,
-  clearStage4ShortestPath
+  clearStage4ShortestPath,
+  setStage4IsovistOrigin,
+  clearStage4IsovistOverlay
 } from './stage4Drawing.js';
 
 var BACKEND_CAMERA_FEED_URL = '/video_feed';
@@ -659,6 +661,16 @@ export function initApp() {
 
   // Tool tag detection state (for edge-triggered actions)
   var toolTagInSurface = {}; // tagId -> boolean (was in surface last frame)
+  var ISOVIST_JITTER_METERS = 2;
+  var ISOVIST_MIN_UPDATE_INTERVAL_MS = 220;
+  var ISOVIST_MISSING_HOLD_MS = 700;
+  var isovistTagRuntime = {
+    configuredTagId: null,
+    lastOrigin: null,
+    lastUpdateAtMs: 0,
+    missingSinceMs: 0
+  };
+
   var SHORTEST_PATH_JITTER_METERS = 3;
   var SHORTEST_PATH_MIN_REQUEST_INTERVAL_MS = 1200;
   var SHORTEST_PATH_MISSING_HOLD_MS = 800;
@@ -1490,6 +1502,21 @@ export function initApp() {
     }
   }
 
+  function resetIsovistTagRuntime(clearOverlay) {
+    isovistTagRuntime.lastOrigin = null;
+    isovistTagRuntime.lastUpdateAtMs = 0;
+    isovistTagRuntime.missingSinceMs = 0;
+    if (clearOverlay) clearStage4IsovistOverlay();
+  }
+
+  function collectIsovistOriginForTagId(detById, tagId) {
+    if (!isFinite(tagId)) return null;
+    var det = detById[tagId];
+    if (!det || !det.center) return null;
+    if (!isPointInSurface(det.center.x, det.center.y)) return null;
+    return projectDetectionToMapLatLng(det);
+  }
+
   function collectShortestPathEndpointsForTagIds(detById, tagAId, tagBId) {
     if (!isFinite(tagAId) || !isFinite(tagBId) || tagAId === tagBId) return null;
     var detA = detById[tagAId];
@@ -1517,6 +1544,48 @@ export function initApp() {
       if (!d || !d.center) continue;
       var id = typeof d.id === 'number' ? d.id : parseInt(d.id, 10);
       if (isFinite(id)) detById[id] = d;
+    }
+
+    // Stage 4: drive isovist from configured Isovist tag.
+    if (state.stage === 4) {
+      var isovistTagId = dom.isovistTagSelectEl.value ? parseInt(dom.isovistTagSelectEl.value, 10) : null;
+      if (!isFinite(isovistTagId)) {
+        if (isovistTagRuntime.configuredTagId !== null || isovistTagRuntime.lastOrigin) {
+          isovistTagRuntime.configuredTagId = null;
+          resetIsovistTagRuntime(true);
+        }
+      } else {
+        if (isovistTagRuntime.configuredTagId !== isovistTagId) {
+          isovistTagRuntime.configuredTagId = isovistTagId;
+          resetIsovistTagRuntime(true);
+        }
+
+        var isovistNowMs = performance.now();
+        var isovistOrigin = collectIsovistOriginForTagId(detById, isovistTagId);
+        if (!isovistOrigin) {
+          if (!isovistTagRuntime.missingSinceMs) {
+            isovistTagRuntime.missingSinceMs = isovistNowMs;
+          }
+          if (isovistTagRuntime.lastOrigin &&
+              (isovistNowMs - isovistTagRuntime.missingSinceMs) >= ISOVIST_MISSING_HOLD_MS) {
+            resetIsovistTagRuntime(true);
+            isovistTagRuntime.configuredTagId = isovistTagId;
+          }
+        } else {
+          isovistTagRuntime.missingSinceMs = 0;
+          var isovistFirst = !isovistTagRuntime.lastOrigin;
+          var isovistMoved = shortestPathDistanceMeters(isovistOrigin, isovistTagRuntime.lastOrigin);
+          var isovistIntervalOk = (isovistNowMs - isovistTagRuntime.lastUpdateAtMs) >= ISOVIST_MIN_UPDATE_INTERVAL_MS;
+          if (isovistFirst || (isovistMoved >= ISOVIST_JITTER_METERS && isovistIntervalOk)) {
+            setStage4IsovistOrigin(isovistOrigin);
+            isovistTagRuntime.lastOrigin = cloneShortestPathLatLng(isovistOrigin);
+            isovistTagRuntime.lastUpdateAtMs = isovistNowMs;
+          }
+        }
+      }
+    } else if (isovistTagRuntime.configuredTagId !== null || isovistTagRuntime.lastOrigin) {
+      isovistTagRuntime.configuredTagId = null;
+      resetIsovistTagRuntime(true);
     }
 
     // Process shortest-path tags in Stage 3 and Stage 4.

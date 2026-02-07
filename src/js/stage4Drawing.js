@@ -1056,6 +1056,14 @@ function renderStage4IsovistAtLatLng(latlng) {
   }).addTo(state.stage4IsovistLayer);
 }
 
+export function setStage4IsovistOrigin(latlng) {
+  renderStage4IsovistAtLatLng(latlng);
+}
+
+export function clearStage4IsovistOverlay() {
+  clearStage4Isovist();
+}
+
 function handleStage4MapCtrlClickForIsovist(e) {
   if (state.stage !== 4 || state.viewMode !== 'map') return;
   if (!state.leafletMap || !state.stage4IsovistLayer) return;
