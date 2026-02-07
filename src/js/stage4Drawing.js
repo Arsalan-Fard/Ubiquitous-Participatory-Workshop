@@ -14,6 +14,16 @@ var handDrawStates = {};
 // Sticker mapping sync loop (Stage 3/4 map view)
 var stickerSyncRafId = 0;
 var nextStrokeId = 1;
+var OSRM_ROUTE_BASE_URL = 'https://router.project-osrm.org/route/v1/driving/';
+
+var stage4RouteState = {
+  start: null,
+  end: null,
+  startMarker: null,
+  endMarker: null,
+  routeLine: null,
+  requestId: 0
+};
 
 // Get or create drawing state for a pointer
 function getHandDrawState(pointerId) {
@@ -449,6 +459,177 @@ export function startDrawingAtPoint(pointerId, clientX, clientY) {
   hs.activeStroke = { latlngs: latlngs, glow: glow, main: main };
 }
 
+function cloneLatLng(latlng) {
+  if (!latlng) return null;
+  var lat = typeof latlng.lat === 'number' ? latlng.lat : parseFloat(latlng.lat);
+  var lng = typeof latlng.lng === 'number' ? latlng.lng : parseFloat(latlng.lng);
+  if (!isFinite(lat) || !isFinite(lng)) return null;
+  return { lat: lat, lng: lng };
+}
+
+function removeLayerFromRouteLayer(layer) {
+  if (!layer || !state.stage4RouteLayer) return;
+  try {
+    state.stage4RouteLayer.removeLayer(layer);
+  } catch (err) { /* ignore */ }
+}
+
+function clearStage4RouteLine() {
+  if (stage4RouteState.routeLine) {
+    removeLayerFromRouteLayer(stage4RouteState.routeLine);
+    stage4RouteState.routeLine = null;
+  }
+}
+
+function clearStage4RouteSelection() {
+  clearStage4RouteLine();
+  if (stage4RouteState.startMarker) {
+    removeLayerFromRouteLayer(stage4RouteState.startMarker);
+    stage4RouteState.startMarker = null;
+  }
+  if (stage4RouteState.endMarker) {
+    removeLayerFromRouteLayer(stage4RouteState.endMarker);
+    stage4RouteState.endMarker = null;
+  }
+  stage4RouteState.start = null;
+  stage4RouteState.end = null;
+}
+
+function upsertStage4RouteMarker(key, latlng) {
+  if (!state.stage4RouteLayer || !state.leafletGlobal) return;
+  var L = state.leafletGlobal;
+  var normalized = cloneLatLng(latlng);
+  if (!normalized) return;
+
+  if (key === 'start') {
+    if (stage4RouteState.startMarker) removeLayerFromRouteLayer(stage4RouteState.startMarker);
+    stage4RouteState.startMarker = L.circleMarker([normalized.lat, normalized.lng], {
+      radius: 7,
+      color: '#ffffff',
+      weight: 2,
+      fillColor: '#2ec27e',
+      fillOpacity: 1,
+      interactive: false
+    }).addTo(state.stage4RouteLayer);
+    stage4RouteState.start = normalized;
+    return;
+  }
+
+  if (key === 'end') {
+    if (stage4RouteState.endMarker) removeLayerFromRouteLayer(stage4RouteState.endMarker);
+    stage4RouteState.endMarker = L.circleMarker([normalized.lat, normalized.lng], {
+      radius: 7,
+      color: '#ffffff',
+      weight: 2,
+      fillColor: '#ff5a5f',
+      fillOpacity: 1,
+      interactive: false
+    }).addTo(state.stage4RouteLayer);
+    stage4RouteState.end = normalized;
+  }
+}
+
+function buildOsrmRouteUrl(startLatLng, endLatLng) {
+  var start = cloneLatLng(startLatLng);
+  var end = cloneLatLng(endLatLng);
+  if (!start || !end) return null;
+  var startCoord = start.lng + ',' + start.lat;
+  var endCoord = end.lng + ',' + end.lat;
+  return OSRM_ROUTE_BASE_URL + startCoord + ';' + endCoord + '?overview=full&geometries=geojson&steps=false';
+}
+
+function renderStage4ShortestPath(routeLatLngs, distanceMeters, durationSeconds) {
+  if (!state.stage4RouteLayer || !state.leafletGlobal) return;
+  var L = state.leafletGlobal;
+  clearStage4RouteLine();
+
+  if (!Array.isArray(routeLatLngs) || routeLatLngs.length < 2) return;
+
+  stage4RouteState.routeLine = L.polyline(routeLatLngs, {
+    color: '#ff2d55',
+    weight: 6,
+    opacity: 0.95,
+    lineCap: 'round',
+    lineJoin: 'round',
+    interactive: false
+  }).addTo(state.stage4RouteLayer);
+
+  var distKm = isFinite(distanceMeters) ? (distanceMeters / 1000) : NaN;
+  var durationMin = isFinite(durationSeconds) ? (durationSeconds / 60) : NaN;
+  if (isFinite(distKm) && isFinite(durationMin)) {
+    var routeSummary = distKm.toFixed(2) + ' km | ' + Math.round(durationMin) + ' min';
+    if (stage4RouteState.endMarker && typeof stage4RouteState.endMarker.bindTooltip === 'function') {
+      stage4RouteState.endMarker.bindTooltip(routeSummary, {
+        permanent: false,
+        direction: 'top',
+        opacity: 0.95
+      });
+      if (typeof stage4RouteState.endMarker.openTooltip === 'function') {
+        stage4RouteState.endMarker.openTooltip();
+      }
+    }
+  }
+}
+
+function requestStage4ShortestPath(startLatLng, endLatLng, requestId) {
+  var url = buildOsrmRouteUrl(startLatLng, endLatLng);
+  if (!url) return;
+
+  fetch(url, { cache: 'no-store' }).then(function(resp) {
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    return resp.json();
+  }).then(function(payload) {
+    if (requestId !== stage4RouteState.requestId) return;
+    if (!payload || payload.code !== 'Ok' || !Array.isArray(payload.routes) || payload.routes.length < 1) {
+      throw new Error('No route found');
+    }
+    var firstRoute = payload.routes[0];
+    var geometry = firstRoute && firstRoute.geometry ? firstRoute.geometry : null;
+    var coords = geometry && Array.isArray(geometry.coordinates) ? geometry.coordinates : null;
+    if (!coords || coords.length < 2) throw new Error('Invalid route geometry');
+
+    var latlngs = [];
+    for (var i = 0; i < coords.length; i++) {
+      var pair = coords[i];
+      if (!Array.isArray(pair) || pair.length < 2) continue;
+      var lng = parseFloat(pair[0]);
+      var lat = parseFloat(pair[1]);
+      if (!isFinite(lat) || !isFinite(lng)) continue;
+      latlngs.push([lat, lng]);
+    }
+    if (latlngs.length < 2) throw new Error('Route geometry is empty');
+
+    renderStage4ShortestPath(latlngs, firstRoute.distance, firstRoute.duration);
+  }).catch(function(err) {
+    if (requestId !== stage4RouteState.requestId) return;
+    clearStage4RouteLine();
+    console.warn('Stage 4 shortest-path request failed:', err);
+  });
+}
+
+function handleStage4MapCtrlClickForShortestPath(e) {
+  if (state.stage !== 4 || state.viewMode !== 'map') return;
+  if (!state.leafletMap || !state.stage4RouteLayer) return;
+  if (!e || !e.latlng) return;
+  var originalEvent = e.originalEvent;
+  var isCtrlClick = !!(originalEvent && (originalEvent.ctrlKey || originalEvent.metaKey));
+  if (!isCtrlClick) return;
+  if (originalEvent && typeof originalEvent.preventDefault === 'function') originalEvent.preventDefault();
+  if (originalEvent && typeof originalEvent.stopPropagation === 'function') originalEvent.stopPropagation();
+
+  if (!stage4RouteState.start || stage4RouteState.end) {
+    stage4RouteState.requestId++;
+    clearStage4RouteSelection();
+    upsertStage4RouteMarker('start', e.latlng);
+    return;
+  }
+
+  upsertStage4RouteMarker('end', e.latlng);
+  clearStage4RouteLine();
+  stage4RouteState.requestId++;
+  requestStage4ShortestPath(stage4RouteState.start, stage4RouteState.end, stage4RouteState.requestId);
+}
+
 function distancePointToSegmentPx(px, py, x1, y1, x2, y2) {
   var dx = x2 - x1;
   var dy = y2 - y1;
@@ -678,7 +859,12 @@ export function initLeafletIfNeeded() {
 
   if (typeof L !== 'undefined') {
     state.stage4DrawLayer = L.layerGroup().addTo(state.leafletMap);
+    state.stage4RouteLayer = L.layerGroup().addTo(state.leafletMap);
   }
+
+  stage4RouteState.requestId++;
+  clearStage4RouteSelection();
+  state.leafletMap.on('click', handleStage4MapCtrlClickForShortestPath);
 
   if (state.leafletMap) state.leafletMap.invalidateSize();
   updateStickerMappingForCurrentView();

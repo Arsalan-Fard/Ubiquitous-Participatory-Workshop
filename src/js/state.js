@@ -79,6 +79,7 @@ export var state = {
   stage4LastDrawContainerPt: null,
   stage4ActiveStroke: null,
   stage4DrawLayer: null,
+  stage4RouteLayer: null,
 
   // Stage 3 participant setup (AprilTags)
   stage3ParticipantCount: 0,
