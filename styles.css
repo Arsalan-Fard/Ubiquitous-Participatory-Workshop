@@ -328,9 +328,9 @@ h1 {
     position: relative;
     display: inline-block;
     width: 100%;
-    max-width: 640px;
+    max-width: 920px;
     flex: 1 1 auto;
-    min-width: 300px;
+    min-width: 340px;
 }
 
 .video-container-label {
@@ -1580,7 +1580,7 @@ body.vga-mode-active #leafletMap {
 .ui-setup-overlay {
     position: fixed;
     inset: 0;
-    z-index: 66;
+    z-index: 96;
     pointer-events: none;
 }
 
