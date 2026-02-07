@@ -1405,7 +1405,7 @@ export function cloneSticker(templateEl) {
     var dotEl = document.createElement('div');
     dotEl.className = 'ui-dot ui-sticker-instance';
     dotEl.dataset.uiType = 'dot';
-    dotEl.dataset.color = templateEl.dataset && templateEl.dataset.color ? templateEl.dataset.color : (templateEl.style.background || '#ff3b30');
+    dotEl.dataset.color = templateEl.dataset && templateEl.dataset.color ? templateEl.dataset.color : (templateEl.style.background || '#2bb8ff');
     if (sessionId) dotEl.dataset.sessionId = String(sessionId);
     dotEl.style.background = dotEl.dataset.color;
     dotEl.style.left = templateEl.style.left || '0px';
@@ -1420,7 +1420,7 @@ export function cloneSticker(templateEl) {
     noteEl.dataset.uiType = 'note';
     noteEl.dataset.expanded = 'false';
     noteEl.dataset.noteText = (templateEl.dataset && templateEl.dataset.noteText) ? templateEl.dataset.noteText : '';
-    noteEl.dataset.color = templateEl.dataset && templateEl.dataset.color ? templateEl.dataset.color : (templateEl.style.background || '#ffc857');
+    noteEl.dataset.color = templateEl.dataset && templateEl.dataset.color ? templateEl.dataset.color : (templateEl.style.background || '#2bb8ff');
     if (sessionId) noteEl.dataset.sessionId = String(sessionId);
     noteEl.style.background = noteEl.dataset.color;
     noteEl.style.left = templateEl.style.left || '0px';

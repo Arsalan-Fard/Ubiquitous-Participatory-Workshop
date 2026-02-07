@@ -15,9 +15,10 @@ export function initUiSetup(options) {
   panelEl.textContent = '';
   if (actionsHostEl) actionsHostEl.textContent = '';
 
-  var currentColor = '#ff3b30';
-  var currentDrawColor = '#2bb8ff';
-  var currentNoteColor = '#ffc857';
+  var defaultItemColor = '#2bb8ff';
+  var currentColor = defaultItemColor;
+  var currentDrawColor = defaultItemColor;
+  var currentNoteColor = defaultItemColor;
 
   var participantsRowEl = document.createElement('div');
   participantsRowEl.className = 'ui-setup-row';
@@ -255,8 +256,12 @@ export function initUiSetup(options) {
   noteColorInputEl.setAttribute('aria-label', 'Pick annotation color');
 
   var noteSwatchEl = document.createElement('div');
-  noteSwatchEl.className = 'ui-color-swatch';
+  noteSwatchEl.className = 'ui-note-swatch';
   noteSwatchEl.style.background = currentNoteColor;
+  var noteSwatchIconEl = document.createElement('div');
+  noteSwatchIconEl.className = 'ui-note-swatch__icon';
+  noteSwatchIconEl.textContent = '\ud83d\udcdd';
+  noteSwatchEl.appendChild(noteSwatchIconEl);
   noteSwatchEl.appendChild(noteColorInputEl);
 
   var addNoteBtn = document.createElement('button');
@@ -265,19 +270,10 @@ export function initUiSetup(options) {
   addNoteBtn.textContent = '+';
   addNoteBtn.setAttribute('aria-label', 'Add note annotation');
 
-  var eraserSwatchEl = document.createElement('div');
-  eraserSwatchEl.className = 'ui-draw-swatch ui-eraser-swatch';
-  eraserSwatchEl.setAttribute('aria-hidden', 'true');
-
-  var eraserIconEl = document.createElement('div');
-  eraserIconEl.className = 'ui-eraser-swatch__icon';
-  eraserIconEl.textContent = '\u232B';
-  eraserSwatchEl.appendChild(eraserIconEl);
-
   var addEraserBtn = document.createElement('button');
-  addEraserBtn.className = 'ui-setup-add-btn';
+  addEraserBtn.className = 'ui-setup-add-btn ui-setup-add-btn--eraser';
   addEraserBtn.type = 'button';
-  addEraserBtn.textContent = '+';
+  addEraserBtn.textContent = 'Eraser';
   addEraserBtn.setAttribute('aria-label', 'Add eraser');
 
   var controlsRow = document.createElement('div');
@@ -288,7 +284,6 @@ export function initUiSetup(options) {
   controlsRow.appendChild(addDrawBtn);
   controlsRow.appendChild(noteSwatchEl);
   controlsRow.appendChild(addNoteBtn);
-  controlsRow.appendChild(eraserSwatchEl);
   controlsRow.appendChild(addEraserBtn);
   panelEl.appendChild(controlsRow);
 
@@ -542,9 +537,9 @@ export function initUiSetup(options) {
   }
 
   function positionEraserAboveButton(eraserEl) {
-    var swatchRect = eraserSwatchEl.getBoundingClientRect();
-    var x = swatchRect.left + swatchRect.width / 2;
-    var y = swatchRect.top;
+    var btnRect = addEraserBtn.getBoundingClientRect();
+    var x = btnRect.left + btnRect.width / 2;
+    var y = btnRect.top;
 
     eraserEl.style.left = '0px';
     eraserEl.style.top = '0px';
@@ -699,7 +694,7 @@ export function initUiSetup(options) {
       } else if (type === 'dot') {
         items.push({
           type: 'dot',
-          color: el.dataset.color || '#ff3b30',
+          color: el.dataset.color || defaultItemColor,
           x: left,
           y: top,
           sessionId: normalizeSessionId(el.dataset.sessionId)
@@ -707,7 +702,7 @@ export function initUiSetup(options) {
       } else if (type === 'draw') {
         items.push({
           type: 'draw',
-          color: el.dataset.color || '#2bb8ff',
+          color: el.dataset.color || defaultItemColor,
           x: left,
           y: top,
           sessionId: normalizeSessionId(el.dataset.sessionId)
@@ -716,7 +711,7 @@ export function initUiSetup(options) {
         items.push({
           type: 'note',
           text: el.dataset.noteText || '',
-          color: el.dataset.color || '#ffc857',
+          color: el.dataset.color || defaultItemColor,
           x: left,
           y: top,
           sessionId: normalizeSessionId(el.dataset.sessionId)
@@ -805,7 +800,7 @@ export function initUiSetup(options) {
         var dotEl = document.createElement('div');
         dotEl.className = 'ui-dot';
         dotEl.dataset.uiType = 'dot';
-        dotEl.dataset.color = String(item.color || '#ff3b30');
+        dotEl.dataset.color = String(item.color || defaultItemColor);
         dotEl.style.background = dotEl.dataset.color;
         dotEl.style.left = String(item.x || 0) + 'px';
         dotEl.style.top = String(item.y || 0) + 'px';
@@ -821,7 +816,7 @@ export function initUiSetup(options) {
         drawEl.width = 48;
         drawEl.height = 48;
         drawEl.dataset.uiType = 'draw';
-        drawEl.dataset.color = String(item.color || '#2bb8ff');
+        drawEl.dataset.color = String(item.color || defaultItemColor);
         drawEl.style.left = String(item.x || 0) + 'px';
         drawEl.style.top = String(item.y || 0) + 'px';
         assignImportedSessionId(drawEl, item.sessionId);
@@ -837,7 +832,7 @@ export function initUiSetup(options) {
         noteEl.dataset.uiType = 'note';
         noteEl.dataset.expanded = 'false';
         noteEl.dataset.noteText = String(item.text || '');
-        noteEl.dataset.color = String(item.color || '#ffc857');
+        noteEl.dataset.color = String(item.color || defaultItemColor);
         noteEl.style.background = noteEl.dataset.color;
         noteEl.style.left = String(item.x || 0) + 'px';
         noteEl.style.top = String(item.y || 0) + 'px';

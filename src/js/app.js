@@ -816,6 +816,10 @@ export function initApp() {
       (function(sessionId) {
         item.addEventListener('click', function(e) {
           if (e.target === deleteBtn) return;
+          if (state.currentMapSessionId !== null && String(state.currentMapSessionId) === String(sessionId)) {
+            clearActiveMapSessionSelection();
+            return;
+          }
           restoreMapSession(sessionId);
         });
 
@@ -830,6 +834,14 @@ export function initApp() {
       item.appendChild(deleteBtn);
       dom.mapSessionListEl.appendChild(item);
     }
+    updateMapSessionListHighlight();
+  }
+
+  function clearActiveMapSessionSelection() {
+    state.currentMapSessionId = null;
+    currentMapSessionIndex = -1;
+    filterElementsBySession(null);
+    updateMapSessionListHighlight();
   }
 
   function restoreMapSession(sessionId) {
@@ -842,17 +854,35 @@ export function initApp() {
   }
 
   function deleteMapSession(sessionId) {
+    var removedIndex = -1;
     for (var i = 0; i < mapSessions.length; i++) {
       if (mapSessions[i].id === sessionId) {
+        removedIndex = i;
         mapSessions.splice(i, 1);
         break;
       }
     }
-    // Adjust current index if needed
+    if (removedIndex === -1) return;
+
+    if (currentMapSessionIndex === removedIndex || (state.currentMapSessionId !== null && String(state.currentMapSessionId) === String(sessionId))) {
+      currentMapSessionIndex = -1;
+      state.currentMapSessionId = null;
+    } else if (currentMapSessionIndex > removedIndex) {
+      currentMapSessionIndex -= 1;
+    }
+
     if (currentMapSessionIndex >= mapSessions.length) {
       currentMapSessionIndex = mapSessions.length - 1;
     }
+
+    if (currentMapSessionIndex >= 0 && mapSessions[currentMapSessionIndex]) {
+      state.currentMapSessionId = mapSessions[currentMapSessionIndex].id;
+    } else {
+      state.currentMapSessionId = null;
+    }
+
     renderMapSessionList();
+    filterElementsBySession(state.currentMapSessionId || null);
   }
 
   function goToNextMapSession() {
@@ -1473,8 +1503,7 @@ export function initApp() {
 
   function activateMapSession(index) {
     if (index < 0 || index >= mapSessions.length) {
-      state.currentMapSessionId = null;
-      filterElementsBySession(null);
+      clearActiveMapSessionSelection();
       return;
     }
     var session = mapSessions[index];
@@ -1521,10 +1550,13 @@ export function initApp() {
 
   function updateMapSessionListHighlight() {
     var items = dom.mapSessionListEl.querySelectorAll('.map-session-item');
+    var activeSessionId = state.currentMapSessionId !== null && state.currentMapSessionId !== undefined
+      ? String(state.currentMapSessionId)
+      : '';
     for (var i = 0; i < items.length; i++) {
       var item = items[i];
-      var itemId = parseInt(item.dataset.sessionId, 10);
-      var isActive = mapSessions[currentMapSessionIndex] && mapSessions[currentMapSessionIndex].id === itemId;
+      var itemId = String(item.dataset.sessionId || '');
+      var isActive = !!activeSessionId && itemId === activeSessionId;
       item.classList.toggle('map-session-item--active', isActive);
     }
   }
