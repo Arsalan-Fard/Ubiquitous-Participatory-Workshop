@@ -495,6 +495,11 @@ function clearStage4RouteSelection() {
   stage4RouteState.end = null;
 }
 
+export function clearStage4ShortestPath() {
+  stage4RouteState.requestId++;
+  clearStage4RouteSelection();
+}
+
 function upsertStage4RouteMarker(key, latlng) {
   if (!state.stage4RouteLayer || !state.leafletGlobal) return;
   var L = state.leafletGlobal;
@@ -607,6 +612,19 @@ function requestStage4ShortestPath(startLatLng, endLatLng, requestId) {
   });
 }
 
+export function setStage4ShortestPathEndpoints(startLatLng, endLatLng) {
+  var start = cloneLatLng(startLatLng);
+  var end = cloneLatLng(endLatLng);
+  if (!start || !end) return;
+  if (!state.leafletMap || !state.stage4RouteLayer) return;
+
+  stage4RouteState.requestId++;
+  clearStage4RouteSelection();
+  upsertStage4RouteMarker('start', start);
+  upsertStage4RouteMarker('end', end);
+  requestStage4ShortestPath(start, end, stage4RouteState.requestId);
+}
+
 function handleStage4MapCtrlClickForShortestPath(e) {
   if (state.stage !== 4 || state.viewMode !== 'map') return;
   if (!state.leafletMap || !state.stage4RouteLayer) return;
@@ -618,16 +636,12 @@ function handleStage4MapCtrlClickForShortestPath(e) {
   if (originalEvent && typeof originalEvent.stopPropagation === 'function') originalEvent.stopPropagation();
 
   if (!stage4RouteState.start || stage4RouteState.end) {
-    stage4RouteState.requestId++;
-    clearStage4RouteSelection();
+    clearStage4ShortestPath();
     upsertStage4RouteMarker('start', e.latlng);
     return;
   }
 
-  upsertStage4RouteMarker('end', e.latlng);
-  clearStage4RouteLine();
-  stage4RouteState.requestId++;
-  requestStage4ShortestPath(stage4RouteState.start, stage4RouteState.end, stage4RouteState.requestId);
+  setStage4ShortestPathEndpoints(stage4RouteState.start, e.latlng);
 }
 
 function distancePointToSegmentPx(px, py, x1, y1, x2, y2) {
@@ -862,8 +876,7 @@ export function initLeafletIfNeeded() {
     state.stage4RouteLayer = L.layerGroup().addTo(state.leafletMap);
   }
 
-  stage4RouteState.requestId++;
-  clearStage4RouteSelection();
+  clearStage4ShortestPath();
   state.leafletMap.on('click', handleStage4MapCtrlClickForShortestPath);
 
   if (state.leafletMap) state.leafletMap.invalidateSize();

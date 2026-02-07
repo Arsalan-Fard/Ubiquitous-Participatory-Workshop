@@ -40,7 +40,9 @@ import {
   updateStickerMappingForCurrentView,
   cloneSticker,
   startStickerDrag,
-  filterPolylinesBySession
+  filterPolylinesBySession,
+  setStage4ShortestPathEndpoints,
+  clearStage4ShortestPath
 } from './stage4Drawing.js';
 
 var BACKEND_CAMERA_FEED_URL = '/video_feed';
@@ -348,7 +350,8 @@ export function initApp() {
   // Populate tool tag selects with AprilTags 21-40
   var toolTagSelects = [
     dom.isovistTagSelectEl,
-    dom.shortestPathTagSelectEl,
+    dom.shortestPathTagASelectEl,
+    dom.shortestPathTagBSelectEl,
     dom.panTagSelectEl,
     dom.zoomTagSelectEl,
     dom.nextTagSelectEl,
@@ -656,6 +659,17 @@ export function initApp() {
 
   // Tool tag detection state (for edge-triggered actions)
   var toolTagInSurface = {}; // tagId -> boolean (was in surface last frame)
+  var SHORTEST_PATH_JITTER_METERS = 3;
+  var SHORTEST_PATH_MIN_REQUEST_INTERVAL_MS = 1200;
+  var SHORTEST_PATH_MISSING_HOLD_MS = 800;
+  var shortestPathTagRuntime = {
+    configuredTagAId: null,
+    configuredTagBId: null,
+    lastEndpointA: null,
+    lastEndpointB: null,
+    lastRequestAtMs: 0,
+    missingSinceMs: 0
+  };
 
   dom.mapSessionAddBtnEl.addEventListener('click', function(e) {
     e.preventDefault();
@@ -883,7 +897,8 @@ export function initApp() {
       participantTriggerTagIds: Array.isArray(state.stage3ParticipantTriggerTagIds) ? state.stage3ParticipantTriggerTagIds.slice() : [],
       toolTagBindings: {
         isovist: dom.isovistTagSelectEl.value || null,
-        shortestPath: dom.shortestPathTagSelectEl.value || null,
+        shortestPathA: dom.shortestPathTagASelectEl.value || null,
+        shortestPathB: dom.shortestPathTagBSelectEl.value || null,
         pan: dom.panTagSelectEl.value || null,
         zoom: dom.zoomTagSelectEl.value || null,
         next: dom.nextTagSelectEl.value || null,
@@ -1421,6 +1436,74 @@ export function initApp() {
     return uv.x >= 0 && uv.x <= 1 && uv.y >= 0 && uv.y <= 1;
   }
 
+  function cloneShortestPathLatLng(latlng) {
+    if (!latlng) return null;
+    var lat = typeof latlng.lat === 'number' ? latlng.lat : parseFloat(latlng.lat);
+    var lng = typeof latlng.lng === 'number' ? latlng.lng : parseFloat(latlng.lng);
+    if (!isFinite(lat) || !isFinite(lng)) return null;
+    return { lat: lat, lng: lng };
+  }
+
+  function shortestPathDistanceMeters(a, b) {
+    if (!a || !b) return Infinity;
+    var lat1 = a.lat * Math.PI / 180;
+    var lat2 = b.lat * Math.PI / 180;
+    var dLat = (b.lat - a.lat) * Math.PI / 180;
+    var dLng = (b.lng - a.lng) * Math.PI / 180;
+    var sinLat = Math.sin(dLat / 2);
+    var sinLng = Math.sin(dLng / 2);
+    var hav = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLng * sinLng;
+    var c = 2 * Math.atan2(Math.sqrt(hav), Math.sqrt(Math.max(0, 1 - hav)));
+    return 6371000 * c;
+  }
+
+  function resetShortestPathTagRuntime(clearRoute) {
+    shortestPathTagRuntime.lastEndpointA = null;
+    shortestPathTagRuntime.lastEndpointB = null;
+    shortestPathTagRuntime.lastRequestAtMs = 0;
+    shortestPathTagRuntime.missingSinceMs = 0;
+    if (clearRoute) clearStage4ShortestPath();
+  }
+
+  function projectDetectionToMapLatLng(det) {
+    if (!det || !det.center) return null;
+    if (!state.surfaceHomography || !state.leafletMap) return null;
+
+    var mapW = dom.mapWarpEl.offsetWidth;
+    var mapH = dom.mapWarpEl.offsetHeight;
+    if (!mapW || !mapH) return null;
+
+    var uv = applyHomography(state.surfaceHomography, det.center.x, det.center.y);
+    if (!uv) return null;
+    if (uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1) return null;
+
+    var containerX = uv.x * mapW;
+    var containerY = uv.y * mapH;
+    var pt = state.leafletGlobal && state.leafletGlobal.point
+      ? state.leafletGlobal.point(containerX, containerY)
+      : { x: containerX, y: containerY };
+
+    try {
+      return cloneShortestPathLatLng(state.leafletMap.containerPointToLatLng(pt));
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function collectShortestPathEndpointsForTagIds(detById, tagAId, tagBId) {
+    if (!isFinite(tagAId) || !isFinite(tagBId) || tagAId === tagBId) return null;
+    var detA = detById[tagAId];
+    var detB = detById[tagBId];
+    if (!detA || !detA.center || !detB || !detB.center) return null;
+    if (!isPointInSurface(detA.center.x, detA.center.y)) return null;
+    if (!isPointInSurface(detB.center.x, detB.center.y)) return null;
+
+    var pointA = projectDetectionToMapLatLng(detA);
+    var pointB = projectDetectionToMapLatLng(detB);
+    if (!pointA || !pointB) return null;
+    return { a: pointA, b: pointB };
+  }
+
   // Process tool tags for edge-triggered actions (called each frame)
   function processToolTagActions(detections) {
     if (!detections || !Array.isArray(detections)) return;
@@ -1434,6 +1517,61 @@ export function initApp() {
       if (!d || !d.center) continue;
       var id = typeof d.id === 'number' ? d.id : parseInt(d.id, 10);
       if (isFinite(id)) detById[id] = d;
+    }
+
+    // Process shortest-path tags in Stage 3 and Stage 4.
+    if (state.stage === 3 || state.stage === 4) {
+      var shortestPathTagAId = dom.shortestPathTagASelectEl.value ? parseInt(dom.shortestPathTagASelectEl.value, 10) : null;
+      var shortestPathTagBId = dom.shortestPathTagBSelectEl.value ? parseInt(dom.shortestPathTagBSelectEl.value, 10) : null;
+      var shortestPathPairValid = isFinite(shortestPathTagAId) && isFinite(shortestPathTagBId) && shortestPathTagAId !== shortestPathTagBId;
+
+      if (!shortestPathPairValid) {
+        if (shortestPathTagRuntime.configuredTagAId !== null ||
+            shortestPathTagRuntime.configuredTagBId !== null ||
+            shortestPathTagRuntime.lastEndpointA ||
+            shortestPathTagRuntime.lastEndpointB) {
+          shortestPathTagRuntime.configuredTagAId = null;
+          shortestPathTagRuntime.configuredTagBId = null;
+          resetShortestPathTagRuntime(true);
+        }
+      } else {
+        if (shortestPathTagRuntime.configuredTagAId !== shortestPathTagAId ||
+            shortestPathTagRuntime.configuredTagBId !== shortestPathTagBId) {
+          shortestPathTagRuntime.configuredTagAId = shortestPathTagAId;
+          shortestPathTagRuntime.configuredTagBId = shortestPathTagBId;
+          resetShortestPathTagRuntime(true);
+        }
+
+        var nowMs = performance.now();
+        var endpoints = collectShortestPathEndpointsForTagIds(detById, shortestPathTagAId, shortestPathTagBId);
+        if (!endpoints) {
+          if (!shortestPathTagRuntime.missingSinceMs) {
+            shortestPathTagRuntime.missingSinceMs = nowMs;
+          }
+          if (shortestPathTagRuntime.lastEndpointA &&
+              shortestPathTagRuntime.lastEndpointB &&
+              (nowMs - shortestPathTagRuntime.missingSinceMs) >= SHORTEST_PATH_MISSING_HOLD_MS) {
+            resetShortestPathTagRuntime(true);
+            shortestPathTagRuntime.configuredTagAId = shortestPathTagAId;
+            shortestPathTagRuntime.configuredTagBId = shortestPathTagBId;
+          }
+        } else {
+          shortestPathTagRuntime.missingSinceMs = 0;
+
+          var firstRequest = !shortestPathTagRuntime.lastEndpointA || !shortestPathTagRuntime.lastEndpointB;
+          var movedA = shortestPathDistanceMeters(endpoints.a, shortestPathTagRuntime.lastEndpointA);
+          var movedB = shortestPathDistanceMeters(endpoints.b, shortestPathTagRuntime.lastEndpointB);
+          var movedEnough = movedA >= SHORTEST_PATH_JITTER_METERS || movedB >= SHORTEST_PATH_JITTER_METERS;
+          var intervalOk = (nowMs - shortestPathTagRuntime.lastRequestAtMs) >= SHORTEST_PATH_MIN_REQUEST_INTERVAL_MS;
+
+          if (firstRequest || (movedEnough && intervalOk)) {
+            setStage4ShortestPathEndpoints(endpoints.a, endpoints.b);
+            shortestPathTagRuntime.lastEndpointA = cloneShortestPathLatLng(endpoints.a);
+            shortestPathTagRuntime.lastEndpointB = cloneShortestPathLatLng(endpoints.b);
+            shortestPathTagRuntime.lastRequestAtMs = nowMs;
+          }
+        }
+      }
     }
 
     // Get selected tag IDs for next/back
