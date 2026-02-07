@@ -1046,6 +1046,88 @@ h1 {
     font-size: 14px;
 }
 
+.vga-mode-panel {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 1200;
+    min-width: 220px;
+    padding: 12px;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.68);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    backdrop-filter: blur(10px);
+    color: #fff;
+}
+
+.vga-mode-panel__title {
+    font-size: 14px;
+    font-weight: 800;
+}
+
+.vga-mode-panel__hint {
+    margin-top: 4px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.vga-mode-panel__meta {
+    margin-top: 8px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.88);
+}
+
+.vga-mode-panel__status {
+    margin-top: 8px;
+    font-size: 12px;
+    min-height: 16px;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.vga-mode-panel__actions {
+    margin-top: 10px;
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.vga-mode-panel__actions .btn {
+    margin: 0;
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+body.vga-mode-active .container > * {
+    display: none !important;
+}
+
+body.vga-mode-active .container > #mapView {
+    display: block !important;
+}
+
+body.vga-mode-active #mapView > * {
+    display: none !important;
+}
+
+body.vga-mode-active #mapView > #mapWarp,
+body.vga-mode-active #mapView > #vgaModePanel {
+    display: block !important;
+}
+
+body.vga-mode-active #vgaModePanel {
+    display: block !important;
+}
+
+body.vga-mode-active #mapFingerDots,
+body.vga-mode-active #mapApriltagDots,
+body.vga-mode-active #mapTagMasks {
+    display: none !important;
+}
+
+body.vga-mode-active #leafletMap {
+    cursor: crosshair;
+}
+
 .map-tag-masks {
     position: absolute;
     inset: 0;

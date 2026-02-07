@@ -44,7 +44,8 @@ import {
   setStage4ShortestPathEndpoints,
   clearStage4ShortestPath,
   setStage4IsovistOrigin,
-  clearStage4IsovistOverlay
+  clearStage4IsovistOverlay,
+  computeStage4IsovistScore
 } from './stage4Drawing.js';
 
 var BACKEND_CAMERA_FEED_URL = '/video_feed';
@@ -97,6 +98,11 @@ export function initApp() {
   dom.resultsPrevBtnEl.addEventListener('click', showPrevResultsMapView);
   dom.resultsNextBtnEl.addEventListener('click', showNextResultsMapView);
   dom.resultsExitBtnEl.addEventListener('click', exitResultsMode);
+  dom.vgaModeBtnEl.addEventListener('click', onVgaModeBtnClicked);
+  dom.vgaApplyBtnEl.addEventListener('click', onVgaApplyClicked);
+  dom.vgaBackBtnEl.addEventListener('click', function() {
+    setVgaMode(false);
+  });
 
   // Surface corner buttons
   dom.surfaceBtn1.addEventListener('click', function() { armCorner(0, setViewMode); });
@@ -120,6 +126,10 @@ export function initApp() {
 
   document.addEventListener('keydown', function(e) {
     if (e.key !== 'Escape') return;
+    if (vgaModeActive) {
+      setVgaMode(false);
+      return;
+    }
     if (resultsModeActive) {
       exitResultsMode();
       return;
@@ -267,6 +277,7 @@ export function initApp() {
   updateShowResultsButton();
   setResultsViewerVisible(false);
   closeResultsModal();
+  setVgaPanelVisible(false);
 
   // Gesture control sliders
   dom.holdStillThresholdSliderEl.value = String(Math.round(state.holdStillThresholdPx));
@@ -658,6 +669,18 @@ export function initApp() {
   var resultsMapViews = [];
   var resultsMapViewIndex = 0;
   var resultsLayerGroup = null;
+  var VGA_REQUIRED_POINTS = 4;
+  var VGA_TARGET_SAMPLE_COUNT = 260;
+  var VGA_MAX_SAMPLE_COUNT = 420;
+  var vgaModeActive = false;
+  var vgaApplying = false;
+  var vgaApplyRunId = 0;
+  var vgaMapClickBound = false;
+  var vgaSelectedCorners = [];
+  var vgaSelectionLayer = null;
+  var vgaHeatmapLayer = null;
+  var vgaHeatPointRadiusPx = 10;
+  updateVgaPanelMeta();
 
   // Tool tag detection state (for edge-triggered actions)
   var toolTagInSurface = {}; // tagId -> boolean (was in surface last frame)
@@ -1439,6 +1462,535 @@ export function initApp() {
     }
   }
 
+  function setVgaPanelVisible(visible) {
+    dom.vgaModePanelEl.classList.toggle('hidden', !visible);
+    dom.vgaModePanelEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  }
+
+  function ensureVgaLayers() {
+    if (!state.leafletMap || !state.leafletGlobal) return;
+    var L = state.leafletGlobal;
+    if (!vgaSelectionLayer) {
+      vgaSelectionLayer = L.layerGroup().addTo(state.leafletMap);
+      vgaSelectionLayer._skipIsovistGeometry = true;
+    }
+    if (!vgaHeatmapLayer) {
+      vgaHeatmapLayer = L.layerGroup().addTo(state.leafletMap);
+      vgaHeatmapLayer._skipIsovistGeometry = true;
+    }
+  }
+
+  function clearLeafletLayer(layer) {
+    if (!layer || typeof layer.clearLayers !== 'function') return;
+    layer.clearLayers();
+  }
+
+  function clearVgaSelection() {
+    vgaSelectedCorners = [];
+    clearLeafletLayer(vgaSelectionLayer);
+    updateVgaPanelMeta();
+  }
+
+  function clearVgaHeatmap() {
+    clearLeafletLayer(vgaHeatmapLayer);
+    vgaHeatPointRadiusPx = 10;
+  }
+
+  function setVgaStatus(text) {
+    dom.vgaStatusEl.textContent = String(text || '');
+  }
+
+  function updateVgaPanelMeta() {
+    dom.vgaPointCountEl.textContent = String(vgaSelectedCorners.length) + '/' + String(VGA_REQUIRED_POINTS);
+    var canApply = vgaModeActive && !vgaApplying && vgaSelectedCorners.length === VGA_REQUIRED_POINTS;
+    dom.vgaApplyBtnEl.disabled = !canApply;
+    dom.vgaApplyBtnEl.textContent = vgaApplying ? 'Applying...' : 'Apply';
+  }
+
+  function ensureVgaMapClickBinding() {
+    if (vgaMapClickBound || !state.leafletMap) return;
+    state.leafletMap.on('click', onVgaMapClick);
+    vgaMapClickBound = true;
+  }
+
+  function onVgaModeBtnClicked() {
+    if (resultsModeActive) return;
+    if (state.stage !== 3) return;
+    if (state.viewMode !== 'map') {
+      dom.viewToggleEl.checked = true;
+      setViewMode('map');
+    }
+    setVgaMode(true);
+  }
+
+  function setVgaMode(active) {
+    var shouldEnable = !!active && state.stage === 3 && state.viewMode === 'map' && !!state.leafletMap;
+    if (!shouldEnable && !vgaModeActive) {
+      document.body.classList.remove('vga-mode-active');
+      setVgaPanelVisible(false);
+      return;
+    }
+
+    if (shouldEnable) {
+      ensureVgaLayers();
+      ensureVgaMapClickBinding();
+      vgaModeActive = true;
+      vgaApplying = false;
+      vgaApplyRunId++;
+      clearVgaSelection();
+      clearVgaHeatmap();
+      document.body.classList.add('vga-mode-active');
+      setVgaPanelVisible(true);
+      setVgaStatus('Ctrl+click four corners on the map.');
+      updateVgaPanelMeta();
+      resetStage3Gestures();
+      updateUiSetupPanelVisibility();
+      updateTrackingOffsetControlsVisibility();
+      updateToolTagControlsVisibility();
+      updateHamburgerMenuVisibility();
+      return;
+    }
+
+    vgaModeActive = false;
+    vgaApplying = false;
+    vgaApplyRunId++;
+    document.body.classList.remove('vga-mode-active');
+    setVgaPanelVisible(false);
+    clearVgaSelection();
+    clearVgaHeatmap();
+    updateUiSetupPanelVisibility();
+    updateEdgeGuidesVisibility();
+    updateGestureControlsVisibility();
+    updateTrackingOffsetControlsVisibility();
+    updateToolTagControlsVisibility();
+    updateHamburgerMenuVisibility();
+  }
+
+  function cloneLatLngForVga(latlng) {
+    return cloneShortestPathLatLng(latlng);
+  }
+
+  function orderLatLngsClockwise(points) {
+    if (!Array.isArray(points) || points.length < 3) return [];
+    var sumLat = 0;
+    var sumLng = 0;
+    var count = 0;
+    for (var i = 0; i < points.length; i++) {
+      var p = cloneLatLngForVga(points[i]);
+      if (!p) continue;
+      sumLat += p.lat;
+      sumLng += p.lng;
+      count++;
+    }
+    if (count < 3) return [];
+    var cLat = sumLat / count;
+    var cLng = sumLng / count;
+    var sorted = [];
+    for (var j = 0; j < points.length; j++) {
+      var sp = cloneLatLngForVga(points[j]);
+      if (!sp) continue;
+      sorted.push(sp);
+    }
+    sorted.sort(function(a, b) {
+      var aa = Math.atan2(a.lat - cLat, a.lng - cLng);
+      var bb = Math.atan2(b.lat - cLat, b.lng - cLng);
+      return aa - bb;
+    });
+    return sorted;
+  }
+
+  function redrawVgaSelectionOverlay() {
+    if (!vgaSelectionLayer || !state.leafletGlobal) return;
+    clearLeafletLayer(vgaSelectionLayer);
+    var L = state.leafletGlobal;
+
+    for (var i = 0; i < vgaSelectedCorners.length; i++) {
+      var p = vgaSelectedCorners[i];
+      if (!p) continue;
+      var marker = L.circleMarker([p.lat, p.lng], {
+        radius: 6,
+        color: '#f59e0b',
+        weight: 2,
+        fillColor: '#f59e0b',
+        fillOpacity: 0.95,
+        interactive: false
+      });
+      marker._skipIsovistGeometry = true;
+      marker.addTo(vgaSelectionLayer);
+    }
+
+    var ordered = orderLatLngsClockwise(vgaSelectedCorners);
+    if (ordered.length >= 3) {
+      var polygonLatLngs = [];
+      for (var k = 0; k < ordered.length; k++) {
+        polygonLatLngs.push([ordered[k].lat, ordered[k].lng]);
+      }
+      var poly = L.polygon(polygonLatLngs, {
+        color: '#f59e0b',
+        weight: 2,
+        fillColor: '#f59e0b',
+        fillOpacity: 0.08,
+        opacity: 0.95,
+        interactive: false
+      });
+      poly._skipIsovistGeometry = true;
+      poly.addTo(vgaSelectionLayer);
+    }
+  }
+
+  function onVgaMapClick(e) {
+    if (!vgaModeActive || vgaApplying) return;
+    if (state.stage !== 3 || state.viewMode !== 'map') return;
+    if (!e || !e.latlng) return;
+    var originalEvent = e.originalEvent;
+    var isCtrlClick = !!(originalEvent && (originalEvent.ctrlKey || originalEvent.metaKey));
+    if (!isCtrlClick) return;
+    if (originalEvent && typeof originalEvent.preventDefault === 'function') originalEvent.preventDefault();
+    if (originalEvent && typeof originalEvent.stopPropagation === 'function') originalEvent.stopPropagation();
+
+    var nextPoint = cloneLatLngForVga(e.latlng);
+    if (!nextPoint) return;
+
+    if (vgaSelectedCorners.length >= VGA_REQUIRED_POINTS) {
+      clearVgaSelection();
+      clearVgaHeatmap();
+      setVgaStatus('Selection reset. Ctrl+click four corners again.');
+    }
+
+    vgaSelectedCorners.push(nextPoint);
+    redrawVgaSelectionOverlay();
+    if (vgaSelectedCorners.length < VGA_REQUIRED_POINTS) {
+      setVgaStatus('Point ' + String(vgaSelectedCorners.length) + ' selected.');
+    } else {
+      setVgaStatus('4 points selected. Click Apply.');
+    }
+    updateVgaPanelMeta();
+  }
+
+  function pointInsidePolygon(x, y, polygonPoints) {
+    if (!Array.isArray(polygonPoints) || polygonPoints.length < 3) return false;
+    var inside = false;
+    for (var i = 0, j = polygonPoints.length - 1; i < polygonPoints.length; j = i++) {
+      var xi = polygonPoints[i][0];
+      var yi = polygonPoints[i][1];
+      var xj = polygonPoints[j][0];
+      var yj = polygonPoints[j][1];
+      var intersect = ((yi > y) !== (yj > y)) && (x < ((xj - xi) * (y - yi) / ((yj - yi) || 1e-9) + xi));
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  function buildVgaSamplesFromCorners(corners) {
+    if (!state.leafletMap || !state.leafletGlobal) return null;
+    if (!Array.isArray(corners) || corners.length < VGA_REQUIRED_POINTS) return null;
+
+    var orderedCorners = orderLatLngsClockwise(corners);
+    if (orderedCorners.length < 3) return null;
+
+    var map = state.leafletMap;
+    var L = state.leafletGlobal;
+    var polygonPoints = [];
+    for (var i = 0; i < orderedCorners.length; i++) {
+      var ll = orderedCorners[i];
+      var pt = map.latLngToContainerPoint([ll.lat, ll.lng]);
+      if (!pt || !isFinite(pt.x) || !isFinite(pt.y)) continue;
+      polygonPoints.push([pt.x, pt.y]);
+    }
+    if (polygonPoints.length < 3) return null;
+
+    var minX = Infinity;
+    var minY = Infinity;
+    var maxX = -Infinity;
+    var maxY = -Infinity;
+    for (var pi = 0; pi < polygonPoints.length; pi++) {
+      var p = polygonPoints[pi];
+      minX = Math.min(minX, p[0]);
+      minY = Math.min(minY, p[1]);
+      maxX = Math.max(maxX, p[0]);
+      maxY = Math.max(maxY, p[1]);
+    }
+
+    var width = maxX - minX;
+    var height = maxY - minY;
+    if (!isFinite(width) || !isFinite(height) || width <= 2 || height <= 2) return null;
+
+    var area = width * height;
+    var stepPx = clamp(Math.sqrt(area / VGA_TARGET_SAMPLE_COUNT), 12, 34);
+    var samples = [];
+    for (var y = minY + stepPx * 0.5; y <= maxY; y += stepPx) {
+      for (var x = minX + stepPx * 0.5; x <= maxX; x += stepPx) {
+        if (!pointInsidePolygon(x, y, polygonPoints)) continue;
+        var llSample = map.containerPointToLatLng(L.point(x, y));
+        var sample = cloneLatLngForVga(llSample);
+        if (sample) samples.push(sample);
+      }
+    }
+
+    if (samples.length > VGA_MAX_SAMPLE_COUNT) {
+      var reduced = [];
+      var stride = samples.length / VGA_MAX_SAMPLE_COUNT;
+      for (var si = 0; si < VGA_MAX_SAMPLE_COUNT; si++) {
+        reduced.push(samples[Math.floor(si * stride)]);
+      }
+      samples = reduced;
+    }
+
+    return {
+      samples: samples,
+      stepPx: stepPx
+    };
+  }
+
+  function hslToRgb(h, s, l) {
+    var hh = h;
+    while (hh < 0) hh += 360;
+    while (hh >= 360) hh -= 360;
+    var c = (1 - Math.abs(2 * l - 1)) * s;
+    var hp = hh / 60;
+    var x = c * (1 - Math.abs((hp % 2) - 1));
+    var r1 = 0;
+    var g1 = 0;
+    var b1 = 0;
+
+    if (hp < 1) { r1 = c; g1 = x; b1 = 0; }
+    else if (hp < 2) { r1 = x; g1 = c; b1 = 0; }
+    else if (hp < 3) { r1 = 0; g1 = c; b1 = x; }
+    else if (hp < 4) { r1 = 0; g1 = x; b1 = c; }
+    else if (hp < 5) { r1 = x; g1 = 0; b1 = c; }
+    else { r1 = c; g1 = 0; b1 = x; }
+
+    var m = l - c / 2;
+    return [
+      Math.round((r1 + m) * 255),
+      Math.round((g1 + m) * 255),
+      Math.round((b1 + m) * 255)
+    ];
+  }
+
+  function vgaHeatColorRgb(t) {
+    var normalized = clamp(t, 0, 1);
+    var hue = (1 - normalized) * 240;
+    return hslToRgb(hue, 0.88, 0.52);
+  }
+
+  function drawVgaHeatmap(samples, stepPx) {
+    if (!vgaHeatmapLayer || !state.leafletGlobal || !state.leafletMap) return;
+    clearLeafletLayer(vgaHeatmapLayer);
+    if (!Array.isArray(samples) || samples.length < 1) return;
+
+    var L = state.leafletGlobal;
+    var map = state.leafletMap;
+    var orderedCorners = orderLatLngsClockwise(vgaSelectedCorners);
+    if (orderedCorners.length < 3) return;
+
+    var polygonContainer = [];
+    var minX = Infinity;
+    var minY = Infinity;
+    var maxX = -Infinity;
+    var maxY = -Infinity;
+    for (var ci = 0; ci < orderedCorners.length; ci++) {
+      var c = orderedCorners[ci];
+      var cpt = map.latLngToContainerPoint([c.lat, c.lng]);
+      if (!cpt || !isFinite(cpt.x) || !isFinite(cpt.y)) continue;
+      polygonContainer.push([cpt.x, cpt.y]);
+      minX = Math.min(minX, cpt.x);
+      minY = Math.min(minY, cpt.y);
+      maxX = Math.max(maxX, cpt.x);
+      maxY = Math.max(maxY, cpt.y);
+    }
+    if (polygonContainer.length < 3) return;
+
+    var width = maxX - minX;
+    var height = maxY - minY;
+    if (!isFinite(width) || !isFinite(height) || width < 6 || height < 6) return;
+
+    var longest = Math.max(width, height);
+    var scale = clamp(260 / longest, 0.18, 0.6);
+    var gridW = Math.max(64, Math.round(width * scale));
+    var gridH = Math.max(64, Math.round(height * scale));
+
+    var minScore = Infinity;
+    var maxScore = -Infinity;
+    for (var i = 0; i < samples.length; i++) {
+      var s0 = samples[i];
+      if (!s0 || !isFinite(s0.score)) continue;
+      minScore = Math.min(minScore, s0.score);
+      maxScore = Math.max(maxScore, s0.score);
+    }
+    if (!isFinite(minScore) || !isFinite(maxScore)) return;
+
+    var sampleGrid = [];
+    for (var si = 0; si < samples.length; si++) {
+      var sample = samples[si];
+      if (!sample || !sample.latlng) continue;
+      var spt = map.latLngToContainerPoint([sample.latlng.lat, sample.latlng.lng]);
+      if (!spt || !isFinite(spt.x) || !isFinite(spt.y)) continue;
+      var rawScore = isFinite(sample.score) ? sample.score : minScore;
+      var normScore = (maxScore > minScore) ? ((rawScore - minScore) / (maxScore - minScore)) : 0.5;
+      sampleGrid.push({
+        x: (spt.x - minX) * scale,
+        y: (spt.y - minY) * scale,
+        score: clamp(normScore, 0, 1)
+      });
+    }
+    if (sampleGrid.length < 1) return;
+
+    var polygonGrid = [];
+    for (var pg = 0; pg < polygonContainer.length; pg++) {
+      polygonGrid.push([
+        (polygonContainer[pg][0] - minX) * scale,
+        (polygonContainer[pg][1] - minY) * scale
+      ]);
+    }
+
+    var accWeight = new Float32Array(gridW * gridH);
+    var accScore = new Float32Array(gridW * gridH);
+    var kernelRadius = clamp(stepPx * scale * 2.05, 3.8, 18);
+    var radiusSq = kernelRadius * kernelRadius;
+    var sigma = Math.max(1.4, kernelRadius * 0.55);
+    var gaussDen = 2 * sigma * sigma;
+    var kernelMax = Math.ceil(kernelRadius);
+    vgaHeatPointRadiusPx = kernelRadius / Math.max(scale, 1e-6);
+
+    for (var k = 0; k < sampleGrid.length; k++) {
+      var sp = sampleGrid[k];
+      var x0 = Math.max(0, Math.floor(sp.x - kernelMax));
+      var x1 = Math.min(gridW - 1, Math.ceil(sp.x + kernelMax));
+      var y0 = Math.max(0, Math.floor(sp.y - kernelMax));
+      var y1 = Math.min(gridH - 1, Math.ceil(sp.y + kernelMax));
+
+      for (var gy = y0; gy <= y1; gy++) {
+        var dy = gy - sp.y;
+        for (var gx = x0; gx <= x1; gx++) {
+          var dx = gx - sp.x;
+          var d2 = dx * dx + dy * dy;
+          if (d2 > radiusSq) continue;
+          var w = Math.exp(-d2 / gaussDen);
+          var idx = gy * gridW + gx;
+          accWeight[idx] += w;
+          accScore[idx] += w * sp.score;
+        }
+      }
+    }
+
+    var gridCanvas = document.createElement('canvas');
+    gridCanvas.width = gridW;
+    gridCanvas.height = gridH;
+    var gridCtx = gridCanvas.getContext('2d');
+    if (!gridCtx) return;
+    var img = gridCtx.createImageData(gridW, gridH);
+    var px = img.data;
+
+    for (var y = 0; y < gridH; y++) {
+      for (var x = 0; x < gridW; x++) {
+        if (!pointInsidePolygon(x + 0.5, y + 0.5, polygonGrid)) continue;
+        var gi = y * gridW + x;
+        var weight = accWeight[gi];
+        if (!(weight > 1e-5)) continue;
+        var value = clamp(accScore[gi] / weight, 0, 1);
+        var rgb = vgaHeatColorRgb(value);
+        var di = gi * 4;
+        px[di] = rgb[0];
+        px[di + 1] = rgb[1];
+        px[di + 2] = rgb[2];
+        px[di + 3] = 188;
+      }
+    }
+    gridCtx.putImageData(img, 0, 0);
+
+    var outW = Math.max(4, Math.round(width));
+    var outH = Math.max(4, Math.round(height));
+    var outCanvas = document.createElement('canvas');
+    outCanvas.width = outW;
+    outCanvas.height = outH;
+    var outCtx = outCanvas.getContext('2d');
+    if (!outCtx) return;
+
+    outCtx.imageSmoothingEnabled = true;
+    outCtx.drawImage(gridCanvas, 0, 0, outW, outH);
+
+    if (typeof outCtx.filter === 'string') {
+      outCtx.filter = 'blur(1.2px)';
+      outCtx.drawImage(outCanvas, 0, 0);
+      outCtx.filter = 'none';
+    }
+
+    outCtx.globalCompositeOperation = 'destination-in';
+    outCtx.beginPath();
+    for (var pc = 0; pc < polygonContainer.length; pc++) {
+      var relX = polygonContainer[pc][0] - minX;
+      var relY = polygonContainer[pc][1] - minY;
+      if (pc === 0) outCtx.moveTo(relX, relY);
+      else outCtx.lineTo(relX, relY);
+    }
+    outCtx.closePath();
+    outCtx.fillStyle = '#000';
+    outCtx.fill();
+    outCtx.globalCompositeOperation = 'source-over';
+
+    var nw = map.containerPointToLatLng(L.point(minX, minY));
+    var se = map.containerPointToLatLng(L.point(maxX, maxY));
+    var overlay = L.imageOverlay(outCanvas.toDataURL('image/png'), L.latLngBounds(nw, se), {
+      opacity: 0.92,
+      interactive: false
+    });
+    overlay._skipIsovistGeometry = true;
+    overlay.addTo(vgaHeatmapLayer);
+  }
+
+  function runVgaApply() {
+    var sampleInfo = buildVgaSamplesFromCorners(vgaSelectedCorners);
+    if (!sampleInfo || !Array.isArray(sampleInfo.samples) || sampleInfo.samples.length < 1) {
+      setVgaStatus('Selection is too small. Ctrl+click 4 wider corners.');
+      return;
+    }
+
+    vgaApplying = true;
+    var applyRunId = ++vgaApplyRunId;
+    updateVgaPanelMeta();
+    clearVgaHeatmap();
+
+    var total = sampleInfo.samples.length;
+    var scored = [];
+    var i = 0;
+
+    function processChunk() {
+      if (!vgaModeActive || applyRunId !== vgaApplyRunId) {
+        vgaApplying = false;
+        updateVgaPanelMeta();
+        return;
+      }
+
+      var chunkEnd = Math.min(i + 6, total);
+      for (; i < chunkEnd; i++) {
+        var sampleLatLng = sampleInfo.samples[i];
+        var scoreInfo = computeStage4IsovistScore(sampleLatLng);
+        var score = (scoreInfo && isFinite(scoreInfo.score)) ? scoreInfo.score : 0;
+        scored.push({ latlng: sampleLatLng, score: score });
+      }
+
+      setVgaStatus('Computing VGA: ' + String(i) + '/' + String(total));
+      if (i < total) {
+        setTimeout(processChunk, 0);
+        return;
+      }
+
+      drawVgaHeatmap(scored, sampleInfo.stepPx);
+      vgaApplying = false;
+      updateVgaPanelMeta();
+      setVgaStatus('VGA heatmap ready (' + String(scored.length) + ' samples).');
+    }
+
+    processChunk();
+  }
+
+  function onVgaApplyClicked() {
+    if (!vgaModeActive || vgaApplying) return;
+    if (vgaSelectedCorners.length !== VGA_REQUIRED_POINTS) return;
+    runVgaApply();
+  }
+
   // Check if a point (in camera coordinates) is within the calibrated surface
   function isPointInSurface(x, y) {
     if (!state.surfaceHomography) return false;
@@ -1536,6 +2088,7 @@ export function initApp() {
     if (!detections || !Array.isArray(detections)) return;
     if (state.stage !== 3 && state.stage !== 4) return;
     if (state.viewMode !== 'map') return;
+    if (state.stage === 3 && vgaModeActive) return;
 
     // Build detection lookup by ID
     var detById = {};
@@ -1745,6 +2298,9 @@ export function initApp() {
   // ============== Stage Management ==============
 
   function setStage(newStage) {
+    if (vgaModeActive && newStage !== 3) {
+      setVgaMode(false);
+    }
     state.stage = newStage;
 
     var titles = { 1: 'Camera Setup Stage 1/4', 2: 'Surface Setup Stage 2/4', 3: 'UI Setup Stage 3/4', 4: 'Stage 4/4' };
@@ -1802,6 +2358,9 @@ export function initApp() {
   }
 
   function setViewMode(mode) {
+    if (vgaModeActive && mode !== 'map') {
+      setVgaMode(false);
+    }
     state.viewMode = mode === 'map' ? 'map' : 'camera';
 
     if (state.viewMode === 'map') {
@@ -1811,6 +2370,7 @@ export function initApp() {
       dom.viewToggleContainerEl.classList.add('toggle-floating');
       initMaptasticIfNeeded();
       initLeafletIfNeeded();
+      ensureVgaMapClickBinding();
       updateRoadLayersVisibilityByTags(state.lastApriltagDetections || []);
       updateUiSetupPanelVisibility();
       updateEdgeGuidesVisibility();
@@ -1845,8 +2405,8 @@ export function initApp() {
   // ============== UI Visibility ==============
 
   function updateUiSetupPanelVisibility() {
-    var overlayVisible = (state.stage === 3 || state.stage === 4) && state.viewMode === 'map';
-    var panelVisible = state.stage === 3 && state.viewMode === 'map';
+    var overlayVisible = (state.stage === 3 || state.stage === 4) && state.viewMode === 'map' && !vgaModeActive;
+    var panelVisible = state.stage === 3 && state.viewMode === 'map' && !vgaModeActive;
 
     dom.uiSetupOverlayEl.classList.toggle('hidden', !overlayVisible);
     dom.uiSetupOverlayEl.setAttribute('aria-hidden', overlayVisible ? 'false' : 'true');
@@ -1874,13 +2434,13 @@ export function initApp() {
   }
 
   function updateTrackingOffsetControlsVisibility() {
-    var visible = state.stage === 3 && state.viewMode === 'map';
+    var visible = state.stage === 3 && state.viewMode === 'map' && !vgaModeActive;
     dom.trackingOffsetControlsEl.classList.toggle('hidden', !visible);
     dom.trackingOffsetControlsEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
   }
 
   function updateToolTagControlsVisibility() {
-    var visible = state.stage === 3 && state.viewMode === 'map';
+    var visible = state.stage === 3 && state.viewMode === 'map' && !vgaModeActive;
     dom.toolTagControlsEl.classList.toggle('hidden', !visible);
     dom.toolTagControlsEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
   }
@@ -2267,7 +2827,7 @@ export function initApp() {
     }
 
     // Gesture handling (dwell-to-click and pinch-to-drag for Stage 3 and 4)
-    if ((state.stage === 3 || state.stage === 4) && state.viewMode === 'map') {
+    if ((state.stage === 3 || state.stage === 4) && state.viewMode === 'map' && !vgaModeActive) {
       var apriltagPoints = [];
       var secondaryVisibleByPrimaryTag = {};
       var emittedTagIds = {};

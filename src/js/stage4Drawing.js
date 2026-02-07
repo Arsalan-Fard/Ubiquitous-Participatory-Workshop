@@ -955,6 +955,7 @@ function appendGeometryFromPath(path, closeRing, polygons, segments, win) {
 
 function collectGeometryFromLayer(layer, polygons, segments, visitedLayers, win) {
   if (!layer) return;
+  if (layer._skipIsovistGeometry) return;
   if (visitedLayers.indexOf(layer) !== -1) return;
   visitedLayers.push(layer);
 
@@ -1003,18 +1004,29 @@ function buildBoundaryPolygon(originPt, radiusPx, sides) {
   return points;
 }
 
-function renderStage4IsovistAtLatLng(latlng) {
-  if (!state.leafletMap || !state.leafletGlobal || !state.stage4IsovistLayer) return;
-  var L = state.leafletGlobal;
-  var origin = cloneLatLng(latlng);
-  if (!origin) return;
+function polygonAreaPx(points) {
+  if (!Array.isArray(points) || points.length < 3) return 0;
+  var sum = 0;
+  for (var i = 0; i < points.length; i++) {
+    var a = points[i];
+    var b = points[(i + 1) % points.length];
+    if (!a || !b) continue;
+    sum += (a[0] * b[1]) - (b[0] * a[1]);
+  }
+  return Math.abs(sum) * 0.5;
+}
 
-  clearStage4Isovist();
+function computeStage4IsovistResult(latlng) {
+  if (!state.leafletMap || !state.leafletGlobal) return null;
+  var origin = cloneLatLng(latlng);
+  if (!origin) return null;
 
   var map = state.leafletMap;
   var originPt = map.latLngToContainerPoint([origin.lat, origin.lng]);
+  if (!originPt || !isFinite(originPt.x) || !isFinite(originPt.y)) return null;
+
   var radiusPx = metersToPixels(ISOVIST_RADIUS_METERS, origin.lat, map.getZoom());
-  if (!isFinite(radiusPx) || radiusPx <= 1) return;
+  if (!isFinite(radiusPx) || radiusPx <= 1) return null;
 
   var geom = collectIsovistGeometry(originPt, radiusPx);
   var boundaryPolygon = buildBoundaryPolygon(originPt, radiusPx, ISOVIST_BOUNDARY_SIDES);
@@ -1024,29 +1036,60 @@ function renderStage4IsovistAtLatLng(latlng) {
     for (var si = 0; si < geom.segments.length; si++) segments.push(geom.segments[si]);
   }
 
-  var normalizedSegments = breakIntersections(segments);
-  var visibility = compute([originPt.x, originPt.y], normalizedSegments);
-  if (Array.isArray(visibility) && visibility.length >= 3) {
-    var polygonLatLngs = [];
-    for (var i = 0; i < visibility.length; i++) {
-      var pt = visibility[i];
-      if (!pt || pt.length < 2) continue;
-      var ll = map.containerPointToLatLng(state.leafletGlobal.point(pt[0], pt[1]));
-      polygonLatLngs.push([ll.lat, ll.lng]);
-    }
-    if (polygonLatLngs.length >= 3) {
-      stage4IsovistState.polygon = L.polygon(polygonLatLngs, {
-        color: '#0ea5a0',
-        weight: 2,
-        fillColor: '#14b8a6',
-        fillOpacity: 0.22,
-        opacity: 0.9,
-        interactive: false
-      }).addTo(state.stage4IsovistLayer);
-    }
+  var visibility;
+  try {
+    visibility = compute([originPt.x, originPt.y], breakIntersections(segments));
+  } catch (err) {
+    return null;
+  }
+  if (!Array.isArray(visibility) || visibility.length < 3) return null;
+
+  var polygonContainerPts = [];
+  var polygonLatLngs = [];
+  for (var i = 0; i < visibility.length; i++) {
+    var pt = visibility[i];
+    if (!pt || pt.length < 2 || !isFinite(pt[0]) || !isFinite(pt[1])) continue;
+    polygonContainerPts.push([pt[0], pt[1]]);
+    var ll = map.containerPointToLatLng(state.leafletGlobal.point(pt[0], pt[1]));
+    polygonLatLngs.push([ll.lat, ll.lng]);
+  }
+  if (polygonContainerPts.length < 3 || polygonLatLngs.length < 3) return null;
+
+  var areaPx = polygonAreaPx(polygonContainerPts);
+  var radiusAreaPx = Math.PI * radiusPx * radiusPx;
+  var normalizedScore = radiusAreaPx > 0 ? (areaPx / radiusAreaPx) : 0;
+  if (normalizedScore < 0) normalizedScore = 0;
+  if (normalizedScore > 1) normalizedScore = 1;
+
+  return {
+    origin: origin,
+    polygonLatLngs: polygonLatLngs,
+    areaPx: areaPx,
+    normalizedScore: normalizedScore
+  };
+}
+
+function renderStage4IsovistAtLatLng(latlng) {
+  if (!state.leafletMap || !state.leafletGlobal || !state.stage4IsovistLayer) return;
+  var L = state.leafletGlobal;
+  var result = computeStage4IsovistResult(latlng);
+  if (!result) {
+    clearStage4Isovist();
+    return;
   }
 
-  stage4IsovistState.originMarker = L.circleMarker([origin.lat, origin.lng], {
+  clearStage4Isovist();
+
+  stage4IsovistState.polygon = L.polygon(result.polygonLatLngs, {
+    color: '#0ea5a0',
+    weight: 2,
+    fillColor: '#14b8a6',
+    fillOpacity: 0.22,
+    opacity: 0.9,
+    interactive: false
+  }).addTo(state.stage4IsovistLayer);
+
+  stage4IsovistState.originMarker = L.circleMarker([result.origin.lat, result.origin.lng], {
     radius: 6,
     color: '#ffffff',
     weight: 2,
@@ -1060,20 +1103,17 @@ export function setStage4IsovistOrigin(latlng) {
   renderStage4IsovistAtLatLng(latlng);
 }
 
-export function clearStage4IsovistOverlay() {
-  clearStage4Isovist();
+export function computeStage4IsovistScore(latlng) {
+  var result = computeStage4IsovistResult(latlng);
+  if (!result) return null;
+  return {
+    score: result.normalizedScore,
+    areaPx: result.areaPx
+  };
 }
 
-function handleStage4MapCtrlClickForIsovist(e) {
-  if (state.stage !== 4 || state.viewMode !== 'map') return;
-  if (!state.leafletMap || !state.stage4IsovistLayer) return;
-  if (!e || !e.latlng) return;
-  var originalEvent = e.originalEvent;
-  var isCtrlClick = !!(originalEvent && (originalEvent.ctrlKey || originalEvent.metaKey));
-  if (!isCtrlClick) return;
-  if (originalEvent && typeof originalEvent.preventDefault === 'function') originalEvent.preventDefault();
-  if (originalEvent && typeof originalEvent.stopPropagation === 'function') originalEvent.stopPropagation();
-  renderStage4IsovistAtLatLng(e.latlng);
+export function clearStage4IsovistOverlay() {
+  clearStage4Isovist();
 }
 
 function distancePointToSegmentPx(px, py, x1, y1, x2, y2) {
@@ -1324,7 +1364,6 @@ export function initLeafletIfNeeded() {
 
   clearStage4ShortestPath();
   clearStage4Isovist();
-  state.leafletMap.on('click', handleStage4MapCtrlClickForIsovist);
   state.leafletMap.on('moveend', scheduleStage4OsmBuildingsRefresh);
   scheduleStage4OsmBuildingsRefresh();
 

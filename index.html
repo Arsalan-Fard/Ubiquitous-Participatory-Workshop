@@ -169,6 +169,10 @@
                     <span class="tool-tag-controls__label">Roads</span>
                     <button id="geojsonImportBtn" class="tool-tag-controls__import-btn" type="button" aria-label="Load roads GeoJSON file">+</button>
                 </div>
+                <div class="tool-tag-controls__item">
+                    <span class="tool-tag-controls__label">VGA</span>
+                    <button id="vgaModeBtn" class="tool-tag-controls__import-btn" type="button" aria-label="Enter VGA mode">VGA</button>
+                </div>
             </div>
             <div id="geojsonFilesList" class="tool-tag-controls__files"></div>
         </div>
@@ -195,6 +199,16 @@
                 <button id="resultsPrevBtn" class="btn btn-secondary" type="button">Back View</button>
                 <button id="resultsNextBtn" class="btn btn-secondary" type="button">Next View</button>
                 <button id="resultsExitBtn" class="btn" type="button">Exit</button>
+            </div>
+        </div>
+        <div id="vgaModePanel" class="vga-mode-panel hidden" aria-hidden="true">
+            <div class="vga-mode-panel__title">VGA Mode</div>
+            <div class="vga-mode-panel__hint">Ctrl+click 4 points on map</div>
+            <div class="vga-mode-panel__meta">Points: <span id="vgaPointCount">0/4</span></div>
+            <div id="vgaStatus" class="vga-mode-panel__status">Select four corners.</div>
+            <div class="vga-mode-panel__actions">
+                <button id="vgaApplyBtn" class="btn" type="button" disabled>Apply</button>
+                <button id="vgaBackBtn" class="btn btn-secondary" type="button">Back</button>
             </div>
         </div>
     </div>
