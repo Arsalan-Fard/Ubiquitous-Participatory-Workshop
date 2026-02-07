@@ -1,10 +1,13 @@
-import { CONFIG } from '../static/js/config.js';
 import { compute, convertToSegments, breakIntersections } from './visibility-polygon.esm.js';
 
-mapboxgl.accessToken = CONFIG.accessToken;
+const MAP_CONFIG = {
+    style: 'https://tiles.openfreemap.org/styles/liberty',
+    center: [2.2118, 48.7133],
+    zoom: 16.5
+};
 
 const state = {
-    viewCoord: [...CONFIG.center],
+    viewCoord: [...MAP_CONFIG.center],
     maxDistanceMeters: 150
 };
 
@@ -18,11 +21,11 @@ const ui = {
 
 ui.radiusValue.textContent = ui.radiusInput.value;
 
-const map = new mapboxgl.Map({
+const map = new maplibregl.Map({
     container: 'map',
-    style: CONFIG.style,
-    center: CONFIG.center,
-    zoom: 16,
+    style: MAP_CONFIG.style,
+    center: MAP_CONFIG.center,
+    zoom: MAP_CONFIG.zoom,
     pitch: 0,
     bearing: 0
 });
@@ -36,11 +39,12 @@ ui.radiusInput.addEventListener('input', () => {
 });
 
 ui.resetView.addEventListener('click', () => {
-    state.viewCoord = [...CONFIG.center];
+    state.viewCoord = [...MAP_CONFIG.center];
     updateIsovist();
 });
 
 map.on('load', () => {
+    applyRoadBuildingOnlyTheme(map);
     buildingLayerId = findBuildingLayerId(map);
 
     map.addSource('obstacles', {
@@ -289,4 +293,54 @@ function pointFeature(coord) {
         },
         properties: {}
     };
+}
+
+function applyRoadBuildingOnlyTheme(mapInstance) {
+    const style = mapInstance.getStyle();
+    const layers = style?.layers || [];
+    layers.forEach(layer => {
+        const type = (layer.type || '').toLowerCase();
+        const id = (layer.id || '').toLowerCase();
+        const sourceLayer = (layer['source-layer'] || '').toLowerCase();
+        const roadLike = isRoadLikeLayer(type, id, sourceLayer);
+        const buildingLike = isBuildingLikeLayer(type, id, sourceLayer);
+        const shouldKeep = roadLike || buildingLike;
+
+        if (type === 'background') {
+            mapInstance.setPaintProperty(layer.id, 'background-color', '#000000');
+            mapInstance.setPaintProperty(layer.id, 'background-opacity', 1);
+            return;
+        }
+
+        if (!shouldKeep) {
+            mapInstance.setLayoutProperty(layer.id, 'visibility', 'none');
+            return;
+        }
+
+        mapInstance.setLayoutProperty(layer.id, 'visibility', 'visible');
+        if (roadLike && type === 'line') {
+            mapInstance.setPaintProperty(layer.id, 'line-color', '#f6f6f6');
+            mapInstance.setPaintProperty(layer.id, 'line-opacity', 1);
+        }
+        if (buildingLike && type === 'fill') {
+            mapInstance.setPaintProperty(layer.id, 'fill-color', '#7a7a7a');
+            mapInstance.setPaintProperty(layer.id, 'fill-opacity', 1);
+        }
+        if (buildingLike && type === 'fill-extrusion') {
+            mapInstance.setPaintProperty(layer.id, 'fill-extrusion-color', '#7a7a7a');
+            mapInstance.setPaintProperty(layer.id, 'fill-extrusion-opacity', 1);
+        }
+    });
+}
+
+function isRoadLikeLayer(type, id, sourceLayer) {
+    if (type !== 'line') return false;
+    if (sourceLayer.includes('road') || sourceLayer.includes('transportation')) return true;
+    return id.includes('road') || id.includes('street') || id.includes('transport');
+}
+
+function isBuildingLikeLayer(type, id, sourceLayer) {
+    if (type !== 'fill' && type !== 'fill-extrusion') return false;
+    if (sourceLayer.includes('building')) return true;
+    return id.includes('building');
 }
