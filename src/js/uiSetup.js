@@ -959,6 +959,21 @@ export function initUiSetup(options) {
           y: top,
           sessionId: normalizeSessionId(el.dataset.sessionId)
         });
+      } else if (type === 'layer-square') {
+        var layerName = el.dataset.layerName || '';
+        if (!layerName && el.querySelector) {
+          var textEl = el.querySelector('.ui-layer-square__text');
+          if (textEl) layerName = String(textEl.textContent || '').trim();
+        }
+        items.push({
+          type: 'layer-square',
+          layerName: String(layerName || ''),
+          color: el.dataset.color || defaultItemColor,
+          triggerTagId: el.dataset.triggerTagId || '',
+          x: left,
+          y: top,
+          sessionId: normalizeSessionId(el.dataset.sessionId)
+        });
       }
     }
 
@@ -970,7 +985,7 @@ export function initUiSetup(options) {
     var mapSetup = getSetupExportData ? getSetupExportData() : null;
 
     var payload = {
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       items: items,
       participants: participants,
@@ -1128,6 +1143,27 @@ export function initUiSetup(options) {
         overlayEl.appendChild(selectionEl);
         attachInteractionTriggerSelect(selectionEl, item.triggerTagId);
         makeDraggable(selectionEl, { draggingClass: 'ui-selection--dragging' });
+        continue;
+      }
+
+      if (item.type === 'layer-square') {
+        var layerSquareEl = document.createElement('div');
+        layerSquareEl.className = 'ui-dot ui-sticker-instance ui-layer-square';
+        layerSquareEl.dataset.uiType = 'layer-square';
+        var importedLayerName = String(item.layerName || item.text || '').trim();
+        layerSquareEl.dataset.layerName = importedLayerName;
+        layerSquareEl.dataset.color = String(item.color || defaultItemColor);
+        layerSquareEl.style.background = layerSquareEl.dataset.color;
+        layerSquareEl.style.left = String(item.x || 0) + 'px';
+        layerSquareEl.style.top = String(item.y || 0) + 'px';
+        assignImportedSessionId(layerSquareEl, item.sessionId);
+
+        var layerTextEl = document.createElement('span');
+        layerTextEl.className = 'ui-layer-square__text';
+        layerTextEl.textContent = importedLayerName;
+        layerSquareEl.appendChild(layerTextEl);
+
+        overlayEl.appendChild(layerSquareEl);
       }
     }
 

@@ -57,7 +57,7 @@ var BACKEND_APRILTAG_POLL_CAMERA_MS = 60;
 var BACKEND_APRILTAG_POLL_MAP_MS = 40;
 var BACKEND_APRILTAG_POLL_BACKOFF_BASE_MS = 250;
 var BACKEND_APRILTAG_POLL_BACKOFF_MAX_MS = 5000;
-var MAP_TAG_MASK_HOLD_MS = 500;
+var MAP_TAG_MASK_HOLD_MS = 1000;
 var apriltagPollInFlight = false;
 var apriltagLastPollMs = 0;
 var apriltagPollBackoffMs = 0;
@@ -968,12 +968,21 @@ export function initApp() {
       var els = dom.uiSetupOverlayEl.querySelectorAll('.ui-label, .ui-dot, .ui-draw, .ui-note, .ui-eraser, .ui-selection');
       for (var i = 0; i < els.length; i++) {
         var el = els[i];
-        if (!el || !el.dataset || el.classList.contains('ui-sticker-instance')) continue;
+        if (!el || !el.dataset) continue;
+        if (el.classList.contains('ui-sticker-instance') && !el.classList.contains('ui-layer-square')) continue;
 
         var type = el.dataset.uiType || '';
         var left = parseFloat(el.style.left || '0');
         var top = parseFloat(el.style.top || '0');
         var rotationDeg = parseFloat(el.dataset.rotationDeg || '0');
+        var layerName = '';
+        if (type === 'layer-square') {
+          layerName = String(el.dataset.layerName || '').trim();
+          if (!layerName && el.querySelector) {
+            var textEl = el.querySelector('.ui-layer-square__text');
+            if (textEl) layerName = String(textEl.textContent || '').trim();
+          }
+        }
         var item = {
           type: type || 'unknown',
           x: isFinite(left) ? left : 0,
@@ -981,6 +990,7 @@ export function initApp() {
           rotationDeg: isFinite(rotationDeg) ? rotationDeg : 0,
           color: el.dataset.color || null,
           triggerTagId: el.dataset.triggerTagId || '',
+          layerName: layerName,
           text: type === 'label' ? (el.textContent || '') : '',
           noteText: type === 'note' ? (el.dataset.noteText || '') : ''
         };
@@ -989,8 +999,8 @@ export function initApp() {
     }
 
     setupItems.sort(function(a, b) {
-      var ak = [a.type, a.text, a.noteText, a.color, a.triggerTagId, a.x, a.y, a.rotationDeg].join('|');
-      var bk = [b.type, b.text, b.noteText, b.color, b.triggerTagId, b.x, b.y, b.rotationDeg].join('|');
+      var ak = [a.type, a.layerName, a.text, a.noteText, a.color, a.triggerTagId, a.x, a.y, a.rotationDeg].join('|');
+      var bk = [b.type, b.layerName, b.text, b.noteText, b.color, b.triggerTagId, b.x, b.y, b.rotationDeg].join('|');
       if (ak < bk) return -1;
       if (ak > bk) return 1;
       return 0;

@@ -480,11 +480,14 @@ function updateFollowStickerPosition(ps, pointer) {
   el.style.top = (pointer.y - h / 2) + 'px';
 }
 
-function finalizeFollowStickerForPointer(ps) {
+function finalizeFollowStickerForPointer(ps, anchorPointer) {
   if (!ps) return;
   ps.followFinalizeRequested = false;
   if (!ps.activeFollowStickerEl) return;
   var el = ps.activeFollowStickerEl;
+  var anchor = (anchorPointer && isFinite(anchorPointer.x) && isFinite(anchorPointer.y))
+    ? anchorPointer
+    : (ps.lastPointer && isFinite(ps.lastPointer.x) && isFinite(ps.lastPointer.y) ? ps.lastPointer : null);
   if (el && el.classList && el.classList.contains('ui-note')) {
     var typedText = '';
     var formEl = el.querySelector ? el.querySelector('.ui-note__form') : null;
@@ -506,6 +509,14 @@ function finalizeFollowStickerForPointer(ps) {
     }
     el.classList.remove('ui-note--expanded');
     el.classList.add('ui-note--sticker');
+  }
+
+  // Snap the finalized element to the primary-tag cursor center.
+  if (el && anchor) {
+    var w = el.offsetWidth || 20;
+    var h = el.offsetHeight || 20;
+    el.style.left = (anchor.x - w / 2) + 'px';
+    el.style.top = (anchor.y - h / 2) + 'px';
   }
 
   if (el && el.dataset) {
@@ -1071,7 +1082,7 @@ function processPointerGesture(handIndex, pointer, handData) {
   // Finalize a live-follow sticker only when trigger-tag deactivation explicitly requested it.
   if (ps.activeFollowStickerEl && !(isApriltag && (activeToolType === 'dot' || activeToolType === 'note'))) {
     if (ps.followFinalizeRequested || !isApriltag) {
-      finalizeFollowStickerForPointer(ps);
+      finalizeFollowStickerForPointer(ps, pointer);
     }
   }
 
