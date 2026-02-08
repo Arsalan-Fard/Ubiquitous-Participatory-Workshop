@@ -241,6 +241,7 @@ function isStickerDragging(el) {
 
 export function bindStickerLatLngFromCurrentPosition(el) {
   if (!el || !el.dataset) return null;
+  if (el.classList.contains('ui-layer-square')) return null;
   if (!(el.classList.contains('ui-dot') || el.classList.contains('ui-note'))) return null;
   if (!el.classList.contains('ui-sticker-instance')) return null;
 
@@ -259,7 +260,7 @@ function syncMappedStickersNow() {
   if (!shouldSyncStickers()) return;
 
   var overlayEl = state.dom.uiSetupOverlayEl;
-  var els = overlayEl.querySelectorAll('.ui-sticker-instance.ui-dot, .ui-sticker-instance.ui-note');
+  var els = overlayEl.querySelectorAll('.ui-sticker-instance.ui-dot:not(.ui-layer-square), .ui-sticker-instance.ui-note');
 
   for (var i = 0; i < els.length; i++) {
     var el = els[i];
@@ -1227,7 +1228,7 @@ export function eraseAtPoint(clientX, clientY, radiusPx) {
 
   var overlayEl = state.dom.uiSetupOverlayEl;
   if (!overlayEl) return;
-  var stickerEls = overlayEl.querySelectorAll('.ui-sticker-instance.ui-dot, .ui-sticker-instance.ui-note, .ui-sticker-instance.ui-draw');
+  var stickerEls = overlayEl.querySelectorAll('.ui-sticker-instance.ui-dot:not(.ui-layer-square), .ui-sticker-instance.ui-note, .ui-sticker-instance.ui-draw');
   for (var si = 0; si < stickerEls.length; si++) {
     var el = stickerEls[si];
     var rect = el.getBoundingClientRect();

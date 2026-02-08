@@ -719,17 +719,19 @@ export function initApp() {
   var ZOOM_PAIR_MIN_DISTANCE_METERS = 0.15;
   var ZOOM_PAIR_DEADBAND_RATIO = 0.07;
   var ZOOM_BASELINE_RANGE_UNITS = 1;
+  var ZOOM_CONTROL_RANGE_PX = 90;
   var ZOOM_MIN_UPDATE_INTERVAL_MS = 160;
   var ZOOM_MISSING_HOLD_MS = 900;
   var ZOOM_TAG_MAX_EXTRAPOLATION = 1.5;
   var zoomTagRuntime = {
-    configuredTagAId: null,
-    configuredTagBId: null,
-    baselineDistanceMeters: 0,
     baselineZoom: 0,
+    baselineZoomReady: false,
+    handBaselineById: {},
+    guideByHandId: {},
     lastApplyAtMs: 0,
     missingSinceMs: 0
   };
+  var zoomGuidesOverlayEl = null;
 
   dom.mapSessionAddBtnEl.addEventListener('click', function(e) {
     e.preventDefault();
@@ -800,6 +802,8 @@ export function initApp() {
   function clearActiveMapSessionSelection() {
     state.currentMapSessionId = null;
     currentMapSessionIndex = -1;
+    resetPanTagRuntime();
+    resetZoomTagRuntime();
     filterElementsBySession(null);
     updateMapSessionListHighlight();
   }
@@ -1299,7 +1303,7 @@ export function initApp() {
 
       // Export sticker inputs (dot / annotation / draw sticker instances)
       if (dom.uiSetupOverlayEl) {
-        var stickerEls = dom.uiSetupOverlayEl.querySelectorAll('.ui-sticker-instance.ui-dot, .ui-sticker-instance.ui-note, .ui-sticker-instance.ui-draw');
+        var stickerEls = dom.uiSetupOverlayEl.querySelectorAll('.ui-sticker-instance.ui-dot:not(.ui-layer-square), .ui-sticker-instance.ui-note, .ui-sticker-instance.ui-draw');
         for (var i = 0; i < stickerEls.length; i++) {
           var el = stickerEls[i];
           var lat = parseFloat(el.dataset.mapLat || '');
@@ -1478,6 +1482,173 @@ export function initApp() {
     }
   }
 
+  function processLayerPanVotes(voteState, primaryPoints) {
+    if (state.viewMode !== 'map' || (state.stage !== 3 && state.stage !== 4) || vgaModeActive || !state.leafletMap) {
+      resetPanTagRuntime();
+      return;
+    }
+
+    var activePanHandIds = voteState && Array.isArray(voteState.panHandIds) ? voteState.panHandIds : [];
+    if (activePanHandIds.length < 1) {
+      resetPanTagRuntime();
+      return;
+    }
+
+    var activeByHandId = {};
+    for (var hi = 0; hi < activePanHandIds.length; hi++) {
+      var hid = String(activePanHandIds[hi] || '');
+      if (!hid) continue;
+      activeByHandId[hid] = true;
+    }
+
+    var mapRect = dom.mapWarpEl.getBoundingClientRect();
+    var points = Array.isArray(primaryPoints) ? primaryPoints : [];
+    var sumX = 0;
+    var sumY = 0;
+    var pointCount = 0;
+
+    for (var pi = 0; pi < points.length; pi++) {
+      var pt = points[pi];
+      if (!pt || !activeByHandId[String(pt.handId || '')]) continue;
+      if (!isFinite(pt.x) || !isFinite(pt.y)) continue;
+      var cx = pt.x - mapRect.left;
+      var cy = pt.y - mapRect.top;
+      if (!isFinite(cx) || !isFinite(cy)) continue;
+      sumX += cx;
+      sumY += cy;
+      pointCount++;
+    }
+
+    var nowMs = performance.now();
+    if (pointCount < 1) {
+      if (!panTagRuntime.missingSinceMs) panTagRuntime.missingSinceMs = nowMs;
+      if ((nowMs - panTagRuntime.missingSinceMs) > PAN_MISSING_HOLD_MS) resetPanTagRuntime();
+      return;
+    }
+
+    panTagRuntime.missingSinceMs = 0;
+    var centerPoint = { x: sumX / pointCount, y: sumY / pointCount };
+
+    if (!panTagRuntime.lastTagPoint) {
+      panTagRuntime.lastTagPoint = centerPoint;
+      panTagRuntime.lastApplyAtMs = nowMs;
+      return;
+    }
+
+    var dx = centerPoint.x - panTagRuntime.lastTagPoint.x;
+    var dy = centerPoint.y - panTagRuntime.lastTagPoint.y;
+    var distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance < PAN_JITTER_PIXELS) return;
+    if ((nowMs - panTagRuntime.lastApplyAtMs) < PAN_MIN_UPDATE_INTERVAL_MS) return;
+
+    try {
+      state.leafletMap.panBy([-dx, -dy], { animate: false });
+    } catch (err) {
+      // Ignore transient pan errors.
+    }
+    panTagRuntime.lastTagPoint = centerPoint;
+    panTagRuntime.lastApplyAtMs = nowMs;
+  }
+
+  function processLayerZoomVotes(voteState, primaryPoints) {
+    if (state.viewMode !== 'map' || (state.stage !== 3 && state.stage !== 4) || vgaModeActive || !state.leafletMap) {
+      resetZoomTagRuntime();
+      return;
+    }
+
+    var activeZoomHandIds = voteState && Array.isArray(voteState.zoomHandIds) ? voteState.zoomHandIds : [];
+    if (activeZoomHandIds.length < 1) {
+      resetZoomTagRuntime();
+      return;
+    }
+
+    if (!zoomTagRuntime.baselineZoomReady) {
+      var initialZoom = state.leafletMap.getZoom();
+      if (!isFinite(initialZoom)) initialZoom = 0;
+      zoomTagRuntime.baselineZoom = initialZoom;
+      zoomTagRuntime.baselineZoomReady = true;
+      zoomTagRuntime.lastApplyAtMs = 0;
+    }
+
+    var activeByHandId = {};
+    for (var ai = 0; ai < activeZoomHandIds.length; ai++) {
+      var activeHandId = String(activeZoomHandIds[ai] || '');
+      if (!activeHandId) continue;
+      activeByHandId[activeHandId] = true;
+    }
+
+    var baselineByHandId = zoomTagRuntime.handBaselineById || {};
+    for (var knownHandId in baselineByHandId) {
+      if (activeByHandId[knownHandId]) continue;
+      delete baselineByHandId[knownHandId];
+    }
+
+    var mapRect = dom.mapWarpEl.getBoundingClientRect();
+    var points = Array.isArray(primaryPoints) ? primaryPoints : [];
+    var guideStates = [];
+    var targetZoomSum = 0;
+    var targetZoomCount = 0;
+    var nowMs = performance.now();
+
+    for (var pi = 0; pi < points.length; pi++) {
+      var pt = points[pi];
+      if (!pt || !activeByHandId[String(pt.handId || '')]) continue;
+      if (!isFinite(pt.x) || !isFinite(pt.y)) continue;
+      var localX = pt.x - mapRect.left;
+      var localY = pt.y - mapRect.top;
+      if (!isFinite(localX) || !isFinite(localY)) continue;
+
+      var handId = String(pt.handId || '');
+      if (!isFinite(baselineByHandId[handId])) baselineByHandId[handId] = localY;
+      var baselineY = baselineByHandId[handId];
+
+      var ratio = (baselineY - localY) / Math.max(1, ZOOM_CONTROL_RANGE_PX);
+      if (Math.abs(ratio) < ZOOM_PAIR_DEADBAND_RATIO) ratio = 0;
+      ratio = clamp(ratio, -1, 1);
+
+      var targetZoom = zoomTagRuntime.baselineZoom + ratio * ZOOM_BASELINE_RANGE_UNITS;
+      targetZoomSum += targetZoom;
+      targetZoomCount++;
+
+      guideStates.push({
+        handId: handId,
+        x: localX,
+        baseY: baselineY
+      });
+    }
+
+    zoomTagRuntime.handBaselineById = baselineByHandId;
+    syncZoomGuides(guideStates);
+
+    if (targetZoomCount < 1) {
+      if (!zoomTagRuntime.missingSinceMs) zoomTagRuntime.missingSinceMs = nowMs;
+      if ((nowMs - zoomTagRuntime.missingSinceMs) > ZOOM_MISSING_HOLD_MS) {
+        zoomTagRuntime.handBaselineById = {};
+      }
+      return;
+    }
+    zoomTagRuntime.missingSinceMs = 0;
+
+    if ((nowMs - zoomTagRuntime.lastApplyAtMs) < ZOOM_MIN_UPDATE_INTERVAL_MS) return;
+
+    var targetZoomAvg = targetZoomSum / targetZoomCount;
+    var minZoom = typeof state.leafletMap.getMinZoom === 'function' ? state.leafletMap.getMinZoom() : -Infinity;
+    var maxZoom = typeof state.leafletMap.getMaxZoom === 'function' ? state.leafletMap.getMaxZoom() : Infinity;
+    if (!isFinite(minZoom)) minZoom = -Infinity;
+    if (!isFinite(maxZoom)) maxZoom = Infinity;
+    targetZoomAvg = clamp(targetZoomAvg, minZoom, maxZoom);
+
+    var currentZoom = state.leafletMap.getZoom();
+    if (Math.abs(targetZoomAvg - currentZoom) < 0.01) return;
+
+    try {
+      state.leafletMap.setZoom(targetZoomAvg, { animate: false });
+      zoomTagRuntime.lastApplyAtMs = nowMs;
+    } catch (err) {
+      // Ignore transient zoom errors.
+    }
+  }
+
   function activateMapSession(index) {
     if (index < 0 || index >= mapSessions.length) {
       clearActiveMapSessionSelection();
@@ -1488,6 +1659,8 @@ export function initApp() {
 
     state.currentMapSessionId = session.id;
     currentMapSessionIndex = index;
+    resetPanTagRuntime();
+    resetZoomTagRuntime();
 
     if (state.leafletMap) {
       state.leafletMap.setView([session.lat, session.lng], session.zoom);
@@ -2255,10 +2428,91 @@ export function initApp() {
   }
 
   function resetZoomTagRuntime() {
-    zoomTagRuntime.baselineDistanceMeters = 0;
+    zoomTagRuntime.baselineZoomReady = false;
     zoomTagRuntime.baselineZoom = 0;
+    zoomTagRuntime.handBaselineById = {};
     zoomTagRuntime.lastApplyAtMs = 0;
     zoomTagRuntime.missingSinceMs = 0;
+    clearZoomGuides();
+  }
+
+  function ensureZoomGuidesOverlay() {
+    if (zoomGuidesOverlayEl && zoomGuidesOverlayEl.isConnected) return zoomGuidesOverlayEl;
+    if (!dom.mapWarpEl) return null;
+    zoomGuidesOverlayEl = document.createElement('div');
+    zoomGuidesOverlayEl.className = 'map-zoom-guides';
+    dom.mapWarpEl.appendChild(zoomGuidesOverlayEl);
+    return zoomGuidesOverlayEl;
+  }
+
+  function ensureZoomGuideEl(handId) {
+    var key = String(handId || '');
+    if (!key) return null;
+    var existing = zoomTagRuntime.guideByHandId && zoomTagRuntime.guideByHandId[key];
+    if (existing && existing.isConnected) return existing;
+
+    var overlay = ensureZoomGuidesOverlay();
+    if (!overlay) return null;
+
+    var guideEl = document.createElement('div');
+    guideEl.className = 'map-zoom-guide';
+    guideEl.dataset.handId = key;
+
+    var lineEl = document.createElement('div');
+    lineEl.className = 'map-zoom-guide__line';
+    guideEl.appendChild(lineEl);
+
+    var plusEl = document.createElement('div');
+    plusEl.className = 'map-zoom-guide__plus';
+    plusEl.textContent = '+';
+    guideEl.appendChild(plusEl);
+
+    var minusEl = document.createElement('div');
+    minusEl.className = 'map-zoom-guide__minus';
+    minusEl.textContent = '-';
+    guideEl.appendChild(minusEl);
+
+    overlay.appendChild(guideEl);
+    if (!zoomTagRuntime.guideByHandId) zoomTagRuntime.guideByHandId = {};
+    zoomTagRuntime.guideByHandId[key] = guideEl;
+    return guideEl;
+  }
+
+  function clearZoomGuides() {
+    var byHand = zoomTagRuntime.guideByHandId || {};
+    for (var handId in byHand) {
+      var el = byHand[handId];
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    }
+    zoomTagRuntime.guideByHandId = {};
+  }
+
+  function syncZoomGuides(activeGuideStates) {
+    var overlay = ensureZoomGuidesOverlay();
+    if (!overlay) return;
+
+    var states = Array.isArray(activeGuideStates) ? activeGuideStates : [];
+    var keep = {};
+    for (var i = 0; i < states.length; i++) {
+      var st = states[i];
+      if (!st || !st.handId || !isFinite(st.x) || !isFinite(st.baseY)) continue;
+      var key = String(st.handId);
+      keep[key] = true;
+      var guideEl = ensureZoomGuideEl(key);
+      if (!guideEl) continue;
+      guideEl.style.left = st.x + 'px';
+      guideEl.style.top = st.baseY + 'px';
+      guideEl.style.setProperty('--zoom-guide-range', ZOOM_CONTROL_RANGE_PX + 'px');
+      guideEl.classList.remove('hidden');
+    }
+
+    var byHand = zoomTagRuntime.guideByHandId || {};
+    for (var handKey in byHand) {
+      if (keep[handKey]) continue;
+      var oldEl = byHand[handKey];
+      if (oldEl && oldEl.parentNode) oldEl.parentNode.removeChild(oldEl);
+      delete byHand[handKey];
+    }
   }
 
   function projectDetectionToMapContainerPoint(det, options) {
@@ -3059,9 +3313,13 @@ export function initApp() {
 
       var layerNavVoteState = updateApriltagTriggerSelections(apriltagTriggerPoints, apriltagPoints);
       processLayerNavigationVotes(layerNavVoteState);
+      processLayerPanVotes(layerNavVoteState, apriltagPoints);
+      processLayerZoomVotes(layerNavVoteState, apriltagPoints);
       handleStage3Gestures(apriltagPoints);
     } else {
       processLayerNavigationVotes(null);
+      processLayerPanVotes(null, null);
+      processLayerZoomVotes(null, null);
       resetStage3Gestures();
     }
 

@@ -297,6 +297,8 @@ function getLayerNavActionForTool(toolType, toolEl) {
   var layerName = String(toolEl.dataset.layerName || '').trim().toLowerCase();
   if (layerName === 'next') return 'next';
   if (layerName === 'back') return 'back';
+  if (layerName === 'pan') return 'pan';
+  if (layerName === 'zoom') return 'zoom';
   return '';
 }
 
@@ -415,8 +417,8 @@ function resolveToolElementForTriggerPoint(pointer, triggerTagId) {
     var toolType = getToolTypeFromElement(toolEl);
     if (!toolType) continue;
     var layerName = toolEl && toolEl.dataset ? String(toolEl.dataset.layerName || '').trim().toLowerCase() : '';
-    var isAnyTriggerLayerNav = toolType === 'layer-square' && (layerName === 'next' || layerName === 'back');
-    if (!isAnyTriggerLayerNav && normalizeTagId(toolEl.dataset && toolEl.dataset.triggerTagId) !== triggerId) continue;
+    var isAnyTriggerLayerAction = toolType === 'layer-square' && (layerName === 'next' || layerName === 'back' || layerName === 'pan' || layerName === 'zoom');
+    if (!isAnyTriggerLayerAction && normalizeTagId(toolEl.dataset && toolEl.dataset.triggerTagId) !== triggerId) continue;
     return { toolEl: toolEl, toolType: toolType };
   }
   return null;
@@ -508,11 +510,7 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
     contactByHandId[handId] = contactKey;
 
     if (entry.lastTriggerContactKey === contactKey) {
-      if (isInputToolType(toolMatch.toolType)) {
-        setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, 1, nowMs);
-      } else {
-        clearTriggerHoverVisual(entry);
-      }
+      setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, 1, nowMs);
       continue;
     }
 
@@ -531,11 +529,7 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
     setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, fillProgress, nowMs);
     if (fillProgress < 1) continue;
 
-    if (isInputToolType(toolMatch.toolType)) {
-      setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, 1, nowMs);
-    } else {
-      clearTriggerHoverVisual(entry);
-    }
+    setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, 1, nowMs);
     entry.lastTriggerContactKey = contactKey;
     entry.activeLayerNavAction = getLayerNavActionForTool(toolMatch.toolType, toolMatch.toolEl);
 
@@ -565,13 +559,22 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
 
   var voteState = {
     nextHandIds: [],
-    backHandIds: []
+    backHandIds: [],
+    panHandIds: [],
+    zoomHandIds: []
   };
   for (var voteHandId in apriltagActiveToolByHandId) {
     var voteEntry = apriltagActiveToolByHandId[voteHandId];
     if (!voteEntry || !voteEntry.lastTriggerContactKey) continue;
     if (voteEntry.activeLayerNavAction === 'next') voteState.nextHandIds.push(voteHandId);
     else if (voteEntry.activeLayerNavAction === 'back') voteState.backHandIds.push(voteHandId);
+    else if (voteEntry.activeLayerNavAction === 'pan') voteState.panHandIds.push(voteHandId);
+    else if (voteEntry.activeLayerNavAction === 'zoom') {
+      voteState.zoomHandIds.push(voteHandId);
+      if (voteEntry.toolEl && voteEntry.toolEl.isConnected) {
+        setTriggerHoverVisual(voteEntry, voteEntry.toolEl, voteEntry.lastTriggerContactKey, 1, nowMs);
+      }
+    }
   }
 
   updateApriltagActiveToolVisuals();

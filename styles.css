@@ -1219,6 +1219,62 @@ body.vga-mode-active #leafletMap {
     will-change: transform;
 }
 
+.map-zoom-guides {
+    position: absolute;
+    inset: 0;
+    z-index: 1002;
+    pointer-events: none;
+}
+
+.map-zoom-guide {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    --zoom-guide-range: 90px;
+}
+
+.map-zoom-guide__line {
+    position: absolute;
+    left: 0;
+    top: calc(var(--zoom-guide-range) * -1);
+    width: 2px;
+    height: calc(var(--zoom-guide-range) * 2);
+    background: rgba(255, 255, 255, 0.72);
+    box-shadow: 0 0 14px rgba(255, 255, 255, 0.35);
+    transform: translateX(-50%);
+}
+
+.map-zoom-guide__plus,
+.map-zoom-guide__minus {
+    position: absolute;
+    left: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.85);
+    background: rgba(8, 12, 18, 0.82);
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: 800;
+    line-height: 20px;
+    text-align: center;
+    transform: translate(-50%, -50%);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+    box-shadow: 0 0 16px rgba(255, 255, 255, 0.25);
+}
+
+.map-zoom-guide__plus {
+    top: calc(var(--zoom-guide-range) * -1);
+}
+
+.map-zoom-guide__minus {
+    top: var(--zoom-guide-range);
+}
+
 .map-finger-cursor {
     position: fixed;
     left: 0;
