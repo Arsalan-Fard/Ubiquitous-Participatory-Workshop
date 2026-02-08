@@ -503,7 +503,7 @@ if __name__ == "__main__":
   parser.add_argument("--host", default="0.0.0.0", help="Host to bind")
   parser.add_argument("--port", type=int, default=5000, help="Port to bind")
   parser.add_argument("--jpeg-quality", type=int, default=100, help="MJPEG quality (1-100)")
-  parser.add_argument("--apriltag-fps", type=float, default=60.0, help="Backend AprilTag detection max FPS")
+  parser.add_argument("--apriltag-fps", type=float, default=25.0, help="Backend AprilTag detection max FPS")
   parser.add_argument("--apriltag-family", default="tag36h11", help="AprilTag family")
   parser.add_argument("--apriltag-threads", type=int, default=4, help="AprilTag detector threads")
   parser.add_argument("--apriltag-quad-decimate", type=float, default=1.0, help="AprilTag quad decimate")
