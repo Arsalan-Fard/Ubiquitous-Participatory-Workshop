@@ -63,7 +63,7 @@ var apriltagLastPollMs = 0;
 var apriltagPollBackoffMs = 0;
 var apriltagPollBlockedUntilMs = 0;
 var apriltagBackendErrorNotified = false;
-var apriltagRateLimitNotified = false;
+var apriltagBackoffNotified = false;
 var backendFeedActive = false;
 
 export function initApp() {
@@ -82,6 +82,11 @@ export function initApp() {
   var mapTagMaskCacheById = {};
 
   var videoContainer = document.getElementById('videoContainer1');
+
+  // Render AprilTag black masks above all map overlays/UI while keeping map warp alignment.
+  if (dom.mapTagMasksEl && dom.mapViewEl && dom.mapTagMasksEl.parentNode !== dom.mapViewEl) {
+    dom.mapViewEl.appendChild(dom.mapTagMasksEl);
+  }
 
   initUiSetup({
     panelEl: dom.uiSetupPanelEl,
@@ -2901,6 +2906,22 @@ export function initApp() {
     return Math.max(0, dateMs - nowMs);
   }
 
+  function applyApriltagPollBackoff(nowMs, retryAfterRaw, reason) {
+    var retryAfterMs = parseRetryAfterMs(retryAfterRaw, nowMs);
+    if (retryAfterMs > 0) {
+      apriltagPollBackoffMs = Math.min(BACKEND_APRILTAG_POLL_BACKOFF_MAX_MS, retryAfterMs);
+    } else {
+      apriltagPollBackoffMs = apriltagPollBackoffMs > 0
+        ? Math.min(BACKEND_APRILTAG_POLL_BACKOFF_MAX_MS, apriltagPollBackoffMs * 2)
+        : BACKEND_APRILTAG_POLL_BACKOFF_BASE_MS;
+    }
+    apriltagPollBlockedUntilMs = nowMs + apriltagPollBackoffMs;
+    if (!apriltagBackoffNotified) {
+      console.warn('AprilTag API temporary failure (' + reason + '), backing off for', apriltagPollBackoffMs, 'ms');
+      apriltagBackoffNotified = true;
+    }
+  }
+
   function pollBackendApriltagsMaybe() {
     if (apriltagPollInFlight) return;
     var now = Date.now();
@@ -2911,29 +2932,22 @@ export function initApp() {
     apriltagPollInFlight = true;
 
     fetch(BACKEND_APRILTAG_API_URL, { cache: 'no-store' }).then(function(resp) {
-      if (resp.status === 429) {
-        var retryAfterMs = parseRetryAfterMs(resp.headers ? resp.headers.get('Retry-After') : '', now);
-        if (retryAfterMs > 0) {
-          apriltagPollBackoffMs = Math.min(BACKEND_APRILTAG_POLL_BACKOFF_MAX_MS, retryAfterMs);
-        } else {
-          apriltagPollBackoffMs = apriltagPollBackoffMs > 0
-            ? Math.min(BACKEND_APRILTAG_POLL_BACKOFF_MAX_MS, apriltagPollBackoffMs * 2)
-            : BACKEND_APRILTAG_POLL_BACKOFF_BASE_MS;
-        }
-        apriltagPollBlockedUntilMs = now + apriltagPollBackoffMs;
-        if (!apriltagRateLimitNotified) {
-          console.warn('AprilTag API rate-limited (429), backing off for', apriltagPollBackoffMs, 'ms');
-          apriltagRateLimitNotified = true;
-        }
+      if (resp.status === 429 || resp.status === 408 || resp.status >= 500) {
+        applyApriltagPollBackoff(Date.now(), resp.headers ? resp.headers.get('Retry-After') : '', 'HTTP ' + resp.status);
         return null;
       }
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      if (!resp.ok) {
+        applyApriltagPollBackoff(Date.now(), resp.headers ? resp.headers.get('Retry-After') : '', 'HTTP ' + resp.status);
+        var httpErr = new Error('HTTP ' + resp.status);
+        httpErr.apriltagBackoffApplied = true;
+        throw httpErr;
+      }
       return resp.json();
     }).then(function(payload) {
       if (!payload) return;
       apriltagPollBackoffMs = 0;
       apriltagPollBlockedUntilMs = 0;
-      apriltagRateLimitNotified = false;
+      apriltagBackoffNotified = false;
       if (!payload || !Array.isArray(payload.detections)) return;
       state.lastApriltagDetections = payload.detections;
       if (payload.ok) {
@@ -2943,6 +2957,9 @@ export function initApp() {
         apriltagBackendErrorNotified = true;
       }
     }).catch(function(err) {
+      if (!err || !err.apriltagBackoffApplied) {
+        applyApriltagPollBackoff(Date.now(), '', 'network');
+      }
       console.warn('AprilTag backend fetch failed:', err);
       if (!apriltagBackendErrorNotified) {
         setError('Cannot reach backend AprilTag API.');
@@ -3050,7 +3067,7 @@ export function initApp() {
     apriltagPollBackoffMs = 0;
     apriltagPollBlockedUntilMs = 0;
     apriltagBackendErrorNotified = false;
-    apriltagRateLimitNotified = false;
+    apriltagBackoffNotified = false;
     startProcessing();
   }
 
@@ -3566,6 +3583,11 @@ export function initApp() {
   // Update black masks over detected AprilTag positions in the projected map view
   function updateMapTagMasks(detections) {
     if (!dom.mapTagMasksEl) return;
+    if (dom.mapWarpEl) {
+      var warpTransform = window.getComputedStyle(dom.mapWarpEl).transform;
+      dom.mapTagMasksEl.style.transform = (warpTransform && warpTransform !== 'none') ? warpTransform : 'none';
+      dom.mapTagMasksEl.style.transformOrigin = '0 0';
+    }
     if (!state.surfaceHomography) {
       dom.mapTagMasksEl.innerHTML = '';
       return;

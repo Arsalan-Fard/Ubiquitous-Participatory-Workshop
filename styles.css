@@ -1186,7 +1186,7 @@ body.vga-mode-active #leafletMap {
 .map-tag-masks {
     position: absolute;
     inset: 0;
-    z-index: 900;
+    z-index: 2147483000;
     pointer-events: none;
     overflow: visible;
 }

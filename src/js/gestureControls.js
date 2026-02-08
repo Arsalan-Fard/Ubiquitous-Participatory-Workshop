@@ -1028,7 +1028,8 @@ function processPointerGesture(handIndex, pointer, handData) {
     ps.triggerFired = false;
 
     if (state.stage === 4 && activeToolType === 'eraser' && ps.eraserActive) {
-      eraseAtPoint(pointer.x, pointer.y, ERASER_TOUCH_RADIUS_PX);
+      var eraserOwnerTagId = normalizeTagId(activeToolEl && activeToolEl.dataset ? activeToolEl.dataset.triggerTagId : '');
+      eraseAtPoint(pointer.x, pointer.y, ERASER_TOUCH_RADIUS_PX, eraserOwnerTagId);
       updatePointerCursor(handIndex, pointer, 0, null);
       ps.prevPointerTimeMs = nowMs;
       return;

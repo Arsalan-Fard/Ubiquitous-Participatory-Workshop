@@ -45,6 +45,12 @@ var stage4OsmBuildingsState = {
   lastRequestKey: ''
 };
 
+function normalizeTagId(value) {
+  var n = parseInt(value, 10);
+  if (!isFinite(n)) return '';
+  return String(n);
+}
+
 // Get or create drawing state for a pointer
 function getHandDrawState(pointerId) {
   if (!handDrawStates[pointerId]) {
@@ -53,7 +59,8 @@ function getHandDrawState(pointerId) {
       isDrawing: false,
       lastContainerPt: null,
       activeStroke: null,
-      buttonEl: null
+      buttonEl: null,
+      triggerTagId: ''
     };
   }
   return handDrawStates[pointerId];
@@ -70,6 +77,7 @@ export function activateDrawingForPointer(pointerId, color, buttonEl) {
 
   hs.color = color;
   hs.buttonEl = buttonEl || null;
+  hs.triggerTagId = normalizeTagId(buttonEl && buttonEl.dataset ? buttonEl.dataset.triggerTagId : '');
 
   // Add active class to the new button
   if (hs.buttonEl) {
@@ -356,6 +364,10 @@ export function stage4PointerdownOnMap(e) {
     glow.sessionId = sessionId;
     main.sessionId = sessionId;
   }
+  if (hs.triggerTagId) {
+    glow.triggerTagId = hs.triggerTagId;
+    main.triggerTagId = hs.triggerTagId;
+  }
   glow.strokeId = strokeId;
   main.strokeId = strokeId;
 
@@ -474,6 +486,10 @@ export function startDrawingAtPoint(pointerId, clientX, clientY) {
   if (sessionId) {
     glow.sessionId = sessionId;
     main.sessionId = sessionId;
+  }
+  if (hs.triggerTagId) {
+    glow.triggerTagId = hs.triggerTagId;
+    main.triggerTagId = hs.triggerTagId;
   }
   glow.strokeId = strokeId;
   main.strokeId = strokeId;
@@ -1159,12 +1175,13 @@ function flattenLatLngs(latlngs, out) {
   }
 }
 
-export function eraseAtPoint(clientX, clientY, radiusPx) {
+export function eraseAtPoint(clientX, clientY, radiusPx, ownerTriggerTagId) {
   if (state.stage !== 4 || state.viewMode !== 'map') return;
   if (!state.leafletMap || !state.stage4DrawLayer || !state.dom) return;
   if (!isFinite(clientX) || !isFinite(clientY)) return;
 
   var radius = Math.max(2, isFinite(radiusPx) ? radiusPx : 16);
+  var ownerTagId = normalizeTagId(ownerTriggerTagId);
   var pointerLatLng = stage4LatLngFromClientCoords(clientX, clientY);
   if (!pointerLatLng) return;
   var pointerPt = state.leafletMap.latLngToContainerPoint(pointerLatLng);
@@ -1174,6 +1191,10 @@ export function eraseAtPoint(clientX, clientY, radiusPx) {
   var removeStrokeIds = {};
   state.stage4DrawLayer.eachLayer(function(layer) {
     if (!layer || typeof layer.getLatLngs !== 'function') return;
+    if (ownerTagId) {
+      var layerOwnerTagId = normalizeTagId(layer.triggerTagId);
+      if (!layerOwnerTagId || layerOwnerTagId !== ownerTagId) return;
+    }
     var raw = layer.getLatLngs();
     if (!raw) return;
     var flat = [];
@@ -1232,6 +1253,10 @@ export function eraseAtPoint(clientX, clientY, radiusPx) {
   var stickerEls = overlayEl.querySelectorAll('.ui-sticker-instance.ui-dot:not(.ui-layer-square), .ui-sticker-instance.ui-note, .ui-sticker-instance.ui-draw');
   for (var si = 0; si < stickerEls.length; si++) {
     var el = stickerEls[si];
+    if (ownerTagId) {
+      var stickerOwnerTagId = normalizeTagId(el && el.dataset ? el.dataset.triggerTagId : '');
+      if (!stickerOwnerTagId || stickerOwnerTagId !== ownerTagId) continue;
+    }
     var rect = el.getBoundingClientRect();
     if (distancePointToRectPx(clientX, clientY, rect) <= radius) {
       if (el.parentNode) el.parentNode.removeChild(el);
@@ -1408,6 +1433,9 @@ export function cloneSticker(templateEl) {
     dotEl.className = 'ui-dot ui-sticker-instance';
     dotEl.dataset.uiType = 'dot';
     dotEl.dataset.color = templateEl.dataset && templateEl.dataset.color ? templateEl.dataset.color : (templateEl.style.background || '#2bb8ff');
+    if (templateEl.dataset && templateEl.dataset.triggerTagId) {
+      dotEl.dataset.triggerTagId = String(templateEl.dataset.triggerTagId);
+    }
     if (sessionId) dotEl.dataset.sessionId = String(sessionId);
     dotEl.style.background = dotEl.dataset.color;
     dotEl.style.left = templateEl.style.left || '0px';
@@ -1423,6 +1451,9 @@ export function cloneSticker(templateEl) {
     noteEl.dataset.expanded = 'false';
     noteEl.dataset.noteText = (templateEl.dataset && templateEl.dataset.noteText) ? templateEl.dataset.noteText : '';
     noteEl.dataset.color = templateEl.dataset && templateEl.dataset.color ? templateEl.dataset.color : (templateEl.style.background || '#2bb8ff');
+    if (templateEl.dataset && templateEl.dataset.triggerTagId) {
+      noteEl.dataset.triggerTagId = String(templateEl.dataset.triggerTagId);
+    }
     if (sessionId) noteEl.dataset.sessionId = String(sessionId);
     noteEl.style.background = noteEl.dataset.color;
     noteEl.style.left = templateEl.style.left || '0px';
@@ -1447,6 +1478,9 @@ export function cloneSticker(templateEl) {
   drawEl.className = 'ui-draw ui-sticker-instance';
   drawEl.dataset.uiType = 'draw';
   drawEl.dataset.color = templateEl.dataset && templateEl.dataset.color ? templateEl.dataset.color : '#2bb8ff';
+  if (templateEl.dataset && templateEl.dataset.triggerTagId) {
+    drawEl.dataset.triggerTagId = String(templateEl.dataset.triggerTagId);
+  }
   if (sessionId) drawEl.dataset.sessionId = String(sessionId);
   drawEl.width = 24;
   drawEl.height = 24;
