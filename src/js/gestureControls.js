@@ -98,6 +98,7 @@ function getPointerState(handIndex) {
       armedStickerTemplate: null,  // Template element for dot/note placement (two-step flow)
       activeFollowStickerEl: null, // Live sticker that follows primary while sticker tool is active
       activeFollowStickerContactKey: '',
+      followFinalizeRequested: false,
       drawingStarted: false,  // Whether drawing has been started by a trigger (2nd trigger enables actual drawing)
       eraserActive: false,
       eraserButtonEl: null,
@@ -400,12 +401,34 @@ function placeStickerImmediatelyForHand(handId, templateEl, primaryPointByHandId
   return true;
 }
 
-function startFollowStickerForPointer(ps, templateEl, pointer, contactKey) {
+function findExistingFollowStickerForHand(handId, contactKey) {
+  var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
+  if (!overlayEl || !overlayEl.querySelectorAll) return null;
+  var wantedHandId = String(handId || '');
+  if (!wantedHandId) return null;
+  var wantedContactKey = String(contactKey || '');
+  var els = overlayEl.querySelectorAll('.ui-sticker-instance[data-follow-primary="1"]');
+  for (var i = 0; i < els.length; i++) {
+    var el = els[i];
+    if (!el || !el.dataset) continue;
+    if (String(el.dataset.followHandId || '') !== wantedHandId) continue;
+    if (wantedContactKey && String(el.dataset.followContactKey || '') !== wantedContactKey) continue;
+    return el;
+  }
+  return null;
+}
+
+function startFollowStickerForPointer(ps, templateEl, pointer, contactKey, handId) {
   if (!ps || !templateEl || !pointer) return null;
-  var clonedEl = cloneSticker(templateEl);
-  if (!clonedEl) return null;
+  var clonedEl = findExistingFollowStickerForHand(handId, contactKey);
+  if (!clonedEl) {
+    clonedEl = cloneSticker(templateEl);
+    if (!clonedEl) return null;
+  }
   if (clonedEl.dataset) {
     clonedEl.dataset.followPrimary = '1';
+    clonedEl.dataset.followHandId = String(handId || '');
+    clonedEl.dataset.followContactKey = String(contactKey || '');
     delete clonedEl.dataset.mapLat;
     delete clonedEl.dataset.mapLng;
   }
@@ -415,6 +438,7 @@ function startFollowStickerForPointer(ps, templateEl, pointer, contactKey) {
   clonedEl.style.top = (pointer.y - h / 2) + 'px';
   ps.activeFollowStickerEl = clonedEl;
   ps.activeFollowStickerContactKey = contactKey || '';
+  ps.followFinalizeRequested = false;
   return clonedEl;
 }
 
@@ -428,9 +452,15 @@ function updateFollowStickerPosition(ps, pointer) {
 }
 
 function finalizeFollowStickerForPointer(ps) {
-  if (!ps || !ps.activeFollowStickerEl) return;
+  if (!ps) return;
+  ps.followFinalizeRequested = false;
+  if (!ps.activeFollowStickerEl) return;
   var el = ps.activeFollowStickerEl;
-  if (el && el.dataset) delete el.dataset.followPrimary;
+  if (el && el.dataset) {
+    delete el.dataset.followPrimary;
+    delete el.dataset.followHandId;
+    delete el.dataset.followContactKey;
+  }
   if (el && el.isConnected && state.viewMode === 'map' && (state.stage === 3 || state.stage === 4)) {
     bindStickerLatLngFromCurrentPosition(el);
     updateStickerMappingForCurrentView();
@@ -536,19 +566,21 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
     triggerVisibleByHandId[handId] = true;
 
     var toolMatch = resolveToolElementForTriggerPoint({ x: point.x, y: point.y }, participantTriggerTagId);
-    if (!toolMatch) {
-      // Rearm only when the trigger tag is explicitly seen outside any tool button.
-      if (entry.lastTriggerContactKey) entry.lastTriggerContactKey = '';
-      entry.activeLayerNavAction = '';
-      clearTriggerHoverVisual(entry);
-      // Drawing should stop as soon as the trigger tag leaves the draw button.
-      if (entry.toolType === 'draw') {
-        setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
-      } else if (entry.toolType === 'dot') {
-        setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
+      if (!toolMatch) {
+        // Rearm only when the trigger tag is explicitly seen outside any tool button.
+        if (entry.lastTriggerContactKey) entry.lastTriggerContactKey = '';
+        entry.activeLayerNavAction = '';
+        clearTriggerHoverVisual(entry);
+        // Drawing should stop as soon as the trigger tag leaves the draw button.
+        if (entry.toolType === 'draw') {
+          setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
+        } else if (entry.toolType === 'dot') {
+          var psDotExit = pointerStates[handId];
+          if (psDotExit) psDotExit.followFinalizeRequested = true;
+          setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
+        }
+        continue;
       }
-      continue;
-    }
     var contactKey = getToolContactKey(toolMatch);
     contactByHandId[handId] = contactKey;
 
@@ -563,6 +595,8 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
         entry.lastTriggerContactKey = '';
         entry.activeLayerNavAction = '';
         if (entry.toolType === 'dot') {
+          var psDotSwitch = pointerStates[handId];
+          if (psDotSwitch) psDotSwitch.followFinalizeRequested = true;
           setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
         }
       }
@@ -805,12 +839,31 @@ export function handleStage3Gestures(usableIndexTipPoints) {
       if (ps.isApriltag && ps.lastPointer) {
         var activeTool = syncPointerToolWithApriltagSelection(ps, handId);
         var activeToolType = activeTool.toolType;
+        if (ps.activeFollowStickerEl && activeToolType !== 'dot' && ps.followFinalizeRequested) {
+          finalizeFollowStickerForPointer(ps);
+        }
 
-        // Stop current drawing stroke after brief delay
+        // Stop current drawing stroke only when draw is not active anymore.
         var strokeStopDelay = typeof state.strokeStopDelayMs === 'number' ? state.strokeStopDelayMs : 50;
-        if (ps.isDrawing && missingDuration >= strokeStopDelay) {
+        if (ps.isDrawing && activeToolType !== 'draw' && missingDuration >= strokeStopDelay) {
           ps.isDrawing = false;
           stopDrawingForPointer(ps.dragPointerId);
+        }
+
+        // Keep drawing active indefinitely while draw button is active.
+        if (activeToolType === 'draw') {
+          ps.triggerFillStartMs = 0;
+          ps.triggerFired = false;
+          updatePointerCursor(handId, ps.lastPointer, 0, null);
+          continue;
+        }
+
+        // Keep active sticker following session alive while sticker button remains active.
+        if (activeToolType === 'dot') {
+          ps.triggerFillStartMs = 0;
+          ps.triggerFired = false;
+          updatePointerCursor(handId, ps.lastPointer, 0, null);
+          continue;
         }
 
         // Start fill timer on first frame of disappearance
@@ -833,9 +886,9 @@ export function handleStage3Gestures(usableIndexTipPoints) {
           }
         }
 
-        // Keep draw/eraser state alive longer across temporary loss.
+        // Keep eraser state alive longer across temporary loss.
         var triggerTimeout = APRILTAG_TRIGGER_DELAY_MS + 200; // extra buffer
-        var keepAlive = activeToolType === 'draw' || activeToolType === 'eraser';
+        var keepAlive = activeToolType === 'eraser';
         var maxTimeout = keepAlive ? drawingTimeoutMs : triggerTimeout;
         if (missingDuration < maxTimeout) continue;
 
@@ -952,7 +1005,8 @@ function processPointerGesture(handIndex, pointer, handData) {
   ps.prevPointer = ps.lastPointer;
   ps.lastPointer = pointer;
 
-  var isApriltag = !!(handData && handData.isApriltag);
+  // Keep AprilTag identity sticky per hand across temporary frames where handData is missing.
+  var isApriltag = !!((handData && handData.isApriltag) || ps.isApriltag);
   var isTouch = (handData && typeof handData.isTouch === 'boolean') ? handData.isTouch : null;
   var activeApriltagTool = null;
 
@@ -967,20 +1021,23 @@ function processPointerGesture(handIndex, pointer, handData) {
   var activeApriltagEntry = isApriltag ? getApriltagActiveToolForHand(handIndex) : null;
   var activeToolType = activeApriltagTool ? activeApriltagTool.toolType : 'selection';
   var activeToolEl = activeApriltagTool ? activeApriltagTool.toolEl : null;
+  // Finalize a live-follow sticker only when trigger-tag deactivation explicitly requested it.
+  if (ps.activeFollowStickerEl && !(isApriltag && activeToolType === 'dot')) {
+    if (ps.followFinalizeRequested || !isApriltag) {
+      finalizeFollowStickerForPointer(ps);
+    }
+  }
+
   var activeContactKey = activeApriltagEntry && typeof activeApriltagEntry.lastTriggerContactKey === 'string'
     ? activeApriltagEntry.lastTriggerContactKey
     : '';
 
-  // Finalize a live-follow sticker as soon as its sticker button is deactivated.
-  if (ps.activeFollowStickerEl && !(isApriltag && activeToolType === 'dot' && activeContactKey)) {
-    finalizeFollowStickerForPointer(ps);
-  }
-
   // Sticker mode: while active, keep one sticker attached to primary-tag position.
-  if (isApriltag && activeToolType === 'dot' && activeToolEl && activeContactKey) {
+  if (isApriltag && activeToolType === 'dot' && activeToolEl) {
+    ps.followFinalizeRequested = false;
     if (!ps.activeFollowStickerEl || ps.activeFollowStickerContactKey !== activeContactKey) {
       finalizeFollowStickerForPointer(ps);
-      startFollowStickerForPointer(ps, activeToolEl, pointer, activeContactKey);
+      startFollowStickerForPointer(ps, activeToolEl, pointer, activeContactKey, handIndex);
     } else {
       updateFollowStickerPosition(ps, pointer);
     }

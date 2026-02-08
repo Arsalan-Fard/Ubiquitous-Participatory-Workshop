@@ -54,11 +54,16 @@ var BACKEND_APRILTAG_API_URL = '/api/apriltags';
 var BACKEND_WORKSHOP_SESSION_API_URL = '/api/workshop_session';
 var BACKEND_WORKSHOPS_API_URL = '/api/workshops';
 var BACKEND_APRILTAG_POLL_CAMERA_MS = 60;
-var BACKEND_APRILTAG_POLL_MAP_MS = 16;
+var BACKEND_APRILTAG_POLL_MAP_MS = 40;
+var BACKEND_APRILTAG_POLL_BACKOFF_BASE_MS = 250;
+var BACKEND_APRILTAG_POLL_BACKOFF_MAX_MS = 5000;
 var MAP_TAG_MASK_HOLD_MS = 500;
 var apriltagPollInFlight = false;
 var apriltagLastPollMs = 0;
+var apriltagPollBackoffMs = 0;
+var apriltagPollBlockedUntilMs = 0;
 var apriltagBackendErrorNotified = false;
+var apriltagRateLimitNotified = false;
 var backendFeedActive = false;
 
 export function initApp() {
@@ -2885,18 +2890,50 @@ export function initApp() {
 
   // ============== Camera Management ==============
 
+  function parseRetryAfterMs(retryAfterRaw, nowMs) {
+    if (!retryAfterRaw) return 0;
+    var text = String(retryAfterRaw).trim();
+    if (!text) return 0;
+    var seconds = Number(text);
+    if (isFinite(seconds) && seconds > 0) return Math.round(seconds * 1000);
+    var dateMs = Date.parse(text);
+    if (!isFinite(dateMs)) return 0;
+    return Math.max(0, dateMs - nowMs);
+  }
+
   function pollBackendApriltagsMaybe() {
     if (apriltagPollInFlight) return;
     var now = Date.now();
+    if (apriltagPollBlockedUntilMs > now) return;
     var pollMs = state.viewMode === 'map' ? BACKEND_APRILTAG_POLL_MAP_MS : BACKEND_APRILTAG_POLL_CAMERA_MS;
     if ((now - apriltagLastPollMs) < pollMs) return;
     apriltagLastPollMs = now;
     apriltagPollInFlight = true;
 
     fetch(BACKEND_APRILTAG_API_URL, { cache: 'no-store' }).then(function(resp) {
+      if (resp.status === 429) {
+        var retryAfterMs = parseRetryAfterMs(resp.headers ? resp.headers.get('Retry-After') : '', now);
+        if (retryAfterMs > 0) {
+          apriltagPollBackoffMs = Math.min(BACKEND_APRILTAG_POLL_BACKOFF_MAX_MS, retryAfterMs);
+        } else {
+          apriltagPollBackoffMs = apriltagPollBackoffMs > 0
+            ? Math.min(BACKEND_APRILTAG_POLL_BACKOFF_MAX_MS, apriltagPollBackoffMs * 2)
+            : BACKEND_APRILTAG_POLL_BACKOFF_BASE_MS;
+        }
+        apriltagPollBlockedUntilMs = now + apriltagPollBackoffMs;
+        if (!apriltagRateLimitNotified) {
+          console.warn('AprilTag API rate-limited (429), backing off for', apriltagPollBackoffMs, 'ms');
+          apriltagRateLimitNotified = true;
+        }
+        return null;
+      }
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       return resp.json();
     }).then(function(payload) {
+      if (!payload) return;
+      apriltagPollBackoffMs = 0;
+      apriltagPollBlockedUntilMs = 0;
+      apriltagRateLimitNotified = false;
       if (!payload || !Array.isArray(payload.detections)) return;
       state.lastApriltagDetections = payload.detections;
       if (payload.ok) {
@@ -3010,7 +3047,10 @@ export function initApp() {
     state.lastApriltagDetections = [];
     apriltagLastPollMs = 0;
     apriltagPollInFlight = false;
+    apriltagPollBackoffMs = 0;
+    apriltagPollBlockedUntilMs = 0;
     apriltagBackendErrorNotified = false;
+    apriltagRateLimitNotified = false;
     startProcessing();
   }
 
