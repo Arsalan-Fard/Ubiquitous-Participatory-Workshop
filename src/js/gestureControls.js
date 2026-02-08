@@ -29,6 +29,9 @@ var nextPointerId = 100; // Start at 100 to avoid conflicts with real pointer ID
 // AprilTag trigger-on-disappearance delay (ms)
 var APRILTAG_TRIGGER_DELAY_MS = 1000;
 var ERASER_TOUCH_RADIUS_PX = 16;
+var APRILTAG_TOOL_SELECTOR = '.ui-dot, .ui-note, .ui-draw, .ui-eraser, .ui-selection, .ui-layer-square';
+var APRILTAG_TOOL_ACTIVE_CLASS = 'ui-trigger-active';
+var apriltagActiveToolByHandId = {};
 
 // Get all visible finger dot positions in viewport coordinates
 export function getAllMapPointerViewportPoints() {
@@ -92,7 +95,9 @@ function getPointerState(handIndex) {
       armedStickerTemplate: null,  // Template element for dot/note placement (two-step flow)
       drawingStarted: false,  // Whether drawing has been started by a trigger (2nd trigger enables actual drawing)
       eraserActive: false,
-      eraserButtonEl: null
+      eraserButtonEl: null,
+      activeToolType: 'selection',
+      activeToolElement: null
     };
   }
   return pointerStates[handIndex];
@@ -123,6 +128,250 @@ function activateEraser(ps, buttonEl) {
   ps.eraserButtonEl = buttonEl;
   ps.eraserActive = true;
   buttonEl.classList.add('ui-eraser--active');
+}
+
+function getToolTypeFromElement(el) {
+  if (!el || !el.classList) return '';
+  var uiType = el.dataset && el.dataset.uiType ? String(el.dataset.uiType) : '';
+  if (uiType === 'dot' || uiType === 'draw' || uiType === 'note' || uiType === 'eraser' || uiType === 'selection' || uiType === 'layer-square') {
+    return uiType;
+  }
+  if (el.classList.contains('ui-selection')) return 'selection';
+  if (el.classList.contains('ui-eraser')) return 'eraser';
+  if (el.classList.contains('ui-draw')) return 'draw';
+  if (el.classList.contains('ui-note')) return 'note';
+  if (el.classList.contains('ui-layer-square')) return 'layer-square';
+  if (el.classList.contains('ui-dot')) return 'dot';
+  return '';
+}
+
+function isTemplateInteractionElement(el) {
+  if (!el || !el.classList) return false;
+  if (el.classList.contains('ui-trigger-select')) return false;
+  // Layer squares are intentionally stickers and should still be selectable.
+  if (el.classList.contains('ui-sticker-instance') && !el.classList.contains('ui-layer-square')) return false;
+  return !!getToolTypeFromElement(el);
+}
+
+function normalizePrimaryHandId(value) {
+  var n = parseInt(value, 10);
+  if (!isFinite(n)) return '';
+  return String(n);
+}
+
+function normalizeTagId(value) {
+  var n = parseInt(value, 10);
+  if (!isFinite(n)) return '';
+  return String(n);
+}
+
+function getParticipantTriggerTagIdByPrimaryHandId(handId) {
+  var primaryIds = Array.isArray(state.stage3ParticipantTagIds) ? state.stage3ParticipantTagIds : [];
+  var triggerIds = Array.isArray(state.stage3ParticipantTriggerTagIds) ? state.stage3ParticipantTriggerTagIds : [];
+  var wanted = normalizePrimaryHandId(handId);
+  if (!wanted) return '';
+
+  for (var i = 0; i < primaryIds.length; i++) {
+    if (normalizePrimaryHandId(primaryIds[i]) !== wanted) continue;
+    return normalizeTagId(triggerIds[i]);
+  }
+  return '';
+}
+
+function findSelectionToolElementForTriggerTag(triggerTagId) {
+  var triggerId = normalizeTagId(triggerTagId);
+  var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
+  if (!overlayEl) return null;
+  var selectionEls = overlayEl.querySelectorAll('.ui-selection');
+  for (var i = 0; i < selectionEls.length; i++) {
+    var el = selectionEls[i];
+    if (!el || !isTemplateInteractionElement(el)) continue;
+    if (normalizeTagId(el.dataset && el.dataset.triggerTagId) !== triggerId) continue;
+    return el;
+  }
+  return null;
+}
+
+function syncApriltagActiveToolsWithParticipants() {
+  var primaryIds = Array.isArray(state.stage3ParticipantTagIds) ? state.stage3ParticipantTagIds : [];
+  var allowedByHandId = {};
+
+  for (var i = 0; i < primaryIds.length; i++) {
+    var handId = normalizePrimaryHandId(primaryIds[i]);
+    if (!handId) continue;
+    allowedByHandId[handId] = true;
+    var triggerTagId = getParticipantTriggerTagIdByPrimaryHandId(handId);
+    var entry = apriltagActiveToolByHandId[handId];
+    if (!entry) {
+      apriltagActiveToolByHandId[handId] = {
+        toolType: 'selection',
+        toolEl: findSelectionToolElementForTriggerTag(triggerTagId),
+        triggerTagId: triggerTagId
+      };
+      continue;
+    }
+    entry.triggerTagId = triggerTagId;
+    if (entry.toolEl && !entry.toolEl.isConnected) entry.toolEl = null;
+    if (!entry.toolEl && entry.toolType === 'selection') {
+      entry.toolEl = findSelectionToolElementForTriggerTag(triggerTagId);
+    }
+    if (entry.toolType !== 'selection' && !entry.toolEl) {
+      entry.toolType = 'selection';
+      entry.toolEl = findSelectionToolElementForTriggerTag(triggerTagId);
+    }
+  }
+
+  for (var handKey in apriltagActiveToolByHandId) {
+    if (!allowedByHandId[handKey]) {
+      delete apriltagActiveToolByHandId[handKey];
+    }
+  }
+}
+
+function getApriltagActiveToolForHand(handId) {
+  var key = normalizePrimaryHandId(handId);
+  if (!key) return { toolType: 'selection', toolEl: null, triggerTagId: '' };
+  syncApriltagActiveToolsWithParticipants();
+  if (!apriltagActiveToolByHandId[key]) {
+    var triggerTagId = getParticipantTriggerTagIdByPrimaryHandId(key);
+    apriltagActiveToolByHandId[key] = {
+      toolType: 'selection',
+      toolEl: findSelectionToolElementForTriggerTag(triggerTagId),
+      triggerTagId: triggerTagId
+    };
+  }
+  return apriltagActiveToolByHandId[key];
+}
+
+function updateApriltagActiveToolVisuals() {
+  var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
+  if (!overlayEl) return;
+
+  var allToolEls = overlayEl.querySelectorAll(APRILTAG_TOOL_SELECTOR);
+  for (var i = 0; i < allToolEls.length; i++) {
+    allToolEls[i].classList.remove(APRILTAG_TOOL_ACTIVE_CLASS);
+  }
+
+  for (var handId in apriltagActiveToolByHandId) {
+    var entry = apriltagActiveToolByHandId[handId];
+    if (!entry) continue;
+    if (!entry.toolEl || !entry.toolEl.isConnected) {
+      if (entry.toolType === 'selection') {
+        entry.toolEl = findSelectionToolElementForTriggerTag(entry.triggerTagId);
+      }
+    }
+    if (entry.toolEl && entry.toolEl.isConnected) {
+      entry.toolEl.classList.add(APRILTAG_TOOL_ACTIVE_CLASS);
+    }
+  }
+}
+
+function setApriltagActiveToolForHand(handId, toolType, toolEl) {
+  var key = normalizePrimaryHandId(handId);
+  if (!key) return;
+  var entry = getApriltagActiveToolForHand(key);
+  var resolvedType = String(toolType || '');
+  var resolvedEl = toolEl && toolEl.isConnected ? toolEl : null;
+
+  if (!resolvedType) resolvedType = resolvedEl ? getToolTypeFromElement(resolvedEl) : 'selection';
+  if (!resolvedType || resolvedType === 'unknown') resolvedType = 'selection';
+  if (resolvedType !== 'selection' && !resolvedEl) resolvedType = 'selection';
+
+  if (resolvedType === 'selection' && !resolvedEl) {
+    resolvedEl = findSelectionToolElementForTriggerTag(entry.triggerTagId);
+  }
+
+  if (entry.toolType === resolvedType && entry.toolEl === resolvedEl) return;
+  entry.toolType = resolvedType;
+  entry.toolEl = resolvedEl;
+}
+
+function resolveToolElementForTriggerPoint(pointer, triggerTagId) {
+  var triggerId = normalizeTagId(triggerTagId);
+  if (!triggerId || !pointer || !isFinite(pointer.x) || !isFinite(pointer.y)) return null;
+
+  var candidates = [];
+  var hit = getEventTargetAt(pointer);
+  if (hit && hit.target) candidates.push(hit.target);
+
+  var near = getInteractionCandidate(pointer, 24);
+  if (near && near.target) candidates.push(near.target);
+
+  for (var i = 0; i < candidates.length; i++) {
+    var target = candidates[i];
+    if (!target || !target.closest) continue;
+    var toolEl = target.closest(APRILTAG_TOOL_SELECTOR);
+    if (!toolEl || !isTemplateInteractionElement(toolEl)) continue;
+    if (normalizeTagId(toolEl.dataset && toolEl.dataset.triggerTagId) !== triggerId) continue;
+    var toolType = getToolTypeFromElement(toolEl);
+    if (!toolType) continue;
+    return { toolEl: toolEl, toolType: toolType };
+  }
+  return null;
+}
+
+function syncPointerToolWithApriltagSelection(ps, handId) {
+  var entry = getApriltagActiveToolForHand(handId);
+  var toolType = entry.toolType || 'selection';
+  var toolEl = entry.toolEl && entry.toolEl.isConnected ? entry.toolEl : null;
+
+  if (toolType !== 'selection' && !toolEl) {
+    toolType = 'selection';
+    toolEl = findSelectionToolElementForTriggerTag(entry.triggerTagId);
+    entry.toolType = 'selection';
+    entry.toolEl = toolEl;
+  }
+
+  if (ps.activeToolType === toolType && ps.activeToolElement === toolEl) {
+    return { toolType: toolType, toolEl: toolEl };
+  }
+
+  if (ps.isDrawing) {
+    ps.isDrawing = false;
+    stopDrawingForPointer(ps.dragPointerId);
+  }
+  deactivateDrawingForPointer(ps.dragPointerId);
+  deactivateEraser(ps);
+  dearmStickerTemplate(ps);
+  ps.drawingStarted = false;
+
+  ps.activeToolType = toolType;
+  ps.activeToolElement = toolEl;
+
+  if (toolType === 'draw') {
+    var color = toolEl && toolEl.dataset && toolEl.dataset.color ? toolEl.dataset.color : '#2bb8ff';
+    activateDrawingForPointer(ps.dragPointerId, color, toolEl);
+    ps.drawingStarted = true;
+  } else if (toolType === 'eraser') {
+    if (toolEl) activateEraser(ps, toolEl);
+  } else if (toolType === 'dot' || toolType === 'note') {
+    ps.armedStickerTemplate = toolEl || null;
+  }
+
+  return { toolType: toolType, toolEl: toolEl };
+}
+
+export function updateApriltagTriggerSelections(triggerPoints) {
+  syncApriltagActiveToolsWithParticipants();
+
+  var items = Array.isArray(triggerPoints) ? triggerPoints : [];
+  for (var i = 0; i < items.length; i++) {
+    var point = items[i];
+    if (!point) continue;
+    var handId = normalizePrimaryHandId(point.handId);
+    if (!handId) continue;
+
+    var entry = getApriltagActiveToolForHand(handId);
+    var participantTriggerTagId = normalizeTagId(entry.triggerTagId || point.triggerTagId);
+    if (!participantTriggerTagId) continue;
+    if (normalizeTagId(point.triggerTagId) !== participantTriggerTagId) continue;
+
+    var toolMatch = resolveToolElementForTriggerPoint({ x: point.x, y: point.y }, participantTriggerTagId);
+    if (!toolMatch) continue;
+    setApriltagActiveToolForHand(handId, toolMatch.toolType, toolMatch.toolEl);
+  }
+
+  updateApriltagActiveToolVisuals();
 }
 
 function shouldPinchClickTarget(target) {
@@ -189,7 +438,7 @@ function getDraggableRoot(target) {
   }
 
   // Stage 3: templates are draggable during UI setup
-  var setupEl = target.closest('.ui-dot, .ui-note, .ui-draw, .ui-eraser');
+  var setupEl = target.closest('.ui-dot, .ui-note, .ui-draw, .ui-eraser, .ui-selection, .ui-layer-square');
   return setupEl || null;
 }
 
@@ -248,6 +497,7 @@ function getInteractionCandidate(pointer, radiusPx) {
 // Main gesture handling function called each frame - handles multiple pointers
 export function handleStage3Gestures(usableIndexTipPoints) {
   var nowMs = performance.now();
+  syncApriltagActiveToolsWithParticipants();
   var viewportPoints = [];
   if (Array.isArray(usableIndexTipPoints)) {
     for (var up = 0; up < usableIndexTipPoints.length; up++) {
@@ -295,91 +545,15 @@ export function handleStage3Gestures(usableIndexTipPoints) {
 
       // --- AprilTag trigger-on-disappearance ---
       if (ps.isApriltag && ps.lastPointer) {
-        var isDrawingMode = state.stage === 4 && getDrawColorForPointer(ps.dragPointerId);
-        var hasStickerArmed = !!ps.armedStickerTemplate;
-        var hasEraserActive = !!ps.eraserActive;
-        var hasAnyToolActive = isDrawingMode || hasStickerArmed || hasEraserActive;
-        var secondaryVisibleForTrigger = !!(state.stage3SecondaryVisibleByPrimaryTag && state.stage3SecondaryVisibleByPrimaryTag[handId]);
+        var activeTool = syncPointerToolWithApriltagSelection(ps, handId);
+        var activeToolType = activeTool.toolType;
+        var activeToolEl = activeTool.toolEl;
 
         // Stop current drawing stroke after brief delay
         var strokeStopDelay = typeof state.strokeStopDelayMs === 'number' ? state.strokeStopDelayMs : 50;
         if (ps.isDrawing && missingDuration >= strokeStopDelay) {
           ps.isDrawing = false;
           stopDrawingForPointer(ps.dragPointerId);
-        }
-
-        // Trigger only when primary disappeared AND configured trigger tag is currently visible.
-        if (!secondaryVisibleForTrigger) {
-          ps.triggerFillStartMs = 0;
-          ps.triggerFired = false;
-          updatePointerCursor(handId, ps.lastPointer, 0, null);
-
-          var keepAliveNoTrigger = !!ps.armedStickerTemplate || !!getDrawColorForPointer(ps.dragPointerId) || !!ps.eraserActive;
-          var noTriggerTimeout = APRILTAG_TRIGGER_DELAY_MS + 200;
-          var noTriggerMaxTimeout = keepAliveNoTrigger ? drawingTimeoutMs : noTriggerTimeout;
-          if (missingDuration < noTriggerMaxTimeout) continue;
-
-          if (ps.cursorEl) {
-            ps.cursorEl.classList.add('hidden');
-            ps.cursorEl.setAttribute('aria-hidden', 'true');
-            ps.cursorEl.style.transform = 'translate(-9999px, -9999px)';
-          }
-          if (handId === primaryCursorHandId) primaryCursorHandId = null;
-          if (ps.cursorEl && ps.cursorEl !== state.dom.mapFingerCursorEl && ps.cursorEl.parentNode) {
-            ps.cursorEl.parentNode.removeChild(ps.cursorEl);
-          }
-          deactivateEraser(ps);
-          dearmStickerTemplate(ps);
-          delete pointerStates[handId];
-          continue;
-        }
-
-        // Determine if we should show blue fill:
-        // - Always show when a tool is active (drawing/sticker/annotation armed)
-        // - When nothing is active, only show if pointing at one of the 3 buttons
-        var shouldShowFill = hasAnyToolActive;
-        if (!shouldShowFill && state.stage === 4) {
-          var interactionCheck = getInteractionCandidate(ps.lastPointer, 20);
-          if (interactionCheck && interactionCheck.target) {
-            var t = interactionCheck.target;
-            var onDrawBtn = t.closest && t.closest('.ui-draw') && !t.closest('.ui-draw').classList.contains('ui-sticker-instance');
-            var onDotBtn = t.closest && t.closest('.ui-dot') && !t.closest('.ui-dot').classList.contains('ui-sticker-instance');
-            var onNoteBtn = t.closest && t.closest('.ui-note') && !t.closest('.ui-note').classList.contains('ui-sticker-instance');
-            var onEraserBtn = t.closest && t.closest('.ui-eraser') && !t.closest('.ui-eraser').classList.contains('ui-sticker-instance');
-            // Also allow interaction with sticker instances and note form elements
-            var onStickerInstance = t.closest && t.closest('.ui-sticker-instance');
-            var onNoteForm = t.closest && t.closest('.ui-note__form');
-            shouldShowFill = onDrawBtn || onDotBtn || onNoteBtn || onEraserBtn || onStickerInstance || onNoteForm;
-          }
-        } else if (!shouldShowFill && state.stage !== 4) {
-          // In stage 3, show fill on interactive elements
-          var interactionCheck = getInteractionCandidate(ps.lastPointer, 20);
-          if (interactionCheck && interactionCheck.action === 'click') {
-            shouldShowFill = true;
-          }
-        }
-
-        if (!shouldShowFill) {
-          // Not on a button and no tool active - just show cursor, no fill, no trigger
-          updatePointerCursor(handId, ps.lastPointer, 0, null);
-
-          // Still need cleanup timeout
-          var triggerTimeout = APRILTAG_TRIGGER_DELAY_MS + 200;
-          if (missingDuration < triggerTimeout) continue;
-
-          if (ps.cursorEl) {
-            ps.cursorEl.classList.add('hidden');
-            ps.cursorEl.setAttribute('aria-hidden', 'true');
-            ps.cursorEl.style.transform = 'translate(-9999px, -9999px)';
-          }
-          if (handId === primaryCursorHandId) primaryCursorHandId = null;
-          if (ps.cursorEl && ps.cursorEl !== state.dom.mapFingerCursorEl && ps.cursorEl.parentNode) {
-            ps.cursorEl.parentNode.removeChild(ps.cursorEl);
-          }
-          deactivateEraser(ps);
-          dearmStickerTemplate(ps);
-          delete pointerStates[handId];
-          continue;
         }
 
         // Start fill timer on first frame of disappearance
@@ -397,113 +571,29 @@ export function handleStage3Gestures(usableIndexTipPoints) {
         if (!ps.triggerFired && fillProgress >= 1) {
           ps.triggerFired = true;
 
-          if (hasEraserActive) {
-            // Next trigger after eraser activation always deactivates eraser.
-            deactivateEraser(ps);
-          } else if (isDrawingMode) {
-            // Drawing 3-trigger flow:
-            //   Trigger 1 (on button): activates drawing, drawingStarted = false
-            //   Trigger 2 (this): sets drawingStarted = true, next appearance will draw
-            //   Trigger 3 (this): deactivates drawing entirely
-            if (!ps.drawingStarted) {
-              // 2nd trigger: enable actual drawing for next appearance
-              ps.drawingStarted = true;
-            } else {
-              // 3rd trigger: stop and deactivate drawing
-              deactivateDrawingForPointer(ps.dragPointerId);
-              ps.drawingStarted = false;
-            }
-            // Stroke was already stopped above
-          } else if (hasStickerArmed) {
-            // Sticker/annotation armed (activated by previous trigger on button).
-            // This is the 2nd trigger - place the sticker at last position.
-            var clonedEl = cloneSticker(ps.armedStickerTemplate);
+          if (activeToolType === 'selection' || activeToolType === 'layer-square') {
+            dispatchClickAt(ps.lastPointer, ps.dragPointerId);
+          } else if ((activeToolType === 'dot' || activeToolType === 'note') && activeToolEl) {
+            var clonedEl = cloneSticker(activeToolEl);
             if (clonedEl) {
               clonedEl.style.left = (ps.lastPointer.x - (clonedEl.offsetWidth || 20) / 2) + 'px';
               clonedEl.style.top = (ps.lastPointer.y - (clonedEl.offsetHeight || 20) / 2) + 'px';
-              // Bind to map coordinates
               if (state.viewMode === 'map' && (state.stage === 3 || state.stage === 4)) {
                 bindStickerLatLngFromCurrentPosition(clonedEl);
                 updateStickerMappingForCurrentView();
               }
-              // Auto-expand notes
               if (clonedEl.classList.contains('ui-note')) {
                 setTimeout(function() {
                   clonedEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
                 }, 50);
               }
             }
-            dearmStickerTemplate(ps); // Dearm after placement
-          } else {
-            // Nothing activated - check what's at the last position (tool buttons / stickers)
-            var interaction = getInteractionCandidate(ps.lastPointer, 20);
-            if (interaction && interaction.target) {
-              var target = interaction.target;
-
-              if (state.stage === 4) {
-                // Check if pointing at a drawing button
-                var drawButton = target.closest ? target.closest('.ui-draw') : null;
-                if (drawButton && !drawButton.classList.contains('ui-sticker-instance')) {
-                  deactivateEraser(ps);
-                  // 1st trigger: activate drawing mode for this pointer
-                  var color = drawButton.dataset && drawButton.dataset.color ? drawButton.dataset.color : '#2bb8ff';
-                  var currentColor = getDrawColorForPointer(ps.dragPointerId);
-                  if (currentColor === color) {
-                    deactivateDrawingForPointer(ps.dragPointerId);
-                    ps.drawingStarted = false;
-                  } else {
-                    activateDrawingForPointer(ps.dragPointerId, color, drawButton);
-                    ps.drawingStarted = false;
-                  }
-                }
-                // Check if pointing at a dot template button - arm it (1st trigger)
-                else if (target.closest && target.closest('.ui-dot') && !target.closest('.ui-dot').classList.contains('ui-sticker-instance')) {
-                  deactivateEraser(ps);
-                  ps.armedStickerTemplate = target.closest('.ui-dot');
-                  ps.armedStickerTemplate.classList.add('ui-dot--active');
-                }
-                // Check if pointing at a note template button - arm it (1st trigger)
-                else if (target.closest && target.closest('.ui-note') && !target.closest('.ui-note').classList.contains('ui-sticker-instance')) {
-                  deactivateEraser(ps);
-                  ps.armedStickerTemplate = target.closest('.ui-note');
-                  ps.armedStickerTemplate.classList.add('ui-note--active');
-                }
-                // Check if pointing at eraser button - toggle eraser mode
-                else if (target.closest && target.closest('.ui-eraser') && !target.closest('.ui-eraser').classList.contains('ui-sticker-instance')) {
-                  var eraserButton = target.closest('.ui-eraser');
-                  if (ps.eraserActive && ps.eraserButtonEl === eraserButton) {
-                    deactivateEraser(ps);
-                  } else {
-                    deactivateDrawingForPointer(ps.dragPointerId);
-                    ps.drawingStarted = false;
-                    dearmStickerTemplate(ps);
-                    activateEraser(ps, eraserButton);
-                  }
-                }
-                // Sticker instances and note form elements are clickable
-                else if (interaction.action === 'click' || interaction.action === 'drag') {
-                  var isStickerInstance = target.closest && target.closest('.ui-sticker-instance');
-                  var isNoteForm = target.closest && target.closest('.ui-note__form');
-                  if (isStickerInstance || isNoteForm) {
-                    dispatchClickAt(ps.lastPointer, ps.dragPointerId);
-                  }
-                }
-                // Not a supported tool/sticker/form target - do nothing
-              } else if (interaction.action === 'click') {
-                // Stage 3 or other: dispatch click on interactive elements
-                dispatchClickAt(ps.lastPointer, ps.dragPointerId);
-              }
-            }
-            // No interaction target: do nothing
           }
         }
 
-        // Clean up after all timeouts + trigger delay have passed.
-        // If a sticker is armed or drawing mode is active, keep the state alive longer
-        // so it persists when the tag reappears for the next step.
-        var hasDrawingActiveNow = getDrawColorForPointer(ps.dragPointerId);
+        // Keep draw/eraser state alive longer across temporary loss.
         var triggerTimeout = APRILTAG_TRIGGER_DELAY_MS + 200; // extra buffer
-        var keepAlive = !!ps.armedStickerTemplate || !!hasDrawingActiveNow || !!ps.eraserActive;
+        var keepAlive = activeToolType === 'draw' || activeToolType === 'eraser';
         var maxTimeout = keepAlive ? drawingTimeoutMs : triggerTimeout;
         if (missingDuration < maxTimeout) continue;
 
@@ -524,6 +614,11 @@ export function handleStage3Gestures(usableIndexTipPoints) {
           ps.cursorEl.parentNode.removeChild(ps.cursorEl);
         }
 
+        if (ps.isDrawing) {
+          ps.isDrawing = false;
+          stopDrawingForPointer(ps.dragPointerId);
+        }
+        deactivateDrawingForPointer(ps.dragPointerId);
         deactivateEraser(ps);
         dearmStickerTemplate(ps);
         delete pointerStates[handId];
@@ -615,14 +710,19 @@ function processPointerGesture(handIndex, pointer, handData) {
 
   var isApriltag = !!(handData && handData.isApriltag);
   var isTouch = (handData && typeof handData.isTouch === 'boolean') ? handData.isTouch : null;
+  var activeApriltagTool = null;
 
   var nowMs = performance.now();
   var threshold = state.holdStillThresholdPx;
 
+  if (isApriltag) {
+    ps.isApriltag = true;
+    activeApriltagTool = syncPointerToolWithApriltagSelection(ps, handIndex);
+  }
+
   // In AprilTag mode with stereo touch sensing, hovering should not trigger interactions.
   // Still show cursor but cancel any active drawing and prevent trigger-on-disappearance.
   if (isApriltag && isTouch === false) {
-    ps.isApriltag = true;
     if (ps.isDrawing) {
       ps.isDrawing = false;
       stopDrawingForPointer(ps.dragPointerId);
@@ -637,22 +737,21 @@ function processPointerGesture(handIndex, pointer, handData) {
   // AprilTag while visible: show cursor, draw if drawing mode active, but NO pinch-hold arming.
   // Trigger happens on disappearance (handled in the missing-hands section).
   if (isApriltag) {
-    ps.isApriltag = true;
     ps.triggerFillStartMs = 0;  // Reset fill since tag is visible again
     ps.triggerFired = false;
+    var activeToolType = activeApriltagTool ? activeApriltagTool.toolType : 'selection';
 
-    if (ps.eraserActive) {
+    if (state.stage === 4 && activeToolType === 'eraser' && ps.eraserActive) {
       eraseAtPoint(pointer.x, pointer.y, ERASER_TOUCH_RADIUS_PX);
       updatePointerCursor(handIndex, pointer, 1, 'draw');
       ps.prevPointerTimeMs = nowMs;
       return;
     }
 
-    var isDrawingMode = state.stage === 4 && getDrawColorForPointer(ps.dragPointerId);
+    var isDrawingMode = state.stage === 4 && activeToolType === 'draw' && !!getDrawColorForPointer(ps.dragPointerId);
 
-    // If drawing mode is active AND drawing has been started (2nd trigger),
-    // draw while the tag is visible.
-    if (isDrawingMode && ps.drawingStarted) {
+    // Draw continuously while draw tool is active.
+    if (isDrawingMode) {
       if (!ps.isDrawing) {
         // Start a new stroke
         ps.isDrawing = true;
@@ -951,6 +1050,15 @@ export function resetStage3Gestures() {
       ps.cursorEl.parentNode.removeChild(ps.cursorEl);
     }
   }
+
+  var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
+  if (overlayEl) {
+    var allToolEls = overlayEl.querySelectorAll(APRILTAG_TOOL_SELECTOR);
+    for (var ti = 0; ti < allToolEls.length; ti++) {
+      allToolEls[ti].classList.remove(APRILTAG_TOOL_ACTIVE_CLASS);
+    }
+  }
+  apriltagActiveToolByHandId = {};
 
   pointerStates = {};
   primaryCursorHandId = null;

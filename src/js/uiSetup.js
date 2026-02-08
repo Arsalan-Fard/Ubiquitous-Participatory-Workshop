@@ -1,5 +1,105 @@
 import { state } from './state.js';
 
+function normalizeTriggerTagId(value) {
+  var n = parseInt(value, 10);
+  if (!isFinite(n)) return '';
+  return String(n);
+}
+
+export function getAvailableTriggerTagIds() {
+  var out = [];
+  var seen = {};
+  var src = Array.isArray(state.stage3ParticipantTriggerTagIds) ? state.stage3ParticipantTriggerTagIds : [];
+  for (var i = 0; i < src.length; i++) {
+    var n = parseInt(src[i], 10);
+    if (!isFinite(n)) continue;
+    if (seen[n]) continue;
+    seen[n] = true;
+    out.push(n);
+  }
+  out.sort(function(a, b) { return a - b; });
+  return out;
+}
+
+function populateTriggerSelectOptions(selectEl, selectedTagId) {
+  if (!selectEl) return;
+  var availableIds = getAvailableTriggerTagIds();
+  var normalizedSelected = normalizeTriggerTagId(selectedTagId);
+
+  selectEl.textContent = '';
+
+  var noneOpt = document.createElement('option');
+  noneOpt.value = '';
+  noneOpt.textContent = 'None';
+  selectEl.appendChild(noneOpt);
+
+  for (var i = 0; i < availableIds.length; i++) {
+    var id = availableIds[i];
+    var opt = document.createElement('option');
+    opt.value = String(id);
+    opt.textContent = String(id);
+    selectEl.appendChild(opt);
+  }
+
+  if (normalizedSelected) {
+    var selectedExists = false;
+    for (var si = 0; si < selectEl.options.length; si++) {
+      if (selectEl.options[si].value === normalizedSelected) {
+        selectedExists = true;
+        break;
+      }
+    }
+    if (!selectedExists) normalizedSelected = '';
+  }
+
+  selectEl.value = normalizedSelected || '';
+  selectEl.dataset.selectedTriggerTagId = selectEl.value || '';
+  if (selectEl.parentNode && selectEl.parentNode.dataset) {
+    if (selectEl.value) selectEl.parentNode.dataset.triggerTagId = selectEl.value;
+    else delete selectEl.parentNode.dataset.triggerTagId;
+  }
+}
+
+export function attachInteractionTriggerSelect(el, initialTriggerTagId) {
+  if (!el || !el.dataset) return null;
+  var selectEl = el.querySelector('.ui-trigger-select');
+  if (!selectEl) {
+    selectEl = document.createElement('select');
+    selectEl.className = 'ui-trigger-select';
+    selectEl.setAttribute('aria-label', 'Select trigger tag ID');
+    selectEl.addEventListener('pointerdown', function(e) { e.stopPropagation(); });
+    selectEl.addEventListener('mousedown', function(e) { e.stopPropagation(); });
+    selectEl.addEventListener('click', function(e) { e.stopPropagation(); });
+    selectEl.addEventListener('change', function() {
+      var normalized = normalizeTriggerTagId(selectEl.value);
+      selectEl.dataset.selectedTriggerTagId = normalized;
+      if (normalized) el.dataset.triggerTagId = normalized;
+      else delete el.dataset.triggerTagId;
+    });
+    el.appendChild(selectEl);
+  }
+
+  var wanted = initialTriggerTagId;
+  if (wanted === undefined || wanted === null || wanted === '') {
+    wanted = el.dataset.triggerTagId || selectEl.dataset.selectedTriggerTagId || '';
+  }
+  populateTriggerSelectOptions(selectEl, wanted);
+  return selectEl;
+}
+
+export function refreshInteractionTriggerSelects(rootEl) {
+  var root = rootEl || document;
+  if (!root || !root.querySelectorAll) return;
+  var interactiveEls = root.querySelectorAll('.ui-dot, .ui-draw, .ui-note, .ui-eraser, .ui-selection, .ui-layer-square');
+  for (var i = 0; i < interactiveEls.length; i++) {
+    var el = interactiveEls[i];
+    if (!el || !el.dataset) continue;
+    var uiType = String(el.dataset.uiType || '');
+    if (uiType !== 'dot' && uiType !== 'draw' && uiType !== 'note' && uiType !== 'eraser' && uiType !== 'selection' && uiType !== 'layer-square') continue;
+    attachInteractionTriggerSelect(el, el.dataset.triggerTagId || '');
+  }
+}
+
 export function initUiSetup(options) {
   options = options || {};
   var panelEl = options.panelEl;
@@ -151,11 +251,13 @@ export function initUiSetup(options) {
           var v = parseInt(primarySel.value, 10);
           if (!isFinite(v)) return;
           state.stage3ParticipantTagIds[index] = v;
+          refreshInteractionTriggerSelects(overlayEl);
         });
         triggerSel.addEventListener('change', function () {
           var v = parseInt(triggerSel.value, 10);
           if (!isFinite(v)) return;
           state.stage3ParticipantTriggerTagIds[index] = v;
+          refreshInteractionTriggerSelects(overlayEl);
         });
       })(i, primarySelectEl, triggerSelectEl);
 
@@ -174,6 +276,7 @@ export function initUiSetup(options) {
     var count = sanitizeParticipantCount(participantsInputEl.value);
     state.stage3ParticipantCount = count;
     renderParticipantSelects(count);
+    refreshInteractionTriggerSelects(overlayEl);
 
     var showSelects = count > 0;
     participantSelectsRowEl.classList.toggle('hidden', !showSelects);
@@ -276,6 +379,12 @@ export function initUiSetup(options) {
   addEraserBtn.textContent = 'Eraser';
   addEraserBtn.setAttribute('aria-label', 'Add eraser');
 
+  var addSelectionBtn = document.createElement('button');
+  addSelectionBtn.className = 'ui-setup-add-btn ui-setup-add-btn--selection';
+  addSelectionBtn.type = 'button';
+  addSelectionBtn.textContent = 'Selection';
+  addSelectionBtn.setAttribute('aria-label', 'Add selection cursor');
+
   var controlsRow = document.createElement('div');
   controlsRow.className = 'ui-setup-row';
   controlsRow.appendChild(colorSwatchBtn);
@@ -285,6 +394,7 @@ export function initUiSetup(options) {
   controlsRow.appendChild(noteSwatchEl);
   controlsRow.appendChild(addNoteBtn);
   controlsRow.appendChild(addEraserBtn);
+  controlsRow.appendChild(addSelectionBtn);
   panelEl.appendChild(controlsRow);
 
   var footer = document.createElement('div');
@@ -351,6 +461,22 @@ export function initUiSetup(options) {
 
   addEraserBtn.addEventListener('click', function () {
     createEraser();
+  });
+
+  var selectionCreatedFromPointerDown = false;
+  addSelectionBtn.addEventListener('pointerdown', function (e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    selectionCreatedFromPointerDown = true;
+    createSelection({ startDragEvent: e });
+  });
+
+  addSelectionBtn.addEventListener('click', function () {
+    if (selectionCreatedFromPointerDown) {
+      selectionCreatedFromPointerDown = false;
+      return;
+    }
+    createSelection();
   });
 
   exportBtn.addEventListener('click', function () {
@@ -434,6 +560,7 @@ export function initUiSetup(options) {
     dotEl.dataset.color = currentColor;
     assignCurrentSessionId(dotEl);
     overlayEl.appendChild(dotEl);
+    attachInteractionTriggerSelect(dotEl);
 
     positionDotAboveSwatch(dotEl);
     makeDraggable(dotEl, { draggingClass: 'ui-dot--dragging' });
@@ -474,6 +601,7 @@ export function initUiSetup(options) {
     drawEl.dataset.color = currentDrawColor;
     assignCurrentSessionId(drawEl);
     overlayEl.appendChild(drawEl);
+    attachInteractionTriggerSelect(drawEl);
 
     positionDrawAboveSwatch(drawEl);
     renderDrawIcon(drawEl, currentDrawColor);
@@ -514,6 +642,7 @@ export function initUiSetup(options) {
     noteEl.appendChild(iconEl);
 
     overlayEl.appendChild(noteEl);
+    attachInteractionTriggerSelect(noteEl);
 
     positionNoteAboveButton(noteEl);
     makeDraggable(noteEl, { draggingClass: 'ui-note--dragging' });
@@ -532,8 +661,36 @@ export function initUiSetup(options) {
     eraserEl.appendChild(iconEl);
 
     overlayEl.appendChild(eraserEl);
+    attachInteractionTriggerSelect(eraserEl);
     positionEraserAboveButton(eraserEl);
     makeDraggable(eraserEl, { draggingClass: 'ui-eraser--dragging' });
+  }
+
+  function createSelection(options) {
+    options = options || {};
+    var selectionEl = document.createElement('div');
+    selectionEl.className = 'ui-selection';
+    selectionEl.dataset.uiType = 'selection';
+    assignCurrentSessionId(selectionEl);
+
+    var iconEl = document.createElement('div');
+    iconEl.className = 'ui-selection__icon';
+    iconEl.textContent = '↖';
+    selectionEl.appendChild(iconEl);
+
+    overlayEl.appendChild(selectionEl);
+    attachInteractionTriggerSelect(selectionEl);
+    var startSelectionDrag = makeDraggable(selectionEl, { draggingClass: 'ui-selection--dragging' });
+
+    var dragEvent = options.startDragEvent || null;
+    if (dragEvent && typeof dragEvent.clientX === 'number' && typeof dragEvent.clientY === 'number') {
+      selectionEl.style.left = String(dragEvent.clientX - 30) + 'px';
+      selectionEl.style.top = String(dragEvent.clientY - 30) + 'px';
+      selectionEl.style.visibility = 'visible';
+      startSelectionDrag(dragEvent);
+    } else {
+      positionSelectionAboveButton(selectionEl);
+    }
   }
 
   function positionEraserAboveButton(eraserEl) {
@@ -552,6 +709,25 @@ export function initUiSetup(options) {
       eraserEl.style.left = left + 'px';
       eraserEl.style.top = top + 'px';
       eraserEl.style.visibility = 'visible';
+    });
+  }
+
+  function positionSelectionAboveButton(selectionEl) {
+    var btnRect = addSelectionBtn.getBoundingClientRect();
+    var x = btnRect.left + btnRect.width / 2;
+    var y = btnRect.top;
+
+    selectionEl.style.left = '0px';
+    selectionEl.style.top = '0px';
+    selectionEl.style.visibility = 'hidden';
+
+    requestAnimationFrame(function () {
+      var rect = selectionEl.getBoundingClientRect();
+      var left = Math.max(8, Math.min(window.innerWidth - rect.width - 8, x - rect.width / 2));
+      var top = Math.max(8, y - 10 - rect.height);
+      selectionEl.style.left = left + 'px';
+      selectionEl.style.top = top + 'px';
+      selectionEl.style.visibility = 'visible';
     });
   }
 
@@ -695,6 +871,7 @@ export function initUiSetup(options) {
         items.push({
           type: 'dot',
           color: el.dataset.color || defaultItemColor,
+          triggerTagId: el.dataset.triggerTagId || '',
           x: left,
           y: top,
           sessionId: normalizeSessionId(el.dataset.sessionId)
@@ -703,6 +880,7 @@ export function initUiSetup(options) {
         items.push({
           type: 'draw',
           color: el.dataset.color || defaultItemColor,
+          triggerTagId: el.dataset.triggerTagId || '',
           x: left,
           y: top,
           sessionId: normalizeSessionId(el.dataset.sessionId)
@@ -712,6 +890,7 @@ export function initUiSetup(options) {
           type: 'note',
           text: el.dataset.noteText || '',
           color: el.dataset.color || defaultItemColor,
+          triggerTagId: el.dataset.triggerTagId || '',
           x: left,
           y: top,
           sessionId: normalizeSessionId(el.dataset.sessionId)
@@ -719,6 +898,15 @@ export function initUiSetup(options) {
       } else if (type === 'eraser') {
         items.push({
           type: 'eraser',
+          triggerTagId: el.dataset.triggerTagId || '',
+          x: left,
+          y: top,
+          sessionId: normalizeSessionId(el.dataset.sessionId)
+        });
+      } else if (type === 'selection') {
+        items.push({
+          type: 'selection',
+          triggerTagId: el.dataset.triggerTagId || '',
           x: left,
           y: top,
           sessionId: normalizeSessionId(el.dataset.sessionId)
@@ -806,6 +994,7 @@ export function initUiSetup(options) {
         dotEl.style.top = String(item.y || 0) + 'px';
         assignImportedSessionId(dotEl, item.sessionId);
         overlayEl.appendChild(dotEl);
+        attachInteractionTriggerSelect(dotEl, item.triggerTagId);
         makeDraggable(dotEl, { draggingClass: 'ui-dot--dragging' });
         continue;
       }
@@ -821,6 +1010,7 @@ export function initUiSetup(options) {
         drawEl.style.top = String(item.y || 0) + 'px';
         assignImportedSessionId(drawEl, item.sessionId);
         overlayEl.appendChild(drawEl);
+        attachInteractionTriggerSelect(drawEl, item.triggerTagId);
         renderDrawIcon(drawEl, drawEl.dataset.color);
         makeDraggable(drawEl, { draggingClass: 'ui-draw--dragging' });
         continue;
@@ -844,6 +1034,7 @@ export function initUiSetup(options) {
         noteEl.appendChild(iconEl);
 
         overlayEl.appendChild(noteEl);
+        attachInteractionTriggerSelect(noteEl, item.triggerTagId);
         makeDraggable(noteEl, { draggingClass: 'ui-note--dragging' });
         setupNoteInteraction(noteEl);
         continue;
@@ -863,7 +1054,27 @@ export function initUiSetup(options) {
         eraserEl.appendChild(eraserIcon);
 
         overlayEl.appendChild(eraserEl);
+        attachInteractionTriggerSelect(eraserEl, item.triggerTagId);
         makeDraggable(eraserEl, { draggingClass: 'ui-eraser--dragging' });
+        continue;
+      }
+
+      if (item.type === 'selection') {
+        var selectionEl = document.createElement('div');
+        selectionEl.className = 'ui-selection';
+        selectionEl.dataset.uiType = 'selection';
+        selectionEl.style.left = String(item.x || 0) + 'px';
+        selectionEl.style.top = String(item.y || 0) + 'px';
+        assignImportedSessionId(selectionEl, item.sessionId);
+
+        var selectionIcon = document.createElement('div');
+        selectionIcon.className = 'ui-selection__icon';
+        selectionIcon.textContent = '↖';
+        selectionEl.appendChild(selectionIcon);
+
+        overlayEl.appendChild(selectionEl);
+        attachInteractionTriggerSelect(selectionEl, item.triggerTagId);
+        makeDraggable(selectionEl, { draggingClass: 'ui-selection--dragging' });
       }
     }
 
@@ -880,25 +1091,38 @@ function makeDraggable(el, options) {
   var offsetX = 0;
   var offsetY = 0;
 
-  el.addEventListener('pointerdown', function (e) {
-    if (e.button !== 0) return;
-    if (state.stage === 3 && el.classList && el.classList.contains('ui-label') && e.ctrlKey) {
+  function startDrag(e, isProgrammaticStart) {
+    if (!e) return;
+    if (!isProgrammaticStart && e.button !== 0) return;
+    if (!isProgrammaticStart && e.target && e.target.closest && e.target.closest('.ui-trigger-select')) return;
+    if (!isProgrammaticStart && state.stage === 3 && el.classList && el.classList.contains('ui-label') && e.ctrlKey) {
       e.preventDefault();
       var currentDeg = parseFloat(el.dataset.rotationDeg || '0');
       if (!isFinite(currentDeg)) currentDeg = 0;
       setElementRotation(el, currentDeg + 45);
       return;
     }
-    if (state.stage === 4 && el.classList && el.classList.contains('ui-eraser')) return;
-    e.preventDefault();
+    if (state.stage === 4 && el.classList && (el.classList.contains('ui-eraser') || el.classList.contains('ui-selection'))) return;
+    if (typeof e.preventDefault === 'function') e.preventDefault();
 
+    if (!isFinite(e.pointerId)) return;
     var rect = el.getBoundingClientRect();
     dragging = true;
     offsetX = e.clientX - rect.left;
     offsetY = e.clientY - rect.top;
 
     el.classList.add(draggingClass);
-    el.setPointerCapture(e.pointerId);
+    if (el.setPointerCapture) {
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch (err) {
+        // Ignore if pointer capture is unavailable.
+      }
+    }
+  }
+
+  el.addEventListener('pointerdown', function (e) {
+    startDrag(e, false);
   });
 
   el.addEventListener('pointermove', function (e) {
@@ -917,7 +1141,13 @@ function makeDraggable(el, options) {
     dragging = false;
     el.classList.remove(draggingClass);
 
-    if (el.releasePointerCapture) el.releasePointerCapture(e.pointerId);
+    if (el.releasePointerCapture) {
+      try {
+        el.releasePointerCapture(e.pointerId);
+      } catch (err) {
+        // Ignore if capture was not active.
+      }
+    }
   }
 
   el.addEventListener('pointerup', stopDrag);
@@ -930,6 +1160,10 @@ function makeDraggable(el, options) {
       el.parentNode.removeChild(el);
     }
   });
+
+  return function beginProgrammaticDrag(startEvent) {
+    startDrag(startEvent, true);
+  };
 }
 
 function setElementRotation(el, deg) {

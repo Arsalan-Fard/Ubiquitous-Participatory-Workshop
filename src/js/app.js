@@ -6,7 +6,7 @@
 import { getDom } from './dom.js';
 import { stopCameraStream } from './camera.js';
 import { clearOverlay, drawSurface } from './render.js';
-import { initUiSetup } from './uiSetup.js';
+import { initUiSetup, attachInteractionTriggerSelect } from './uiSetup.js';
 import { clamp, saveNumberSetting, waitForImageLoad } from './utils.js';
 import { state } from './state.js';
 
@@ -25,7 +25,8 @@ import {
 // Gesture controls
 import {
   handleStage3Gestures,
-  resetStage3Gestures
+  resetStage3Gestures,
+  updateApriltagTriggerSelections
 } from './gestureControls.js';
 
 // Stage 4 drawing
@@ -364,31 +365,78 @@ export function initApp() {
     saveNumberSetting('drawingDeselectTimeoutMs', state.drawingDeselectTimeoutMs);
   });
 
-  // Populate tool tag selects with AprilTags 21-40
-  var toolTagSelects = [
-    dom.isovistTagSelectEl,
-    dom.shortestPathTagASelectEl,
-    dom.shortestPathTagBSelectEl,
-    dom.panTagSelectEl,
-    dom.zoomTagASelectEl,
-    dom.zoomTagBSelectEl,
-    dom.nextTagSelectEl,
-    dom.backTagSelectEl
-  ];
-  for (var si = 0; si < toolTagSelects.length; si++) {
-    var sel = toolTagSelects[si];
-    for (var tagNum = 21; tagNum <= 40; tagNum++) {
-      var opt = document.createElement('option');
-      opt.value = String(tagNum);
-      opt.textContent = String(tagNum);
-      sel.appendChild(opt);
-    }
-  }
-
-  // Track all tag selects including dynamically added ones for roads files
-  var geojsonFileSelects = [];
+  // Stage 3 layer buttons spawn draggable 60px square stickers.
+  var layerStickerColorsByName = {
+    'Isovist': '#2bb8ff',
+    'Shortest-path': '#ff8a3d',
+    'Pan': '#2ec27e',
+    'Zoom': '#9c6dff',
+    'Next': '#4caf50',
+    'Back': '#f6c945'
+  };
   var roadColorPalette = ['#ff5a5f', '#2bb8ff', '#2ec27e', '#f6c945', '#ff8a3d', '#9c6dff'];
   var importedRoadEntries = [];
+
+  document.addEventListener('pointerdown', function(e) {
+    if (state.stage !== 3 || state.viewMode !== 'map') return;
+    if (!dom.uiSetupOverlayEl || dom.uiSetupOverlayEl.classList.contains('hidden')) return;
+    if (!e.target || !e.target.closest) return;
+
+    var layerBtnEl = e.target.closest('.tool-tag-controls__layer-btn');
+    if (layerBtnEl && dom.toolTagControlsEl.contains(layerBtnEl)) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      var layerName = layerBtnEl.dataset && layerBtnEl.dataset.layerName ? String(layerBtnEl.dataset.layerName) : '';
+      if (!layerName) return;
+      var stickerEl = createLayerSticker(layerName, e.clientX, e.clientY);
+      if (stickerEl) startStickerDrag(stickerEl, e);
+      return;
+    }
+
+    var existingStickerEl = e.target.closest('.ui-layer-square');
+    if (!existingStickerEl || !dom.uiSetupOverlayEl.contains(existingStickerEl)) return;
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    startStickerDrag(existingStickerEl, e);
+  }, true);
+
+  document.addEventListener('contextmenu', function(e) {
+    if (state.stage !== 3) return;
+    if (!e.target || !e.target.closest) return;
+    var stickerEl = e.target.closest('.ui-layer-square');
+    if (!stickerEl || !dom.uiSetupOverlayEl.contains(stickerEl)) return;
+    e.preventDefault();
+    if (stickerEl.parentNode) stickerEl.parentNode.removeChild(stickerEl);
+  });
+
+  function createLayerSticker(layerName, clientX, clientY) {
+    if (!dom.uiSetupOverlayEl) return null;
+    var name = String(layerName || '').trim();
+    if (!name) return null;
+
+    var stickerEl = document.createElement('div');
+    stickerEl.className = 'ui-dot ui-sticker-instance ui-layer-square';
+    stickerEl.dataset.uiType = 'layer-square';
+    stickerEl.dataset.layerName = name;
+    stickerEl.dataset.color = layerStickerColorsByName[name] || '#2bb8ff';
+    if (state.currentMapSessionId !== null && state.currentMapSessionId !== undefined) {
+      stickerEl.dataset.sessionId = String(state.currentMapSessionId);
+    }
+    stickerEl.style.background = stickerEl.dataset.color;
+    stickerEl.style.left = (clientX - 30) + 'px';
+    stickerEl.style.top = (clientY - 30) + 'px';
+
+    var textEl = document.createElement('span');
+    textEl.className = 'ui-layer-square__text';
+    textEl.textContent = name;
+    stickerEl.appendChild(textEl);
+
+    dom.uiSetupOverlayEl.appendChild(stickerEl);
+    attachInteractionTriggerSelect(stickerEl);
+    return stickerEl;
+  }
 
   function removeRoadLayer(entry) {
     if (!entry || !entry.roadLayer || !state.leafletMap) return;
@@ -457,37 +505,14 @@ export function initApp() {
     }
   }
 
-  function updateRoadLayersVisibilityByTags(detections) {
+  function updateRoadLayersVisibilityByTags() {
     if (!Array.isArray(importedRoadEntries) || importedRoadEntries.length < 1) return;
-
-    var shouldEvaluateTags = state.viewMode === 'map' && (state.stage === 3 || state.stage === 4) && !!state.surfaceHomography;
-    var detById = {};
-    if (Array.isArray(detections)) {
-      for (var i = 0; i < detections.length; i++) {
-        var d = detections[i];
-        if (!d || !d.center) continue;
-        var id = typeof d.id === 'number' ? d.id : parseInt(d.id, 10);
-        if (isFinite(id)) detById[id] = d;
-      }
-    }
+    var visible = state.viewMode === 'map' && (state.stage === 3 || state.stage === 4);
 
     for (var ei = 0; ei < importedRoadEntries.length; ei++) {
       var entry = importedRoadEntries[ei];
       if (!entry || entry.removed) continue;
-      if (!shouldEvaluateTags) {
-        setRoadLayerVisible(entry, false);
-        continue;
-      }
-
-      var tagId = entry.tagSelect && entry.tagSelect.value ? parseInt(entry.tagSelect.value, 10) : NaN;
-      if (!isFinite(tagId)) {
-        setRoadLayerVisible(entry, false);
-        continue;
-      }
-
-      var det = detById[tagId];
-      var inSurface = !!(det && det.center && isPointInSurface(det.center.x, det.center.y));
-      setRoadLayerVisible(entry, inSurface);
+      setRoadLayerVisible(entry, visible);
     }
   }
 
@@ -532,20 +557,6 @@ export function initApp() {
     return parsed;
   }
 
-  function setSelectValueIfOptionExists(selectEl, value) {
-    if (!selectEl) return;
-    var normalized = value === null || value === undefined ? '' : String(value);
-    var options = selectEl.querySelectorAll('option');
-    var found = false;
-    for (var i = 0; i < options.length; i++) {
-      if (options[i].value === normalized) {
-        found = true;
-        break;
-      }
-    }
-    selectEl.value = found ? normalized : '';
-  }
-
   function mountVgaButtonToActionBar() {
     if (!dom.vgaModeBtnEl || !dom.stage3ActionBarEl) return;
     var footerEl = dom.stage3ActionBarEl.querySelector('.ui-setup-footer');
@@ -560,30 +571,6 @@ export function initApp() {
     if (previousItemEl && previousItemEl.parentNode) {
       previousItemEl.parentNode.removeChild(previousItemEl);
     }
-  }
-
-  // Update disabled state of options when selection changes
-  function updateToolTagSelectsDisabled() {
-    var allSelects = toolTagSelects.concat(geojsonFileSelects);
-    var selectedValues = [];
-    for (var i = 0; i < allSelects.length; i++) {
-      var val = allSelects[i].value;
-      if (val) selectedValues.push(val);
-    }
-    for (var i = 0; i < allSelects.length; i++) {
-      var sel = allSelects[i];
-      var options = sel.querySelectorAll('option');
-      for (var j = 0; j < options.length; j++) {
-        var opt = options[j];
-        if (!opt.value) continue; // Skip "None" option
-        var isSelectedElsewhere = selectedValues.indexOf(opt.value) !== -1 && sel.value !== opt.value;
-        opt.disabled = isSelectedElsewhere;
-      }
-    }
-  }
-
-  for (var si = 0; si < toolTagSelects.length; si++) {
-    toolTagSelects[si].addEventListener('change', updateToolTagSelectsDisabled);
   }
 
   // Roads GeoJSON file import
@@ -618,38 +605,15 @@ export function initApp() {
     nameSpan.textContent = file.name;
     nameSpan.title = file.name;
 
-    var sel = document.createElement('select');
-    sel.className = 'tool-tag-controls__select';
-    sel.setAttribute('aria-label', 'Select AprilTag for ' + file.name);
-
-    var noneOpt = document.createElement('option');
-    noneOpt.value = '';
-    noneOpt.textContent = 'None';
-    sel.appendChild(noneOpt);
-
-    for (var tagNum = 21; tagNum <= 40; tagNum++) {
-      var opt = document.createElement('option');
-      opt.value = String(tagNum);
-      opt.textContent = String(tagNum);
-      sel.appendChild(opt);
-    }
-
-    sel.addEventListener('change', function() {
-      updateToolTagSelectsDisabled();
-      updateRoadLayersVisibilityByTags(state.lastApriltagDetections || []);
-    });
-    geojsonFileSelects.push(sel);
-
     var colorInput = document.createElement('input');
     colorInput.className = 'tool-tag-controls__file-color';
     colorInput.type = 'color';
-    colorInput.value = roadColorPalette[(geojsonFileSelects.length - 1) % roadColorPalette.length];
+    colorInput.value = roadColorPalette[importedRoadEntries.length % roadColorPalette.length];
     colorInput.setAttribute('aria-label', 'Pick display color for ' + file.name);
     row.dataset.roadColor = colorInput.value;
     var roadEntry = {
       fileName: file && file.name ? String(file.name) : 'roads.geojson',
       rowEl: row,
-      tagSelect: sel,
       colorInput: colorInput,
       roadLayer: null,
       geojsonData: null,
@@ -661,7 +625,7 @@ export function initApp() {
     colorInput.addEventListener('input', function() {
       row.dataset.roadColor = colorInput.value;
       ensureRoadLayerOnMap(roadEntry);
-      updateRoadLayersVisibilityByTags(state.lastApriltagDetections || []);
+      updateRoadLayersVisibilityByTags();
     });
 
     var removeBtn = document.createElement('button');
@@ -670,19 +634,15 @@ export function initApp() {
     removeBtn.textContent = '×';
     removeBtn.setAttribute('aria-label', 'Remove ' + file.name);
     removeBtn.addEventListener('click', function() {
-      var idx = geojsonFileSelects.indexOf(sel);
-      if (idx !== -1) geojsonFileSelects.splice(idx, 1);
       rowRemoved = true;
       roadEntry.removed = true;
       removeRoadLayer(roadEntry);
       var roadIdx = importedRoadEntries.indexOf(roadEntry);
       if (roadIdx !== -1) importedRoadEntries.splice(roadIdx, 1);
       row.parentNode.removeChild(row);
-      updateToolTagSelectsDisabled();
     });
 
     row.appendChild(nameSpan);
-    row.appendChild(sel);
     row.appendChild(colorInput);
     row.appendChild(removeBtn);
     dom.geojsonFilesListEl.appendChild(row);
@@ -690,14 +650,13 @@ export function initApp() {
     readGeojsonFileText(file).then(function(text) {
       if (rowRemoved || roadEntry.removed) return;
       roadEntry.geojsonData = parseRoadGeojsonText(text);
-      updateRoadLayersVisibilityByTags(state.lastApriltagDetections || []);
+      updateRoadLayersVisibilityByTags();
       setError('');
     }).catch(function(err) {
       console.warn('Failed to load roads GeoJSON:', file.name, err);
       setError('Failed to load roads GeoJSON: ' + file.name);
     });
 
-    updateToolTagSelectsDisabled();
     return roadEntry;
   }
 
@@ -992,7 +951,7 @@ export function initApp() {
   function collectWorkshopSetupDefinition() {
     var setupItems = [];
     if (dom.uiSetupOverlayEl) {
-      var els = dom.uiSetupOverlayEl.querySelectorAll('.ui-label, .ui-dot, .ui-draw, .ui-note, .ui-eraser');
+      var els = dom.uiSetupOverlayEl.querySelectorAll('.ui-label, .ui-dot, .ui-draw, .ui-note, .ui-eraser, .ui-selection');
       for (var i = 0; i < els.length; i++) {
         var el = els[i];
         if (!el || !el.dataset || el.classList.contains('ui-sticker-instance')) continue;
@@ -1007,6 +966,7 @@ export function initApp() {
           y: isFinite(top) ? top : 0,
           rotationDeg: isFinite(rotationDeg) ? rotationDeg : 0,
           color: el.dataset.color || null,
+          triggerTagId: el.dataset.triggerTagId || '',
           text: type === 'label' ? (el.textContent || '') : '',
           noteText: type === 'note' ? (el.dataset.noteText || '') : ''
         };
@@ -1015,8 +975,8 @@ export function initApp() {
     }
 
     setupItems.sort(function(a, b) {
-      var ak = [a.type, a.text, a.noteText, a.color, a.x, a.y, a.rotationDeg].join('|');
-      var bk = [b.type, b.text, b.noteText, b.color, b.x, b.y, b.rotationDeg].join('|');
+      var ak = [a.type, a.text, a.noteText, a.color, a.triggerTagId, a.x, a.y, a.rotationDeg].join('|');
+      var bk = [b.type, b.text, b.noteText, b.color, b.triggerTagId, b.x, b.y, b.rotationDeg].join('|');
       if (ak < bk) return -1;
       if (ak > bk) return 1;
       return 0;
@@ -1026,17 +986,6 @@ export function initApp() {
       participantCount: state.stage3ParticipantCount || 0,
       participantPrimaryTagIds: Array.isArray(state.stage3ParticipantTagIds) ? state.stage3ParticipantTagIds.slice() : [],
       participantTriggerTagIds: Array.isArray(state.stage3ParticipantTriggerTagIds) ? state.stage3ParticipantTriggerTagIds.slice() : [],
-      toolTagBindings: {
-        isovist: dom.isovistTagSelectEl.value || null,
-        shortestPathA: dom.shortestPathTagASelectEl.value || null,
-        shortestPathB: dom.shortestPathTagBSelectEl.value || null,
-        pan: dom.panTagSelectEl.value || null,
-        zoomA: dom.zoomTagASelectEl.value || null,
-        zoomB: dom.zoomTagBSelectEl.value || null,
-        zoom: dom.zoomTagASelectEl.value || null,
-        next: dom.nextTagSelectEl.value || null,
-        back: dom.backTagSelectEl.value || null
-      },
       setupItems: setupItems
     };
   }
@@ -1359,13 +1308,14 @@ export function initApp() {
 
           var type = el.dataset.uiType || '';
           var viewInfo = getMapViewInfo(el.dataset.sessionId || null);
-          var props = {
-            sourceType: type === 'note' ? 'annotation' : 'sticker',
-            itemType: type || 'unknown',
-            color: el.dataset.color || null,
-            noteText: type === 'note' ? (el.dataset.noteText || '') : '',
-            sessionId: el.dataset.sessionId || null,
-            mapViewId: viewInfo.mapViewId,
+            var props = {
+              sourceType: type === 'note' ? 'annotation' : 'sticker',
+              itemType: type || 'unknown',
+              color: el.dataset.color || null,
+              triggerTagId: el.dataset.triggerTagId || null,
+              noteText: type === 'note' ? (el.dataset.noteText || '') : '',
+              sessionId: el.dataset.sessionId || null,
+              mapViewId: viewInfo.mapViewId,
             mapViewName: viewInfo.mapViewName
           };
 
@@ -1525,7 +1475,7 @@ export function initApp() {
     if (!dom.uiSetupOverlayEl) return;
 
     // Filter setup elements and sticker instances.
-    var elements = dom.uiSetupOverlayEl.querySelectorAll('.ui-label, .ui-dot, .ui-draw, .ui-note, .ui-eraser');
+    var elements = dom.uiSetupOverlayEl.querySelectorAll('.ui-label, .ui-dot, .ui-draw, .ui-note, .ui-eraser, .ui-selection');
     for (var i = 0; i < elements.length; i++) {
       var el = elements[i];
       var elSessionId = el.dataset.sessionId;
@@ -1569,7 +1519,6 @@ export function initApp() {
       if (!entry || entry.removed || !isRoadFeatureCollection(entry.geojsonData)) continue;
       roads.push({
         fileName: entry.fileName || 'roads.geojson',
-        tagId: entry.tagSelect && entry.tagSelect.value ? entry.tagSelect.value : null,
         color: entry.colorInput && entry.colorInput.value ? entry.colorInput.value : '#2bb8ff',
         geojsonData: entry.geojsonData,
         hasFittedToBounds: !!entry.hasFittedToBounds
@@ -1595,16 +1544,6 @@ export function initApp() {
         x: state.apriltagTrackingOffsetX,
         y: state.apriltagTrackingOffsetY
       },
-      toolTagBindings: {
-        isovist: dom.isovistTagSelectEl.value || null,
-        shortestPathA: dom.shortestPathTagASelectEl.value || null,
-        shortestPathB: dom.shortestPathTagBSelectEl.value || null,
-        pan: dom.panTagSelectEl.value || null,
-        zoomA: dom.zoomTagASelectEl.value || null,
-        zoomB: dom.zoomTagBSelectEl.value || null,
-        next: dom.nextTagSelectEl.value || null,
-        back: dom.backTagSelectEl.value || null
-      },
       mapViews: mapViewEntries,
       activeMapViewId: state.currentMapSessionId || null,
       roads: roads
@@ -1619,7 +1558,6 @@ export function initApp() {
       removeRoadLayer(entry);
     }
     importedRoadEntries = [];
-    geojsonFileSelects = [];
     dom.geojsonFilesListEl.textContent = '';
   }
 
@@ -1656,16 +1594,6 @@ export function initApp() {
       saveNumberSetting('apriltagTrackingOffsetY', state.apriltagTrackingOffsetY);
     }
 
-    var bindings = mapSetup.toolTagBindings && typeof mapSetup.toolTagBindings === 'object' ? mapSetup.toolTagBindings : {};
-    setSelectValueIfOptionExists(dom.isovistTagSelectEl, bindings.isovist);
-    setSelectValueIfOptionExists(dom.shortestPathTagASelectEl, bindings.shortestPathA);
-    setSelectValueIfOptionExists(dom.shortestPathTagBSelectEl, bindings.shortestPathB);
-    setSelectValueIfOptionExists(dom.panTagSelectEl, bindings.pan);
-    setSelectValueIfOptionExists(dom.zoomTagASelectEl, bindings.zoomA || bindings.zoom);
-    setSelectValueIfOptionExists(dom.zoomTagBSelectEl, bindings.zoomB);
-    setSelectValueIfOptionExists(dom.nextTagSelectEl, bindings.next);
-    setSelectValueIfOptionExists(dom.backTagSelectEl, bindings.back);
-
     clearImportedRoadEntries();
 
     var roads = Array.isArray(mapSetup.roads) ? mapSetup.roads : [];
@@ -1687,7 +1615,6 @@ export function initApp() {
         roadEntry.colorInput.value = String(road.color);
         roadEntry.rowEl.dataset.roadColor = roadEntry.colorInput.value;
       }
-      setSelectValueIfOptionExists(roadEntry.tagSelect, road.tagId);
       roadEntry.hasFittedToBounds = !!road.hasFittedToBounds;
     }
 
@@ -1724,8 +1651,7 @@ export function initApp() {
     if (activeIndex >= 0) activateMapSession(activeIndex);
     else filterElementsBySession(null);
 
-    updateToolTagSelectsDisabled();
-    updateRoadLayersVisibilityByTags(state.lastApriltagDetections || []);
+    updateRoadLayersVisibilityByTags();
   }
 
   function setVgaPanelVisible(visible) {
@@ -2407,295 +2333,9 @@ export function initApp() {
   }
 
   // Process tool tags for edge-triggered actions (called each frame)
-  function processToolTagActions(detections) {
-    if (!detections || !Array.isArray(detections)) return;
-    if (state.stage !== 3 && state.stage !== 4) return;
-    if (state.viewMode !== 'map') return;
-    if (state.stage === 3 && vgaModeActive) return;
-
-    // Build detection lookup by ID
-    var detById = {};
-    for (var i = 0; i < detections.length; i++) {
-      var d = detections[i];
-      if (!d || !d.center) continue;
-      var id = typeof d.id === 'number' ? d.id : parseInt(d.id, 10);
-      if (isFinite(id)) detById[id] = d;
-    }
-
-    // Stage 4: drive isovist from configured Isovist tag.
-    if (state.stage === 4) {
-      var isovistTagId = dom.isovistTagSelectEl.value ? parseInt(dom.isovistTagSelectEl.value, 10) : null;
-      if (!isFinite(isovistTagId)) {
-        if (isovistTagRuntime.configuredTagId !== null || isovistTagRuntime.lastOrigin) {
-          isovistTagRuntime.configuredTagId = null;
-          resetIsovistTagRuntime(true);
-        }
-      } else {
-        if (isovistTagRuntime.configuredTagId !== isovistTagId) {
-          isovistTagRuntime.configuredTagId = isovistTagId;
-          resetIsovistTagRuntime(true);
-        }
-
-        var isovistNowMs = performance.now();
-        var isovistOrigin = collectIsovistOriginForTagId(detById, isovistTagId);
-        if (!isovistOrigin) {
-          if (!isovistTagRuntime.missingSinceMs) {
-            isovistTagRuntime.missingSinceMs = isovistNowMs;
-          }
-          if (isovistTagRuntime.lastOrigin &&
-              (isovistNowMs - isovistTagRuntime.missingSinceMs) >= ISOVIST_MISSING_HOLD_MS) {
-            resetIsovistTagRuntime(true);
-            isovistTagRuntime.configuredTagId = isovistTagId;
-          }
-        } else {
-          isovistTagRuntime.missingSinceMs = 0;
-          var isovistFirst = !isovistTagRuntime.lastOrigin;
-          var isovistMoved = shortestPathDistanceMeters(isovistOrigin, isovistTagRuntime.lastOrigin);
-          var isovistIntervalOk = (isovistNowMs - isovistTagRuntime.lastUpdateAtMs) >= ISOVIST_MIN_UPDATE_INTERVAL_MS;
-          if (isovistFirst || (isovistMoved >= ISOVIST_JITTER_METERS && isovistIntervalOk)) {
-            setStage4IsovistOrigin(isovistOrigin);
-            isovistTagRuntime.lastOrigin = cloneShortestPathLatLng(isovistOrigin);
-            isovistTagRuntime.lastUpdateAtMs = isovistNowMs;
-          }
-        }
-      }
-    } else if (isovistTagRuntime.configuredTagId !== null || isovistTagRuntime.lastOrigin) {
-      isovistTagRuntime.configuredTagId = null;
-      resetIsovistTagRuntime(true);
-    }
-
-    // Process shortest-path tags in Stage 3 and Stage 4.
-    if (state.stage === 3 || state.stage === 4) {
-      var shortestPathTagAId = dom.shortestPathTagASelectEl.value ? parseInt(dom.shortestPathTagASelectEl.value, 10) : null;
-      var shortestPathTagBId = dom.shortestPathTagBSelectEl.value ? parseInt(dom.shortestPathTagBSelectEl.value, 10) : null;
-      var shortestPathPairValid = isFinite(shortestPathTagAId) && isFinite(shortestPathTagBId) && shortestPathTagAId !== shortestPathTagBId;
-
-      if (!shortestPathPairValid) {
-        if (shortestPathTagRuntime.configuredTagAId !== null ||
-            shortestPathTagRuntime.configuredTagBId !== null ||
-            shortestPathTagRuntime.lastEndpointA ||
-            shortestPathTagRuntime.lastEndpointB) {
-          shortestPathTagRuntime.configuredTagAId = null;
-          shortestPathTagRuntime.configuredTagBId = null;
-          resetShortestPathTagRuntime(true);
-        }
-      } else {
-        if (shortestPathTagRuntime.configuredTagAId !== shortestPathTagAId ||
-            shortestPathTagRuntime.configuredTagBId !== shortestPathTagBId) {
-          shortestPathTagRuntime.configuredTagAId = shortestPathTagAId;
-          shortestPathTagRuntime.configuredTagBId = shortestPathTagBId;
-          resetShortestPathTagRuntime(true);
-        }
-
-        var nowMs = performance.now();
-        var endpoints = collectShortestPathEndpointsForTagIds(detById, shortestPathTagAId, shortestPathTagBId);
-        if (!endpoints) {
-          if (!shortestPathTagRuntime.missingSinceMs) {
-            shortestPathTagRuntime.missingSinceMs = nowMs;
-          }
-          if (shortestPathTagRuntime.lastEndpointA &&
-              shortestPathTagRuntime.lastEndpointB &&
-              (nowMs - shortestPathTagRuntime.missingSinceMs) >= SHORTEST_PATH_MISSING_HOLD_MS) {
-            resetShortestPathTagRuntime(true);
-            shortestPathTagRuntime.configuredTagAId = shortestPathTagAId;
-            shortestPathTagRuntime.configuredTagBId = shortestPathTagBId;
-          }
-        } else {
-          shortestPathTagRuntime.missingSinceMs = 0;
-
-          var firstRequest = !shortestPathTagRuntime.lastEndpointA || !shortestPathTagRuntime.lastEndpointB;
-          var movedA = shortestPathDistanceMeters(endpoints.a, shortestPathTagRuntime.lastEndpointA);
-          var movedB = shortestPathDistanceMeters(endpoints.b, shortestPathTagRuntime.lastEndpointB);
-          var movedEnough = movedA >= SHORTEST_PATH_JITTER_METERS || movedB >= SHORTEST_PATH_JITTER_METERS;
-          var intervalOk = (nowMs - shortestPathTagRuntime.lastRequestAtMs) >= SHORTEST_PATH_MIN_REQUEST_INTERVAL_MS;
-
-          if (firstRequest || (movedEnough && intervalOk)) {
-            setStage4ShortestPathEndpoints(endpoints.a, endpoints.b);
-            shortestPathTagRuntime.lastEndpointA = cloneShortestPathLatLng(endpoints.a);
-            shortestPathTagRuntime.lastEndpointB = cloneShortestPathLatLng(endpoints.b);
-            shortestPathTagRuntime.lastRequestAtMs = nowMs;
-          }
-        }
-      }
-    }
-
-    // Process pan tag in Stage 3 and Stage 4.
-    if (state.stage === 3 || state.stage === 4) {
-      var panTagId = dom.panTagSelectEl.value ? parseInt(dom.panTagSelectEl.value, 10) : null;
-      var panTagValid = isFinite(panTagId);
-
-      if (!panTagValid) {
-        if (panTagRuntime.configuredTagId !== null || panTagRuntime.anchorMapLatLng) {
-          panTagRuntime.configuredTagId = null;
-          resetPanTagRuntime();
-        }
-      } else {
-        if (panTagRuntime.configuredTagId !== panTagId) {
-          panTagRuntime.configuredTagId = panTagId;
-          resetPanTagRuntime();
-        }
-
-        var panNowMs = performance.now();
-        var panDet = detById[panTagId];
-        var panReady = !!(panDet && panDet.center && isPointInSurface(panDet.center.x, panDet.center.y));
-        var panTagPoint = panReady ? projectDetectionToMapContainerPoint(panDet) : null;
-
-        if (!panTagPoint || !state.leafletMap) {
-          if (!panTagRuntime.missingSinceMs) {
-            panTagRuntime.missingSinceMs = panNowMs;
-          }
-          if (panTagRuntime.anchorMapLatLng &&
-              (panNowMs - panTagRuntime.missingSinceMs) >= PAN_MISSING_HOLD_MS) {
-            resetPanTagRuntime();
-            panTagRuntime.configuredTagId = panTagId;
-          }
-        } else {
-          panTagRuntime.missingSinceMs = 0;
-
-          if (!panTagRuntime.anchorMapLatLng) {
-            var panAnchor = state.leafletMap.containerPointToLatLng(
-              state.leafletGlobal && state.leafletGlobal.point
-                ? state.leafletGlobal.point(panTagPoint.x, panTagPoint.y)
-                : { x: panTagPoint.x, y: panTagPoint.y }
-            );
-            panTagRuntime.anchorMapLatLng = cloneShortestPathLatLng(panAnchor);
-            panTagRuntime.lastTagPoint = { x: panTagPoint.x, y: panTagPoint.y };
-            panTagRuntime.lastApplyAtMs = panNowMs;
-          } else {
-            var panMovedPx = Infinity;
-            if (panTagRuntime.lastTagPoint) {
-              var panDx = panTagPoint.x - panTagRuntime.lastTagPoint.x;
-              var panDy = panTagPoint.y - panTagRuntime.lastTagPoint.y;
-              panMovedPx = Math.sqrt(panDx * panDx + panDy * panDy);
-            }
-            var panIntervalOk = (panNowMs - panTagRuntime.lastApplyAtMs) >= PAN_MIN_UPDATE_INTERVAL_MS;
-            if (panMovedPx >= PAN_JITTER_PIXELS && panIntervalOk) {
-              applyPanAnchorToTagPoint(panTagRuntime.anchorMapLatLng, panTagPoint);
-              panTagRuntime.lastTagPoint = { x: panTagPoint.x, y: panTagPoint.y };
-              panTagRuntime.lastApplyAtMs = panNowMs;
-            }
-          }
-        }
-      }
-    }
-
-    // Process zoom tags in Stage 3 and Stage 4.
-    if (state.stage === 3 || state.stage === 4) {
-      var zoomTagAId = dom.zoomTagASelectEl.value ? parseInt(dom.zoomTagASelectEl.value, 10) : null;
-      var zoomTagBId = dom.zoomTagBSelectEl.value ? parseInt(dom.zoomTagBSelectEl.value, 10) : null;
-      var zoomPairValid = isFinite(zoomTagAId) && isFinite(zoomTagBId) && zoomTagAId !== zoomTagBId;
-
-      if (!zoomPairValid) {
-        if (zoomTagRuntime.configuredTagAId !== null ||
-            zoomTagRuntime.configuredTagBId !== null ||
-            zoomTagRuntime.baselineDistanceMeters > 0) {
-          zoomTagRuntime.configuredTagAId = null;
-          zoomTagRuntime.configuredTagBId = null;
-          resetZoomTagRuntime();
-        }
-      } else {
-        if (zoomTagRuntime.configuredTagAId !== zoomTagAId ||
-            zoomTagRuntime.configuredTagBId !== zoomTagBId) {
-          zoomTagRuntime.configuredTagAId = zoomTagAId;
-          zoomTagRuntime.configuredTagBId = zoomTagBId;
-          resetZoomTagRuntime();
-        }
-
-        var zoomNowMs = performance.now();
-        var zoomEndpoints = collectShortestPathEndpointsForTagIds(
-          detById,
-          zoomTagAId,
-          zoomTagBId,
-          {
-            requireInSurface: false,
-            projectionOptions: {
-              allowExtrapolation: true,
-              maxExtrapolation: ZOOM_TAG_MAX_EXTRAPOLATION
-            }
-          }
-        );
-        if (!zoomEndpoints) {
-          if (!zoomTagRuntime.missingSinceMs) {
-            zoomTagRuntime.missingSinceMs = zoomNowMs;
-          }
-          if (zoomTagRuntime.baselineDistanceMeters > 0 &&
-              (zoomNowMs - zoomTagRuntime.missingSinceMs) >= ZOOM_MISSING_HOLD_MS) {
-            resetZoomTagRuntime();
-            zoomTagRuntime.configuredTagAId = zoomTagAId;
-            zoomTagRuntime.configuredTagBId = zoomTagBId;
-          }
-        } else if (state.leafletMap) {
-          zoomTagRuntime.missingSinceMs = 0;
-          var zoomDistance = shortestPathDistanceMeters(zoomEndpoints.a, zoomEndpoints.b);
-          if (isFinite(zoomDistance) && zoomDistance >= ZOOM_PAIR_MIN_DISTANCE_METERS) {
-            if (!(zoomTagRuntime.baselineDistanceMeters > 0)) {
-              // First valid pair distance defines neutral zoom baseline.
-              zoomTagRuntime.baselineDistanceMeters = zoomDistance;
-              zoomTagRuntime.baselineZoom = state.leafletMap.getZoom();
-              zoomTagRuntime.lastApplyAtMs = zoomNowMs;
-            } else {
-              var distanceRatioDelta = (zoomDistance - zoomTagRuntime.baselineDistanceMeters) / zoomTagRuntime.baselineDistanceMeters;
-              var relativeShift = Math.abs(distanceRatioDelta);
-              if (relativeShift >= ZOOM_PAIR_DEADBAND_RATIO &&
-                  (zoomNowMs - zoomTagRuntime.lastApplyAtMs) >= ZOOM_MIN_UPDATE_INTERVAL_MS) {
-                // Linear zoom mapping around baseline:
-                // distance +100% (2x baseline) -> zoom -1
-                // distance -100% (0x baseline) -> zoom +1
-                var linearZoomDelta = clamp(-distanceRatioDelta, -ZOOM_BASELINE_RANGE_UNITS, ZOOM_BASELINE_RANGE_UNITS);
-                var targetZoom = zoomTagRuntime.baselineZoom + linearZoomDelta;
-                var baseMinZoom = zoomTagRuntime.baselineZoom - ZOOM_BASELINE_RANGE_UNITS;
-                var baseMaxZoom = zoomTagRuntime.baselineZoom + ZOOM_BASELINE_RANGE_UNITS;
-                targetZoom = clamp(targetZoom, baseMinZoom, baseMaxZoom);
-
-                var mapMinZoom = typeof state.leafletMap.getMinZoom === 'function' ? state.leafletMap.getMinZoom() : 0;
-                var mapMaxZoom = typeof state.leafletMap.getMaxZoom === 'function' ? state.leafletMap.getMaxZoom() : 22;
-                if (!isFinite(mapMinZoom)) mapMinZoom = 0;
-                if (!isFinite(mapMaxZoom)) mapMaxZoom = 22;
-                targetZoom = clamp(targetZoom, mapMinZoom, mapMaxZoom);
-
-                var currentZoom = state.leafletMap.getZoom();
-                if (isFinite(currentZoom) && Math.abs(targetZoom - currentZoom) >= 0.01) {
-                  state.leafletMap.setZoom(targetZoom, { animate: false });
-                  zoomTagRuntime.lastApplyAtMs = zoomNowMs;
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // Get selected tag IDs for next/back
-    var nextTagId = dom.nextTagSelectEl.value ? parseInt(dom.nextTagSelectEl.value, 10) : null;
-    var backTagId = dom.backTagSelectEl.value ? parseInt(dom.backTagSelectEl.value, 10) : null;
-
-    // Process Next tag
-    if (nextTagId && isFinite(nextTagId)) {
-      var nextDet = detById[nextTagId];
-      var nextInSurface = nextDet ? isPointInSurface(nextDet.center.x, nextDet.center.y) : false;
-      var nextWasInSurface = !!toolTagInSurface[nextTagId];
-
-      // Edge trigger: just entered surface
-      if (nextInSurface && !nextWasInSurface) {
-        goToNextMapSession();
-      }
-
-      toolTagInSurface[nextTagId] = nextInSurface;
-    }
-
-    // Process Back tag
-    if (backTagId && isFinite(backTagId)) {
-      var backDet = detById[backTagId];
-      var backInSurface = backDet ? isPointInSurface(backDet.center.x, backDet.center.y) : false;
-      var backWasInSurface = !!toolTagInSurface[backTagId];
-
-      // Edge trigger: just entered surface
-      if (backInSurface && !backWasInSurface) {
-        goToPrevMapSession();
-      }
-
-      toolTagInSurface[backTagId] = backInSurface;
-    }
+  function processToolTagActions() {
+    // Stage 3 layer tag tracking has been intentionally disabled.
+    // Layer controls now use draggable sticker buttons in the panel.
   }
 
   // Tracking offset sliders (for AprilTags 11-20)
@@ -2841,7 +2481,7 @@ export function initApp() {
       initMaptasticIfNeeded();
       initLeafletIfNeeded();
       ensureVgaMapClickBinding();
-      updateRoadLayersVisibilityByTags(state.lastApriltagDetections || []);
+      updateRoadLayersVisibilityByTags();
       updateUiSetupPanelVisibility();
       updateEdgeGuidesVisibility();
       updateGestureControlsVisibility();
@@ -3298,99 +2938,102 @@ export function initApp() {
     var isMapViewWithHomography = (state.stage === 2 || state.stage === 3 || state.stage === 4) && state.viewMode === 'map';
     setMapFingerDotsVisible(false);
     var detections = Array.isArray(state.lastApriltagDetections) ? state.lastApriltagDetections : [];
-    var detectionVisibleById = {};
     var detectionById = {};
     for (var di = 0; di < detections.length; di++) {
       var det = detections[di];
       if (!det) continue;
       var detId = typeof det.id === 'number' ? det.id : parseInt(det.id, 10);
       if (!isFinite(detId)) continue;
-      detectionVisibleById[detId] = true;
       detectionById[detId] = det;
     }
 
     // Gesture handling (dwell-to-click and pinch-to-drag for Stage 3 and 4)
     if ((state.stage === 3 || state.stage === 4) && state.viewMode === 'map' && !vgaModeActive) {
       var apriltagPoints = [];
-      var secondaryVisibleByPrimaryTag = {};
-      var emittedTagIds = {};
+      var apriltagTriggerPoints = [];
       var mapRect = dom.mapWarpEl.getBoundingClientRect();
       var mapW = dom.mapWarpEl.offsetWidth;
       var mapH = dom.mapWarpEl.offsetHeight;
       var canProjectToMap = !!state.surfaceHomography && mapW > 0 && mapH > 0;
       var maxExtrapolation = 1.5;
+
+      function projectTagDetectionToMap(detByTag, tagId, applyTrackingOffset) {
+        if (!detByTag || !detByTag.center || !canProjectToMap) return null;
+        var uv = applyHomography(state.surfaceHomography, detByTag.center.x, detByTag.center.y);
+        if (!uv || uv.x < -maxExtrapolation || uv.x > 1 + maxExtrapolation || uv.y < -maxExtrapolation || uv.y > 1 + maxExtrapolation) {
+          return null;
+        }
+
+        var x = mapRect.left + uv.x * mapW;
+        var y = mapRect.top + uv.y * mapH;
+
+        if (applyTrackingOffset && tagId >= 11 && tagId <= 20) {
+          var ox = state.apriltagTrackingOffsetX;
+          var oy = state.apriltagTrackingOffsetY;
+          if (detByTag.corners && detByTag.corners.length >= 4 && (ox !== 0 || oy !== 0)) {
+            var c0 = applyHomography(state.surfaceHomography, detByTag.corners[0].x, detByTag.corners[0].y);
+            var c1 = applyHomography(state.surfaceHomography, detByTag.corners[1].x, detByTag.corners[1].y);
+            if (c0 && c1) {
+              var angle = Math.atan2((c1.y - c0.y) * mapH, (c1.x - c0.x) * mapW);
+              var cosA = Math.cos(angle);
+              var sinA = Math.sin(angle);
+              x += ox * cosA - oy * sinA;
+              y += ox * sinA + oy * cosA;
+            } else {
+              x += ox;
+              y += oy;
+            }
+          } else {
+            x += ox;
+            y += oy;
+          }
+        }
+        return { x: x, y: y };
+      }
+
       if (Array.isArray(state.stage3ParticipantTagIds)) {
         for (var t = 0; t < state.stage3ParticipantTagIds.length; t++) {
           var primaryTagId = parseInt(state.stage3ParticipantTagIds[t], 10);
           var triggerTagId = Array.isArray(state.stage3ParticipantTriggerTagIds) ? parseInt(state.stage3ParticipantTriggerTagIds[t], 10) : NaN;
 
           if (isFinite(primaryTagId)) {
-            secondaryVisibleByPrimaryTag[String(primaryTagId)] = isFinite(triggerTagId) ? !!detectionVisibleById[triggerTagId] : false;
-          }
-          if (isFinite(triggerTagId)) {
-            secondaryVisibleByPrimaryTag[String(triggerTagId)] = isFinite(primaryTagId) ? !!detectionVisibleById[primaryTagId] : false;
-          }
+            var primaryDet = detectionById[primaryTagId];
+            if (primaryDet && primaryDet.center) {
+              var touchInfo = state.apriltagTouchById && state.apriltagTouchById[primaryTagId] ? state.apriltagTouchById[primaryTagId] : null;
+              var point = {
+                handId: String(primaryTagId),
+                isApriltag: true,
+                tagId: primaryTagId,
+                isTouch: touchInfo ? !!touchInfo.isTouch : null
+              };
 
-          var pairTagIds = [primaryTagId, triggerTagId];
-          for (var pi = 0; pi < pairTagIds.length; pi++) {
-            var tagId = pairTagIds[pi];
-            if (!isFinite(tagId)) continue;
-            if (emittedTagIds[tagId]) continue;
-            emittedTagIds[tagId] = true;
-
-            var detByTag = detectionById[tagId];
-            if (!detByTag || !detByTag.center) continue;
-
-            var touchInfo = state.apriltagTouchById && state.apriltagTouchById[tagId] ? state.apriltagTouchById[tagId] : null;
-            var point = {
-              handId: String(tagId),
-              isApriltag: true,
-              tagId: tagId,
-              triggerTagVisible: !!secondaryVisibleByPrimaryTag[String(tagId)],
-              isTouch: touchInfo ? !!touchInfo.isTouch : null
-            };
-
-            if (canProjectToMap) {
-              var uv = applyHomography(state.surfaceHomography, detByTag.center.x, detByTag.center.y);
-              if (uv && uv.x >= -maxExtrapolation && uv.x <= 1 + maxExtrapolation && uv.y >= -maxExtrapolation && uv.y <= 1 + maxExtrapolation) {
-                var x = mapRect.left + uv.x * mapW;
-                var y = mapRect.top + uv.y * mapH;
-
-                if (tagId >= 11 && tagId <= 20) {
-                  var ox = state.apriltagTrackingOffsetX;
-                  var oy = state.apriltagTrackingOffsetY;
-                  if (detByTag.corners && detByTag.corners.length >= 4 && (ox !== 0 || oy !== 0)) {
-                    var c0 = applyHomography(state.surfaceHomography, detByTag.corners[0].x, detByTag.corners[0].y);
-                    var c1 = applyHomography(state.surfaceHomography, detByTag.corners[1].x, detByTag.corners[1].y);
-                    if (c0 && c1) {
-                      var angle = Math.atan2((c1.y - c0.y) * mapH, (c1.x - c0.x) * mapW);
-                      var cosA = Math.cos(angle);
-                      var sinA = Math.sin(angle);
-                      x += ox * cosA - oy * sinA;
-                      y += ox * sinA + oy * cosA;
-                    } else {
-                      x += ox;
-                      y += oy;
-                    }
-                  } else {
-                    x += ox;
-                    y += oy;
-                  }
-                }
-
-                point.x = x;
-                point.y = y;
+              var projectedPrimary = projectTagDetectionToMap(primaryDet, primaryTagId, true);
+              if (projectedPrimary) {
+                point.x = projectedPrimary.x;
+                point.y = projectedPrimary.y;
               }
+              apriltagPoints.push(point);
             }
+          }
 
-            apriltagPoints.push(point);
+          if (isFinite(primaryTagId) && isFinite(triggerTagId)) {
+            var triggerDet = detectionById[triggerTagId];
+            var projectedTrigger = projectTagDetectionToMap(triggerDet, triggerTagId, false);
+            if (projectedTrigger) {
+              apriltagTriggerPoints.push({
+                handId: String(primaryTagId),
+                triggerTagId: triggerTagId,
+                x: projectedTrigger.x,
+                y: projectedTrigger.y
+              });
+            }
           }
         }
       }
-      state.stage3SecondaryVisibleByPrimaryTag = secondaryVisibleByPrimaryTag;
+
+      updateApriltagTriggerSelections(apriltagTriggerPoints);
       handleStage3Gestures(apriltagPoints);
     } else {
-      state.stage3SecondaryVisibleByPrimaryTag = {};
       resetStage3Gestures();
     }
 
@@ -3451,8 +3094,8 @@ export function initApp() {
     }
 
     // Process tool tag actions (next/back, etc.)
-    processToolTagActions(state.lastApriltagDetections || []);
-    updateRoadLayersVisibilityByTags(state.lastApriltagDetections || []);
+    processToolTagActions();
+    updateRoadLayersVisibilityByTags();
 
     state.animationId = requestAnimationFrame(processFrame);
   }

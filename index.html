@@ -133,57 +133,27 @@
                     <div id="toolTagControls" class="tool-tag-controls hidden" aria-hidden="true">
                         <div class="tool-tag-controls__row">
                             <div class="tool-tag-controls__item">
-                                <span class="tool-tag-controls__label">Isovist</span>
-                                <select id="isovistTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Isovist">
-                                    <option value="">None</option>
-                                </select>
-                            </div>
-                            <div class="tool-tag-controls__item tool-tag-controls__item--pair">
-                                <span class="tool-tag-controls__label">Shortest-path</span>
-                                <div class="tool-tag-controls__pair">
-                                    <select id="shortestPathTagASelect" class="tool-tag-controls__select tool-tag-controls__select--pair" aria-label="Select AprilTag A for Shortest-path">
-                                        <option value="">None</option>
-                                    </select>
-                                    <select id="shortestPathTagBSelect" class="tool-tag-controls__select tool-tag-controls__select--pair" aria-label="Select AprilTag B for Shortest-path">
-                                        <option value="">None</option>
-                                    </select>
-                                </div>
+                                <button class="tool-tag-controls__layer-btn" type="button" data-layer-name="Isovist" aria-label="Drag Isovist layer">Isovist</button>
                             </div>
                             <div class="tool-tag-controls__item">
-                                <span class="tool-tag-controls__label">Pan</span>
-                                <select id="panTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Pan">
-                                    <option value="">None</option>
-                                </select>
-                            </div>
-                            <div class="tool-tag-controls__item tool-tag-controls__item--pair">
-                                <span class="tool-tag-controls__label">Zoom</span>
-                                <div class="tool-tag-controls__pair">
-                                    <select id="zoomTagASelect" class="tool-tag-controls__select tool-tag-controls__select--pair" aria-label="Select AprilTag A for Zoom">
-                                        <option value="">None</option>
-                                    </select>
-                                    <select id="zoomTagBSelect" class="tool-tag-controls__select tool-tag-controls__select--pair" aria-label="Select AprilTag B for Zoom">
-                                        <option value="">None</option>
-                                    </select>
-                                </div>
+                                <button class="tool-tag-controls__layer-btn" type="button" data-layer-name="Shortest-path" aria-label="Drag Shortest-path layer">Shortest-path</button>
                             </div>
                             <div class="tool-tag-controls__item">
-                                <span class="tool-tag-controls__label">Next</span>
-                                <select id="nextTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Next">
-                                    <option value="">None</option>
-                                </select>
+                                <button class="tool-tag-controls__layer-btn" type="button" data-layer-name="Pan" aria-label="Drag Pan layer">Pan</button>
                             </div>
                             <div class="tool-tag-controls__item">
-                                <span class="tool-tag-controls__label">Back</span>
-                                <select id="backTagSelect" class="tool-tag-controls__select" aria-label="Select AprilTag for Back">
-                                    <option value="">None</option>
-                                </select>
+                                <button class="tool-tag-controls__layer-btn" type="button" data-layer-name="Zoom" aria-label="Drag Zoom layer">Zoom</button>
                             </div>
                             <div class="tool-tag-controls__item">
-                                <span class="tool-tag-controls__label">Roads</span>
-                                <button id="geojsonImportBtn" class="tool-tag-controls__import-btn" type="button" aria-label="Load roads GeoJSON file">+</button>
+                                <button class="tool-tag-controls__layer-btn" type="button" data-layer-name="Next" aria-label="Drag Next layer">Next</button>
                             </div>
                             <div class="tool-tag-controls__item">
-                                <span class="tool-tag-controls__label">VGA</span>
+                                <button class="tool-tag-controls__layer-btn" type="button" data-layer-name="Back" aria-label="Drag Back layer">Back</button>
+                            </div>
+                            <div class="tool-tag-controls__item">
+                                <button id="geojsonImportBtn" class="tool-tag-controls__import-btn" type="button" aria-label="Load roads GeoJSON file">Roads +</button>
+                            </div>
+                            <div class="tool-tag-controls__item">
                                 <button id="vgaModeBtn" class="tool-tag-controls__import-btn" type="button" aria-label="Enter VGA mode">VGA</button>
                             </div>
                         </div>
