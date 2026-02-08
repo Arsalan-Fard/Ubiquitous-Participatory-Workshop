@@ -96,6 +96,8 @@ function getPointerState(handIndex) {
       triggerFillStartMs: 0,  // When the disappearance fill animation started
       triggerFired: false,    // Whether the trigger already fired this disappearance
       armedStickerTemplate: null,  // Template element for dot/note placement (two-step flow)
+      activeFollowStickerEl: null, // Live sticker that follows primary while sticker tool is active
+      activeFollowStickerContactKey: '',
       drawingStarted: false,  // Whether drawing has been started by a trigger (2nd trigger enables actual drawing)
       eraserActive: false,
       eraserButtonEl: null,
@@ -398,6 +400,45 @@ function placeStickerImmediatelyForHand(handId, templateEl, primaryPointByHandId
   return true;
 }
 
+function startFollowStickerForPointer(ps, templateEl, pointer, contactKey) {
+  if (!ps || !templateEl || !pointer) return null;
+  var clonedEl = cloneSticker(templateEl);
+  if (!clonedEl) return null;
+  if (clonedEl.dataset) {
+    clonedEl.dataset.followPrimary = '1';
+    delete clonedEl.dataset.mapLat;
+    delete clonedEl.dataset.mapLng;
+  }
+  var w = clonedEl.offsetWidth || 20;
+  var h = clonedEl.offsetHeight || 20;
+  clonedEl.style.left = (pointer.x - w / 2) + 'px';
+  clonedEl.style.top = (pointer.y - h / 2) + 'px';
+  ps.activeFollowStickerEl = clonedEl;
+  ps.activeFollowStickerContactKey = contactKey || '';
+  return clonedEl;
+}
+
+function updateFollowStickerPosition(ps, pointer) {
+  if (!ps || !ps.activeFollowStickerEl || !pointer) return;
+  var el = ps.activeFollowStickerEl;
+  var w = el.offsetWidth || 20;
+  var h = el.offsetHeight || 20;
+  el.style.left = (pointer.x - w / 2) + 'px';
+  el.style.top = (pointer.y - h / 2) + 'px';
+}
+
+function finalizeFollowStickerForPointer(ps) {
+  if (!ps || !ps.activeFollowStickerEl) return;
+  var el = ps.activeFollowStickerEl;
+  if (el && el.dataset) delete el.dataset.followPrimary;
+  if (el && el.isConnected && state.viewMode === 'map' && (state.stage === 3 || state.stage === 4)) {
+    bindStickerLatLngFromCurrentPosition(el);
+    updateStickerMappingForCurrentView();
+  }
+  ps.activeFollowStickerEl = null;
+  ps.activeFollowStickerContactKey = '';
+}
+
 function resolveToolElementForTriggerPoint(pointer, triggerTagId) {
   var triggerId = normalizeTagId(triggerTagId);
   if (!triggerId || !pointer || !isFinite(pointer.x) || !isFinite(pointer.y)) return null;
@@ -503,6 +544,8 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
       // Drawing should stop as soon as the trigger tag leaves the draw button.
       if (entry.toolType === 'draw') {
         setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
+      } else if (entry.toolType === 'dot') {
+        setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
       }
       continue;
     }
@@ -519,6 +562,9 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
       if (entry.lastTriggerContactKey && entry.lastTriggerContactKey !== contactKey) {
         entry.lastTriggerContactKey = '';
         entry.activeLayerNavAction = '';
+        if (entry.toolType === 'dot') {
+          setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
+        }
       }
       setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, 0, nowMs);
       continue;
@@ -533,7 +579,12 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
     entry.lastTriggerContactKey = contactKey;
     entry.activeLayerNavAction = getLayerNavActionForTool(toolMatch.toolType, toolMatch.toolEl);
 
-    if ((toolMatch.toolType === 'dot' || toolMatch.toolType === 'note') && toolMatch.toolEl) {
+    if (toolMatch.toolType === 'dot' && toolMatch.toolEl) {
+      setApriltagActiveToolForHand(handId, toolMatch.toolType, toolMatch.toolEl);
+      continue;
+    }
+
+    if (toolMatch.toolType === 'note' && toolMatch.toolEl) {
       var placed = placeStickerImmediatelyForHand(handId, toolMatch.toolEl, primaryPointByHandId);
       if (placed) {
         setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
@@ -812,6 +863,7 @@ export function handleStage3Gestures(usableIndexTipPoints) {
         deactivateDrawingForPointer(ps.dragPointerId);
         deactivateEraser(ps);
         dearmStickerTemplate(ps);
+        finalizeFollowStickerForPointer(ps);
         delete pointerStates[handId];
         continue;
       }
@@ -858,6 +910,7 @@ export function handleStage3Gestures(usableIndexTipPoints) {
 
       deactivateEraser(ps);
       dearmStickerTemplate(ps);
+      finalizeFollowStickerForPointer(ps);
       delete pointerStates[handId];
     }
   }
@@ -911,6 +964,31 @@ function processPointerGesture(handIndex, pointer, handData) {
     activeApriltagTool = syncPointerToolWithApriltagSelection(ps, handIndex);
   }
 
+  var activeApriltagEntry = isApriltag ? getApriltagActiveToolForHand(handIndex) : null;
+  var activeToolType = activeApriltagTool ? activeApriltagTool.toolType : 'selection';
+  var activeToolEl = activeApriltagTool ? activeApriltagTool.toolEl : null;
+  var activeContactKey = activeApriltagEntry && typeof activeApriltagEntry.lastTriggerContactKey === 'string'
+    ? activeApriltagEntry.lastTriggerContactKey
+    : '';
+
+  // Finalize a live-follow sticker as soon as its sticker button is deactivated.
+  if (ps.activeFollowStickerEl && !(isApriltag && activeToolType === 'dot' && activeContactKey)) {
+    finalizeFollowStickerForPointer(ps);
+  }
+
+  // Sticker mode: while active, keep one sticker attached to primary-tag position.
+  if (isApriltag && activeToolType === 'dot' && activeToolEl && activeContactKey) {
+    if (!ps.activeFollowStickerEl || ps.activeFollowStickerContactKey !== activeContactKey) {
+      finalizeFollowStickerForPointer(ps);
+      startFollowStickerForPointer(ps, activeToolEl, pointer, activeContactKey);
+    } else {
+      updateFollowStickerPosition(ps, pointer);
+    }
+    updatePointerCursor(handIndex, pointer, 0, null);
+    ps.prevPointerTimeMs = nowMs;
+    return;
+  }
+
   // In AprilTag mode with stereo touch sensing, hovering should not trigger interactions.
   // Still show cursor but cancel any active drawing and prevent trigger-on-disappearance.
   if (isApriltag && isTouch === false) {
@@ -930,7 +1008,6 @@ function processPointerGesture(handIndex, pointer, handData) {
   if (isApriltag) {
     ps.triggerFillStartMs = 0;  // Reset fill since tag is visible again
     ps.triggerFired = false;
-    var activeToolType = activeApriltagTool ? activeApriltagTool.toolType : 'selection';
 
     if (state.stage === 4 && activeToolType === 'eraser' && ps.eraserActive) {
       eraseAtPoint(pointer.x, pointer.y, ERASER_TOUCH_RADIUS_PX);
@@ -1236,6 +1313,7 @@ export function resetStage3Gestures() {
     // Dearm sticker template
     deactivateEraser(ps);
     dearmStickerTemplate(ps);
+    finalizeFollowStickerForPointer(ps);
     // Remove secondary cursors
     if (ps.cursorEl && ps.cursorEl !== state.dom.mapFingerCursorEl && ps.cursorEl.parentNode) {
       ps.cursorEl.parentNode.removeChild(ps.cursorEl);

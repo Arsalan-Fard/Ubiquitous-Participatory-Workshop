@@ -266,6 +266,7 @@ function syncMappedStickersNow() {
     var el = els[i];
     if (!el || !el.dataset) continue;
     if (isStickerDragging(el)) continue;
+    if (el.dataset.followPrimary === '1') continue;
 
     var lat = parseFloat(el.dataset.mapLat);
     var lng = parseFloat(el.dataset.mapLng);
