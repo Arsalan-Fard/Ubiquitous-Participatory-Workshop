@@ -593,18 +593,23 @@ export function initUiSetup(options) {
   }
 
   function createDraw() {
-    var drawEl = document.createElement('canvas');
+    var drawEl = document.createElement('div');
     drawEl.className = 'ui-draw';
-    drawEl.width = 48;
-    drawEl.height = 48;
     drawEl.dataset.uiType = 'draw';
     drawEl.dataset.color = currentDrawColor;
     assignCurrentSessionId(drawEl);
+
+    var drawCanvasEl = document.createElement('canvas');
+    drawCanvasEl.className = 'ui-draw__canvas';
+    drawCanvasEl.width = 90;
+    drawCanvasEl.height = 90;
+    drawEl.appendChild(drawCanvasEl);
+
     overlayEl.appendChild(drawEl);
     attachInteractionTriggerSelect(drawEl);
 
     positionDrawAboveSwatch(drawEl);
-    renderDrawIcon(drawEl, currentDrawColor);
+    renderDrawIcon(drawCanvasEl, currentDrawColor);
     makeDraggable(drawEl, { draggingClass: 'ui-draw--dragging' });
   }
 
@@ -684,8 +689,8 @@ export function initUiSetup(options) {
 
     var dragEvent = options.startDragEvent || null;
     if (dragEvent && typeof dragEvent.clientX === 'number' && typeof dragEvent.clientY === 'number') {
-      selectionEl.style.left = String(dragEvent.clientX - 30) + 'px';
-      selectionEl.style.top = String(dragEvent.clientY - 30) + 'px';
+      selectionEl.style.left = String(dragEvent.clientX - 45) + 'px';
+      selectionEl.style.top = String(dragEvent.clientY - 45) + 'px';
       selectionEl.style.visibility = 'visible';
       startSelectionDrag(dragEvent);
     } else {
@@ -1000,18 +1005,23 @@ export function initUiSetup(options) {
       }
 
       if (item.type === 'draw') {
-        var drawEl = document.createElement('canvas');
+        var drawEl = document.createElement('div');
         drawEl.className = 'ui-draw';
-        drawEl.width = 48;
-        drawEl.height = 48;
         drawEl.dataset.uiType = 'draw';
         drawEl.dataset.color = String(item.color || defaultItemColor);
         drawEl.style.left = String(item.x || 0) + 'px';
         drawEl.style.top = String(item.y || 0) + 'px';
         assignImportedSessionId(drawEl, item.sessionId);
+
+        var drawCanvasEl = document.createElement('canvas');
+        drawCanvasEl.className = 'ui-draw__canvas';
+        drawCanvasEl.width = 90;
+        drawCanvasEl.height = 90;
+        drawEl.appendChild(drawCanvasEl);
+
         overlayEl.appendChild(drawEl);
         attachInteractionTriggerSelect(drawEl, item.triggerTagId);
-        renderDrawIcon(drawEl, drawEl.dataset.color);
+        renderDrawIcon(drawCanvasEl, drawEl.dataset.color);
         makeDraggable(drawEl, { draggingClass: 'ui-draw--dragging' });
         continue;
       }

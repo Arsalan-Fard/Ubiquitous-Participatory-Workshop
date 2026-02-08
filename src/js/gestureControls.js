@@ -28,9 +28,12 @@ var nextPointerId = 100; // Start at 100 to avoid conflicts with real pointer ID
 
 // AprilTag trigger-on-disappearance delay (ms)
 var APRILTAG_TRIGGER_DELAY_MS = 1000;
+var APRILTAG_TRIGGER_ACTIVATION_DELAY_MS = 1000;
 var ERASER_TOUCH_RADIUS_PX = 16;
 var APRILTAG_TOOL_SELECTOR = '.ui-dot, .ui-note, .ui-draw, .ui-eraser, .ui-selection, .ui-layer-square';
 var APRILTAG_TOOL_ACTIVE_CLASS = 'ui-trigger-active';
+var APRILTAG_TOOL_HOVER_CLASS = 'ui-trigger-hovering';
+var APRILTAG_TOOL_NONE = 'none';
 var apriltagActiveToolByHandId = {};
 
 // Get all visible finger dot positions in viewport coordinates
@@ -206,16 +209,24 @@ function syncApriltagActiveToolsWithParticipants() {
       apriltagActiveToolByHandId[handId] = {
         toolType: 'selection',
         toolEl: findSelectionToolElementForTriggerTag(triggerTagId),
-        triggerTagId: triggerTagId
+        triggerTagId: triggerTagId,
+        lastTriggerContactKey: '',
+        hoverContactKey: '',
+        hoverToolEl: null,
+        hoverStartedMs: 0
       };
       continue;
     }
     entry.triggerTagId = triggerTagId;
+    if (typeof entry.lastTriggerContactKey !== 'string') entry.lastTriggerContactKey = '';
+    if (typeof entry.hoverContactKey !== 'string') entry.hoverContactKey = '';
+    if (!isFinite(entry.hoverStartedMs)) entry.hoverStartedMs = 0;
     if (entry.toolEl && !entry.toolEl.isConnected) entry.toolEl = null;
+    if (entry.hoverToolEl && !entry.hoverToolEl.isConnected) clearTriggerHoverVisual(entry);
     if (!entry.toolEl && entry.toolType === 'selection') {
       entry.toolEl = findSelectionToolElementForTriggerTag(triggerTagId);
     }
-    if (entry.toolType !== 'selection' && !entry.toolEl) {
+    if (entry.toolType !== 'selection' && entry.toolType !== APRILTAG_TOOL_NONE && !entry.toolEl) {
       entry.toolType = 'selection';
       entry.toolEl = findSelectionToolElementForTriggerTag(triggerTagId);
     }
@@ -223,6 +234,7 @@ function syncApriltagActiveToolsWithParticipants() {
 
   for (var handKey in apriltagActiveToolByHandId) {
     if (!allowedByHandId[handKey]) {
+      clearTriggerHoverVisual(apriltagActiveToolByHandId[handKey]);
       delete apriltagActiveToolByHandId[handKey];
     }
   }
@@ -237,10 +249,44 @@ function getApriltagActiveToolForHand(handId) {
     apriltagActiveToolByHandId[key] = {
       toolType: 'selection',
       toolEl: findSelectionToolElementForTriggerTag(triggerTagId),
-      triggerTagId: triggerTagId
+      triggerTagId: triggerTagId,
+      lastTriggerContactKey: '',
+      hoverContactKey: '',
+      hoverToolEl: null,
+      hoverStartedMs: 0
     };
   }
   return apriltagActiveToolByHandId[key];
+}
+
+function clearTriggerHoverVisual(entry) {
+  if (!entry) return;
+  if (entry.hoverToolEl && entry.hoverToolEl.classList) {
+    entry.hoverToolEl.classList.remove(APRILTAG_TOOL_HOVER_CLASS);
+    entry.hoverToolEl.style.removeProperty('--trigger-fill-progress');
+  }
+  entry.hoverToolEl = null;
+  entry.hoverContactKey = '';
+  entry.hoverStartedMs = 0;
+}
+
+function setTriggerHoverVisual(entry, toolEl, contactKey, progress01, nowMs) {
+  if (!entry) return;
+  var progress = Math.max(0, Math.min(1, progress01 || 0));
+  if (entry.hoverContactKey !== contactKey || entry.hoverToolEl !== toolEl) {
+    clearTriggerHoverVisual(entry);
+    entry.hoverToolEl = toolEl || null;
+    entry.hoverContactKey = contactKey || '';
+    entry.hoverStartedMs = nowMs || performance.now();
+  }
+  if (entry.hoverToolEl && entry.hoverToolEl.classList) {
+    entry.hoverToolEl.classList.add(APRILTAG_TOOL_HOVER_CLASS);
+    entry.hoverToolEl.style.setProperty('--trigger-fill-progress', String(progress));
+  }
+}
+
+function isInputToolType(toolType) {
+  return toolType === 'dot' || toolType === 'draw' || toolType === 'note' || toolType === 'eraser' || toolType === 'selection';
 }
 
 function updateApriltagActiveToolVisuals() {
@@ -275,15 +321,63 @@ function setApriltagActiveToolForHand(handId, toolType, toolEl) {
 
   if (!resolvedType) resolvedType = resolvedEl ? getToolTypeFromElement(resolvedEl) : 'selection';
   if (!resolvedType || resolvedType === 'unknown') resolvedType = 'selection';
-  if (resolvedType !== 'selection' && !resolvedEl) resolvedType = 'selection';
+  if (resolvedType !== 'selection' && resolvedType !== APRILTAG_TOOL_NONE && !resolvedEl) resolvedType = 'selection';
 
   if (resolvedType === 'selection' && !resolvedEl) {
     resolvedEl = findSelectionToolElementForTriggerTag(entry.triggerTagId);
+  }
+  if (resolvedType === APRILTAG_TOOL_NONE) {
+    resolvedEl = null;
   }
 
   if (entry.toolType === resolvedType && entry.toolEl === resolvedEl) return;
   entry.toolType = resolvedType;
   entry.toolEl = resolvedEl;
+}
+
+function getToolContactKey(toolMatch) {
+  if (!toolMatch || !toolMatch.toolEl || !toolMatch.toolType) return '';
+  var keyId = toolMatch.toolEl.dataset && toolMatch.toolEl.dataset.activationKey
+    ? String(toolMatch.toolEl.dataset.activationKey)
+    : '';
+  if (!keyId) {
+    keyId = String(Math.random()).slice(2);
+    if (toolMatch.toolEl.dataset) toolMatch.toolEl.dataset.activationKey = keyId;
+  }
+  return String(toolMatch.toolType) + ':' + keyId;
+}
+
+function getPrimaryPointForHand(handId, primaryPointByHandId) {
+  if (primaryPointByHandId && primaryPointByHandId[handId]) {
+    return primaryPointByHandId[handId];
+  }
+  var ps = pointerStates[handId];
+  if (ps && ps.lastPointer && isFinite(ps.lastPointer.x) && isFinite(ps.lastPointer.y)) {
+    return { x: ps.lastPointer.x, y: ps.lastPointer.y };
+  }
+  return null;
+}
+
+function placeStickerImmediatelyForHand(handId, templateEl, primaryPointByHandId) {
+  if (!templateEl) return false;
+  var primaryPoint = getPrimaryPointForHand(handId, primaryPointByHandId);
+  if (!primaryPoint) return false;
+
+  var clonedEl = cloneSticker(templateEl);
+  if (!clonedEl) return false;
+
+  clonedEl.style.left = (primaryPoint.x - (clonedEl.offsetWidth || 20) / 2) + 'px';
+  clonedEl.style.top = (primaryPoint.y - (clonedEl.offsetHeight || 20) / 2) + 'px';
+  if (state.viewMode === 'map' && (state.stage === 3 || state.stage === 4)) {
+    bindStickerLatLngFromCurrentPosition(clonedEl);
+    updateStickerMappingForCurrentView();
+  }
+  if (clonedEl.classList.contains('ui-note')) {
+    setTimeout(function() {
+      clonedEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    }, 50);
+  }
+  return true;
 }
 
 function resolveToolElementForTriggerPoint(pointer, triggerTagId) {
@@ -315,7 +409,7 @@ function syncPointerToolWithApriltagSelection(ps, handId) {
   var toolType = entry.toolType || 'selection';
   var toolEl = entry.toolEl && entry.toolEl.isConnected ? entry.toolEl : null;
 
-  if (toolType !== 'selection' && !toolEl) {
+  if (toolType !== 'selection' && toolType !== APRILTAG_TOOL_NONE && !toolEl) {
     toolType = 'selection';
     toolEl = findSelectionToolElementForTriggerTag(entry.triggerTagId);
     entry.toolType = 'selection';
@@ -351,10 +445,23 @@ function syncPointerToolWithApriltagSelection(ps, handId) {
   return { toolType: toolType, toolEl: toolEl };
 }
 
-export function updateApriltagTriggerSelections(triggerPoints) {
+export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
   syncApriltagActiveToolsWithParticipants();
+  var nowMs = performance.now();
+  var primaryPointByHandId = {};
+  var primaryItems = Array.isArray(primaryPoints) ? primaryPoints : [];
+  for (var pi = 0; pi < primaryItems.length; pi++) {
+    var p = primaryItems[pi];
+    if (!p || !p.handId) continue;
+    if (!isFinite(p.x) || !isFinite(p.y)) continue;
+    var pid = normalizePrimaryHandId(p.handId);
+    if (!pid) continue;
+    primaryPointByHandId[pid] = { x: p.x, y: p.y };
+  }
 
   var items = Array.isArray(triggerPoints) ? triggerPoints : [];
+  var triggerVisibleByHandId = {};
+  var contactByHandId = {};
   for (var i = 0; i < items.length; i++) {
     var point = items[i];
     if (!point) continue;
@@ -365,10 +472,71 @@ export function updateApriltagTriggerSelections(triggerPoints) {
     var participantTriggerTagId = normalizeTagId(entry.triggerTagId || point.triggerTagId);
     if (!participantTriggerTagId) continue;
     if (normalizeTagId(point.triggerTagId) !== participantTriggerTagId) continue;
+    triggerVisibleByHandId[handId] = true;
 
     var toolMatch = resolveToolElementForTriggerPoint({ x: point.x, y: point.y }, participantTriggerTagId);
-    if (!toolMatch) continue;
+    if (!toolMatch) {
+      // Rearm only when the trigger tag is explicitly seen outside any tool button.
+      if (entry.lastTriggerContactKey) entry.lastTriggerContactKey = '';
+      clearTriggerHoverVisual(entry);
+      // Drawing should stop as soon as the trigger tag leaves the draw button.
+      if (entry.toolType === 'draw') {
+        setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
+      }
+      continue;
+    }
+    var contactKey = getToolContactKey(toolMatch);
+    contactByHandId[handId] = contactKey;
+
+    if (entry.lastTriggerContactKey === contactKey) {
+      if (isInputToolType(toolMatch.toolType)) {
+        setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, 1, nowMs);
+      } else {
+        clearTriggerHoverVisual(entry);
+      }
+      continue;
+    }
+
+    var isNewContact = entry.hoverContactKey !== contactKey || entry.hoverToolEl !== toolMatch.toolEl;
+    if (isNewContact) {
+      setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, 0, nowMs);
+      continue;
+    }
+
+    var elapsedMs = Math.max(0, nowMs - (entry.hoverStartedMs || nowMs));
+    var fillProgress = Math.min(1, elapsedMs / APRILTAG_TRIGGER_ACTIVATION_DELAY_MS);
+    setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, fillProgress, nowMs);
+    if (fillProgress < 1) continue;
+
+    if (isInputToolType(toolMatch.toolType)) {
+      setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, 1, nowMs);
+    } else {
+      clearTriggerHoverVisual(entry);
+    }
+    entry.lastTriggerContactKey = contactKey;
+
+    if ((toolMatch.toolType === 'dot' || toolMatch.toolType === 'note') && toolMatch.toolEl) {
+      var placed = placeStickerImmediatelyForHand(handId, toolMatch.toolEl, primaryPointByHandId);
+      if (placed) {
+        setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
+      }
+      continue;
+    }
+
     setApriltagActiveToolForHand(handId, toolMatch.toolType, toolMatch.toolEl);
+  }
+
+  for (var handKey in apriltagActiveToolByHandId) {
+    if (!apriltagActiveToolByHandId[handKey]) continue;
+    if (!triggerVisibleByHandId[handKey]) {
+      // Keep the full glow state while trigger tag is not detected.
+      continue;
+    }
+    if (!contactByHandId[handKey]) {
+      var handEntry = apriltagActiveToolByHandId[handKey];
+      // Losing tracking should not rearm; only clear hover visuals.
+      clearTriggerHoverVisual(handEntry);
+    }
   }
 
   updateApriltagActiveToolVisuals();
@@ -547,7 +715,6 @@ export function handleStage3Gestures(usableIndexTipPoints) {
       if (ps.isApriltag && ps.lastPointer) {
         var activeTool = syncPointerToolWithApriltagSelection(ps, handId);
         var activeToolType = activeTool.toolType;
-        var activeToolEl = activeTool.toolEl;
 
         // Stop current drawing stroke after brief delay
         var strokeStopDelay = typeof state.strokeStopDelayMs === 'number' ? state.strokeStopDelayMs : 50;
@@ -564,8 +731,8 @@ export function handleStage3Gestures(usableIndexTipPoints) {
 
         var fillProgress = Math.min(1, (nowMs - ps.triggerFillStartMs) / APRILTAG_TRIGGER_DELAY_MS);
 
-        // Show cursor at last known position with fill animation
-        updatePointerCursor(handId, ps.lastPointer, fillProgress, 'pinch');
+        // Keep cursor visible at last known position without progress-ring fill.
+        updatePointerCursor(handId, ps.lastPointer, 0, null);
 
         // Fire trigger after fill completes
         if (!ps.triggerFired && fillProgress >= 1) {
@@ -573,21 +740,6 @@ export function handleStage3Gestures(usableIndexTipPoints) {
 
           if (activeToolType === 'selection' || activeToolType === 'layer-square') {
             dispatchClickAt(ps.lastPointer, ps.dragPointerId);
-          } else if ((activeToolType === 'dot' || activeToolType === 'note') && activeToolEl) {
-            var clonedEl = cloneSticker(activeToolEl);
-            if (clonedEl) {
-              clonedEl.style.left = (ps.lastPointer.x - (clonedEl.offsetWidth || 20) / 2) + 'px';
-              clonedEl.style.top = (ps.lastPointer.y - (clonedEl.offsetHeight || 20) / 2) + 'px';
-              if (state.viewMode === 'map' && (state.stage === 3 || state.stage === 4)) {
-                bindStickerLatLngFromCurrentPosition(clonedEl);
-                updateStickerMappingForCurrentView();
-              }
-              if (clonedEl.classList.contains('ui-note')) {
-                setTimeout(function() {
-                  clonedEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-                }, 50);
-              }
-            }
           }
         }
 
@@ -743,7 +895,7 @@ function processPointerGesture(handIndex, pointer, handData) {
 
     if (state.stage === 4 && activeToolType === 'eraser' && ps.eraserActive) {
       eraseAtPoint(pointer.x, pointer.y, ERASER_TOUCH_RADIUS_PX);
-      updatePointerCursor(handIndex, pointer, 1, 'draw');
+      updatePointerCursor(handIndex, pointer, 0, null);
       ps.prevPointerTimeMs = nowMs;
       return;
     }
@@ -760,7 +912,7 @@ function processPointerGesture(handIndex, pointer, handData) {
         // Continue drawing
         continueDrawingAtPoint(ps.dragPointerId, pointer.x, pointer.y);
       }
-      updatePointerCursor(handIndex, pointer, 1, 'draw');
+      updatePointerCursor(handIndex, pointer, 0, null);
       ps.prevPointerTimeMs = nowMs;
       return;
     }
@@ -1056,6 +1208,8 @@ export function resetStage3Gestures() {
     var allToolEls = overlayEl.querySelectorAll(APRILTAG_TOOL_SELECTOR);
     for (var ti = 0; ti < allToolEls.length; ti++) {
       allToolEls[ti].classList.remove(APRILTAG_TOOL_ACTIVE_CLASS);
+      allToolEls[ti].classList.remove(APRILTAG_TOOL_HOVER_CLASS);
+      allToolEls[ti].style.removeProperty('--trigger-fill-progress');
     }
   }
   apriltagActiveToolByHandId = {};

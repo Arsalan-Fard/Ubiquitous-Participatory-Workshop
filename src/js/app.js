@@ -425,8 +425,8 @@ export function initApp() {
       stickerEl.dataset.sessionId = String(state.currentMapSessionId);
     }
     stickerEl.style.background = stickerEl.dataset.color;
-    stickerEl.style.left = (clientX - 30) + 'px';
-    stickerEl.style.top = (clientY - 30) + 'px';
+    stickerEl.style.left = (clientX - 45) + 'px';
+    stickerEl.style.top = (clientY - 45) + 'px';
 
     var textEl = document.createElement('span');
     textEl.className = 'ui-layer-square__text';
@@ -3031,7 +3031,7 @@ export function initApp() {
         }
       }
 
-      updateApriltagTriggerSelections(apriltagTriggerPoints);
+      updateApriltagTriggerSelections(apriltagTriggerPoints, apriltagPoints);
       handleStage3Gestures(apriltagPoints);
     } else {
       resetStage3Gestures();

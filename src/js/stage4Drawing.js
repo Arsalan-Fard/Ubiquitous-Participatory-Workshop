@@ -1453,6 +1453,9 @@ export function cloneSticker(templateEl) {
 
   try {
     var srcCanvas = templateEl;
+    if (!srcCanvas || !srcCanvas.width || !srcCanvas.height || typeof srcCanvas.getContext !== 'function') {
+      srcCanvas = templateEl.querySelector ? templateEl.querySelector('canvas') : null;
+    }
     var ctx = drawEl.getContext('2d');
     if (ctx && srcCanvas && srcCanvas.width && srcCanvas.height) {
       ctx.drawImage(srcCanvas, 0, 0, drawEl.width, drawEl.height);
