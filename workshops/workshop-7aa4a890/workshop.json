@@ -1,6 +1,6 @@
 {
-  "workshopId": "workshop-42c30224",
-  "createdAtEpochMs": 1770541511782,
+  "workshopId": "workshop-7aa4a890",
+  "createdAtEpochMs": 1770555680089,
   "setupDefinition": {
     "participantCount": 2,
     "participantPrimaryTagIds": [
@@ -14,51 +14,67 @@
     "setupItems": [
       {
         "type": "dot",
-        "x": 349.5,
-        "y": 708,
+        "x": 431.5,
+        "y": 588.5,
         "rotationDeg": 0,
         "color": "#2bb8ff",
         "triggerTagId": "14",
+        "layerName": "",
         "text": "",
         "noteText": ""
       },
       {
         "type": "draw",
-        "x": 457.5,
-        "y": 709,
+        "x": 543.5,
+        "y": 594.5,
         "rotationDeg": 0,
         "color": "#2bb8ff",
-        "triggerTagId": "26",
+        "triggerTagId": "14",
+        "layerName": "",
         "text": "",
         "noteText": ""
       },
       {
-        "type": "label",
-        "x": 930.531,
-        "y": 54,
+        "type": "layer-square",
+        "x": 1114,
+        "y": 622.5,
         "rotationDeg": 0,
-        "color": null,
+        "color": "#f6c945",
         "triggerTagId": "",
-        "text": "aaa",
+        "layerName": "Back",
+        "text": "",
         "noteText": ""
       },
       {
-        "type": "label",
-        "x": 94.375,
-        "y": 531,
+        "type": "layer-square",
+        "x": 1008,
+        "y": 621.484,
         "rotationDeg": 0,
-        "color": null,
+        "color": "#4caf50",
         "triggerTagId": "",
-        "text": "bbb",
+        "layerName": "Next",
+        "text": "",
         "noteText": ""
       },
       {
         "type": "note",
-        "x": 575.5,
-        "y": 699.891,
+        "x": 662.5,
+        "y": 601.984,
         "rotationDeg": 0,
         "color": "#2bb8ff",
         "triggerTagId": "14",
+        "layerName": "",
+        "text": "",
+        "noteText": ""
+      },
+      {
+        "type": "selection",
+        "x": 797,
+        "y": 601.5,
+        "rotationDeg": 0,
+        "color": null,
+        "triggerTagId": "14",
+        "layerName": "",
         "text": "",
         "noteText": ""
       }

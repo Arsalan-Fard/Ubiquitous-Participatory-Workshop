@@ -467,6 +467,8 @@ def api_workshop_results(workshop_id: str):
         copied_props["sessionIndex"] = int(session_idx)
         copied_props["sessionFile"] = session_path.name
         copied_props["workshopId"] = workshop_id
+        copied_props["mapViewId"] = map_view_id
+        copied_props["mapViewName"] = map_view_name
 
         map_view_groups[key]["features"].append(copied_feature)
         map_view_groups[key]["_session_seen"].add(session_idx)
@@ -474,8 +476,31 @@ def api_workshop_results(workshop_id: str):
     map_views = []
     for key in sorted(map_view_groups.keys(), key=lambda x: (x == "unassigned", str(x))):
       group = map_view_groups[key]
-      group["sessionCount"] = len(group["_session_seen"])
+      expected_map_view_id = normalize_map_view_id(group.get("mapViewId"))
+      filtered_features = []
+      filtered_sessions = set()
+      for copied_feature in group.get("features", []):
+        if not isinstance(copied_feature, dict):
+          continue
+        copied_props = copied_feature.get("properties")
+        if not isinstance(copied_props, dict):
+          copied_props = {}
+          copied_feature["properties"] = copied_props
+        feature_map_view_id = normalize_map_view_id(copied_props.get("mapViewId"))
+        if feature_map_view_id != expected_map_view_id:
+          continue
+        filtered_features.append(copied_feature)
+        session_index = copied_props.get("sessionIndex")
+        try:
+          filtered_sessions.add(int(session_index))
+        except Exception:
+          pass
+
+      group["features"] = filtered_features
+      group["sessionCount"] = len(filtered_sessions) if filtered_sessions else len(group["_session_seen"])
       del group["_session_seen"]
+      if len(group["features"]) < 1:
+        continue
       map_views.append(group)
 
     return jsonify({

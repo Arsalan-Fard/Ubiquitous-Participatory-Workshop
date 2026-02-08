@@ -403,16 +403,21 @@ function startFollowStickerForPointer(ps, templateEl, pointer, contactKey) {
   return clonedEl;
 }
 
-function getSelectableStickerRoot(target) {
+function getSelectableStickerRoot(target, ownerTriggerTagId) {
   if (!target || !target.closest) return null;
   var stickerEl = target.closest('.ui-sticker-instance.ui-dot, .ui-sticker-instance.ui-note');
   if (!stickerEl || !stickerEl.classList) return null;
   if (stickerEl.classList.contains('ui-layer-square')) return null;
+  var ownerId = normalizeTagId(ownerTriggerTagId);
+  var stickerOwnerId = normalizeTagId(stickerEl.dataset && stickerEl.dataset.triggerTagId);
+  if (!ownerId || !stickerOwnerId || stickerOwnerId !== ownerId) return null;
   return stickerEl;
 }
 
-function findSelectableStickerNearPointer(pointer, radiusPx) {
+function findSelectableStickerNearPointer(pointer, radiusPx, ownerTriggerTagId) {
   if (!pointer || !isFinite(pointer.x) || !isFinite(pointer.y)) return null;
+  var ownerId = normalizeTagId(ownerTriggerTagId);
+  if (!ownerId) return null;
   var r = Math.max(0, radiusPx || 0);
   var offsets = [{ dx: 0, dy: 0 }];
   if (r > 0) {
@@ -436,7 +441,7 @@ function findSelectableStickerNearPointer(pointer, radiusPx) {
     var off = offsets[i];
     var p = { x: pointer.x + off.dx, y: pointer.y + off.dy };
     var hit = getEventTargetAt(p);
-    var el = hit && hit.target ? getSelectableStickerRoot(hit.target) : null;
+    var el = hit && hit.target ? getSelectableStickerRoot(hit.target, ownerId) : null;
     if (!el) continue;
     var dist = Math.sqrt(off.dx * off.dx + off.dy * off.dy);
     if (dist < bestDist) {
@@ -1114,7 +1119,8 @@ function processPointerGesture(handIndex, pointer, handData) {
       return;
     }
 
-    var selectedSticker = findSelectableStickerNearPointer(pointer, 28);
+    var ownerTriggerTagId = normalizeTagId(activeApriltagEntry && activeApriltagEntry.triggerTagId);
+    var selectedSticker = findSelectableStickerNearPointer(pointer, 28, ownerTriggerTagId);
     if (selectedSticker) {
       startFollowExistingStickerForPointer(ps, selectedSticker, pointer, activeContactKey);
       updatePointerCursor(handIndex, pointer, 0, null);

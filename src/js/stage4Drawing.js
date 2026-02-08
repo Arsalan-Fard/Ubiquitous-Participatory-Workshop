@@ -1594,28 +1594,30 @@ function collapseNoteSticker(noteEl, savedText) {
 // Filter polylines by session ID
 export function filterPolylinesBySession(sessionId) {
   if (!state.stage4DrawLayer) return;
+  var activeSessionId = (sessionId === null || sessionId === undefined || String(sessionId).trim() === '')
+    ? ''
+    : String(sessionId).trim();
 
   state.stage4DrawLayer.eachLayer(function(layer) {
     // Check if this is a polyline with a sessionId property
     if (!layer.setStyle) return; // Not a polyline
 
-    var layerSessionId = layer.sessionId;
+    var layerSessionId = (layer.sessionId === null || layer.sessionId === undefined || String(layer.sessionId).trim() === '')
+      ? ''
+      : String(layer.sessionId).trim();
 
-    if (!sessionId) {
+    if (!activeSessionId) {
       // No active session - show all polylines
       layer.setStyle({ opacity: layer._originalOpacity || (layer.options.weight === 14 ? 0.25 : 0.95) });
-    } else if (layerSessionId === sessionId) {
+    } else if (layerSessionId === activeSessionId) {
       // Polyline belongs to current session - show it
       layer.setStyle({ opacity: layer._originalOpacity || (layer.options.weight === 14 ? 0.25 : 0.95) });
-    } else if (layerSessionId) {
-      // Polyline belongs to different session - hide it
+    } else {
+      // Different or unassigned session while a session is active: hide it.
       if (!layer._originalOpacity) {
         layer._originalOpacity = layer.options.opacity;
       }
       layer.setStyle({ opacity: 0 });
-    } else {
-      // Polyline has no session (created before sessions) - show it
-      layer.setStyle({ opacity: layer._originalOpacity || (layer.options.weight === 14 ? 0.25 : 0.95) });
     }
   });
 }

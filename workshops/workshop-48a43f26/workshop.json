@@ -1,0 +1,116 @@
+{
+  "workshopId": "workshop-48a43f26",
+  "createdAtEpochMs": 1770556651916,
+  "setupDefinition": {
+    "participantCount": 2,
+    "participantPrimaryTagIds": [
+      13,
+      25
+    ],
+    "participantTriggerTagIds": [
+      14,
+      26
+    ],
+    "setupItems": [
+      {
+        "type": "dot",
+        "x": 427.5,
+        "y": 622.5,
+        "rotationDeg": 0,
+        "color": "#2bb8ff",
+        "triggerTagId": "14",
+        "layerName": "",
+        "text": "",
+        "noteText": ""
+      },
+      {
+        "type": "dot",
+        "x": 581.5,
+        "y": 35.5,
+        "rotationDeg": 0,
+        "color": "#ff2934",
+        "triggerTagId": "",
+        "layerName": "",
+        "text": "",
+        "noteText": ""
+      },
+      {
+        "type": "draw",
+        "x": 535.5,
+        "y": 623.5,
+        "rotationDeg": 0,
+        "color": "#2bb8ff",
+        "triggerTagId": "14",
+        "layerName": "",
+        "text": "",
+        "noteText": ""
+      },
+      {
+        "type": "draw",
+        "x": 686.5,
+        "y": 34.5,
+        "rotationDeg": 0,
+        "color": "#ff2929",
+        "triggerTagId": "",
+        "layerName": "",
+        "text": "",
+        "noteText": ""
+      },
+      {
+        "type": "layer-square",
+        "x": 1114,
+        "y": 622.5,
+        "rotationDeg": 0,
+        "color": "#f6c945",
+        "triggerTagId": "",
+        "layerName": "Back",
+        "text": "",
+        "noteText": ""
+      },
+      {
+        "type": "layer-square",
+        "x": 1008,
+        "y": 628.5,
+        "rotationDeg": 0,
+        "color": "#4caf50",
+        "triggerTagId": "",
+        "layerName": "Next",
+        "text": "",
+        "noteText": ""
+      },
+      {
+        "type": "note",
+        "x": 643.5,
+        "y": 624.969,
+        "rotationDeg": 0,
+        "color": "#2bb8ff",
+        "triggerTagId": "14",
+        "layerName": "",
+        "text": "",
+        "noteText": ""
+      },
+      {
+        "type": "note",
+        "x": 792.5,
+        "y": 37.4062,
+        "rotationDeg": 0,
+        "color": "#ff2929",
+        "triggerTagId": "",
+        "layerName": "",
+        "text": "",
+        "noteText": ""
+      },
+      {
+        "type": "selection",
+        "x": 756,
+        "y": 622.5,
+        "rotationDeg": 0,
+        "color": null,
+        "triggerTagId": "14",
+        "layerName": "",
+        "text": "",
+        "noteText": ""
+      }
+    ]
+  }
+}

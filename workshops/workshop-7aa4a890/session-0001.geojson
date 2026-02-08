@@ -1,0 +1,187 @@
+{
+  "type": "FeatureCollection",
+  "properties": {
+    "exportedAt": "2026-02-08T13:01:20.078Z",
+    "appStage": 4,
+    "mapViewCount": 2,
+    "mapViews": [
+      {
+        "mapViewId": "1",
+        "mapViewName": "View 1",
+        "featureCount": 2,
+        "stickersCount": 1,
+        "annotationsCount": 0,
+        "drawingsCount": 1
+      },
+      {
+        "mapViewId": "3",
+        "mapViewName": "View 3",
+        "featureCount": 2,
+        "stickersCount": 1,
+        "annotationsCount": 0,
+        "drawingsCount": 1
+      }
+    ],
+    "workshopId": "workshop-7aa4a890",
+    "sessionIndex": 1,
+    "savedAtEpochMs": 1770555680087
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.2196620702743535,
+          48.71081884345552
+        ]
+      },
+      "properties": {
+        "sourceType": "sticker",
+        "itemType": "dot",
+        "color": "#2bb8ff",
+        "triggerTagId": "14",
+        "noteText": "",
+        "sessionId": "1",
+        "mapViewId": "1",
+        "mapViewName": "View 1"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2.210502050470287,
+          48.71500445658996
+        ]
+      },
+      "properties": {
+        "sourceType": "sticker",
+        "itemType": "dot",
+        "color": "#2bb8ff",
+        "triggerTagId": "14",
+        "noteText": "",
+        "sessionId": "3",
+        "mapViewId": "3",
+        "mapViewName": "View 3"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            2.2198006087650723,
+            48.711298422178295
+          ],
+          [
+            2.2198006087650723,
+            48.711298422178295
+          ],
+          [
+            2.220501194893343,
+            48.71133581366345
+          ],
+          [
+            2.221647612657383,
+            48.71145497355753
+          ],
+          [
+            2.2222967409761596,
+            48.71151257564256
+          ],
+          [
+            2.223393663682307,
+            48.71162640644623
+          ],
+          [
+            2.2239472095853023,
+            48.7117184142874
+          ],
+          [
+            2.224527527134477,
+            48.711862649181214
+          ],
+          [
+            2.2250900174215453,
+            48.712001465471225
+          ],
+          [
+            2.2251560488015087,
+            48.71201008791145
+          ]
+        ]
+      },
+      "properties": {
+        "sourceType": "drawing",
+        "color": "#2bb8ff",
+        "strokeWidth": 14,
+        "sessionId": 1,
+        "mapViewId": "1",
+        "mapViewName": "View 1"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            2.207760631596179,
+            48.71579910857666
+          ],
+          [
+            2.207760631596179,
+            48.71579910857666
+          ],
+          [
+            2.2076877796260024,
+            48.716157984791245
+          ],
+          [
+            2.208645281324171,
+            48.716633771683725
+          ],
+          [
+            2.2091245636641865,
+            48.71679511964422
+          ],
+          [
+            2.2097217500478905,
+            48.716804323923164
+          ],
+          [
+            2.210224510181336,
+            48.7168030137386
+          ],
+          [
+            2.2116618009085713,
+            48.716849027808564
+          ],
+          [
+            2.212336825474495,
+            48.71678918500556
+          ],
+          [
+            2.2123031111283398,
+            48.71679035834923
+          ],
+          [
+            2.2123320327046336,
+            48.7167885939254
+          ]
+        ]
+      },
+      "properties": {
+        "sourceType": "drawing",
+        "color": "#2bb8ff",
+        "strokeWidth": 14,
+        "sessionId": 3,
+        "mapViewId": "3",
+        "mapViewName": "View 3"
+      }
+    }
+  ]
+}

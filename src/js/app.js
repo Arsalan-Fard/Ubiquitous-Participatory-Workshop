@@ -680,6 +680,17 @@ export function initApp() {
   var resultsMapViews = [];
   var resultsMapViewIndex = 0;
   var resultsLayerGroup = null;
+  function getNextAvailableMapSessionId() {
+    var used = {};
+    for (var i = 0; i < mapSessions.length; i++) {
+      var id = parseInt(mapSessions[i] && mapSessions[i].id, 10);
+      if (!isFinite(id) || id < 1) continue;
+      used[id] = true;
+    }
+    var candidate = 1;
+    while (used[candidate]) candidate++;
+    return candidate;
+  }
   var VGA_REQUIRED_POINTS = 4;
   var VGA_TARGET_SAMPLE_COUNT = 260;
   var VGA_MAX_SAMPLE_COUNT = 420;
@@ -750,11 +761,12 @@ export function initApp() {
 
     var center = state.leafletMap.getCenter();
     var zoom = state.leafletMap.getZoom();
-    mapSessionCounter++;
+    var nextSessionId = getNextAvailableMapSessionId();
+    mapSessionCounter = Math.max(mapSessionCounter, nextSessionId);
 
     var session = {
-      id: mapSessionCounter,
-      name: 'View ' + mapSessionCounter,
+      id: nextSessionId,
+      name: 'View ' + nextSessionId,
       lat: center.lat,
       lng: center.lng,
       zoom: zoom
@@ -861,14 +873,15 @@ export function initApp() {
 
   function goToNextMapSession() {
     if (mapSessions.length === 0) return;
-    if (state.stage === 4 && currentMapSessionIndex >= 0 && currentMapSessionIndex >= mapSessions.length - 1) {
-      finishWorkshopSession();
+    if (currentMapSessionIndex < 0) {
+      activateMapSession(0);
+      return;
+    }
+    if (currentMapSessionIndex >= mapSessions.length - 1) {
+      if (state.stage === 4) finishWorkshopSession();
       return;
     }
     currentMapSessionIndex++;
-    if (currentMapSessionIndex >= mapSessions.length) {
-      currentMapSessionIndex = 0; // Wrap around
-    }
     activateMapSession(currentMapSessionIndex);
   }
 
@@ -1180,6 +1193,27 @@ export function initApp() {
     return '#ff3b30';
   }
 
+  function normalizeResultsMapViewId(raw) {
+    if (raw === null || raw === undefined) return null;
+    var text = String(raw).trim();
+    return text ? text : null;
+  }
+
+  function filterResultsFeaturesForMapView(features, mapViewId) {
+    var wanted = normalizeResultsMapViewId(mapViewId);
+    var src = Array.isArray(features) ? features : [];
+    var out = [];
+    for (var i = 0; i < src.length; i++) {
+      var feature = src[i];
+      if (!feature || typeof feature !== 'object') continue;
+      var props = feature.properties && typeof feature.properties === 'object' ? feature.properties : null;
+      var featureMapViewId = normalizeResultsMapViewId(props ? props.mapViewId : null);
+      if (featureMapViewId !== wanted) continue;
+      out.push(feature);
+    }
+    return out;
+  }
+
   function renderResultsMapView() {
     if (!resultsModeActive) return;
 
@@ -1199,7 +1233,9 @@ export function initApp() {
     if (resultsMapViewIndex < 0) resultsMapViewIndex = totalViews - 1;
 
     var currentMapView = resultsMapViews[resultsMapViewIndex] || {};
-    var features = Array.isArray(currentMapView.features) ? currentMapView.features : [];
+    var mapViewId = normalizeResultsMapViewId(currentMapView.mapViewId);
+    var rawFeatures = Array.isArray(currentMapView.features) ? currentMapView.features : [];
+    var features = filterResultsFeaturesForMapView(rawFeatures, mapViewId);
     var mapViewName = currentMapView.mapViewName ? String(currentMapView.mapViewName) : ('View ' + String(resultsMapViewIndex + 1));
     var sessionCount = isFinite(currentMapView.sessionCount) ? Number(currentMapView.sessionCount) : 0;
 
@@ -1262,6 +1298,8 @@ export function initApp() {
     resultsMapViewIndex = 0;
 
     setViewMode('map');
+    // Hide live workshop drawings while browsing historical results.
+    filterPolylinesBySession('__results_mode_hidden__');
     setResultsViewerVisible(true);
     dom.pageTitleEl.textContent = 'Workshop Results';
     document.title = 'Workshop Results';
@@ -1281,6 +1319,8 @@ export function initApp() {
     resultsMapViewIndex = 0;
     clearResultsLayerGroup();
     setResultsViewerVisible(false);
+    // Restore normal live drawing visibility after leaving results mode.
+    filterPolylinesBySession(state.currentMapSessionId || null);
 
     setStage(state.stage);
     setButtonsRunning(!!state.cameraReady);
@@ -1469,10 +1509,15 @@ export function initApp() {
 
   function goToPrevMapSession() {
     if (mapSessions.length === 0) return;
-    currentMapSessionIndex--;
     if (currentMapSessionIndex < 0) {
-      currentMapSessionIndex = mapSessions.length - 1; // Wrap around
+      activateMapSession(0);
+      return;
     }
+    if (currentMapSessionIndex <= 0) {
+      currentMapSessionIndex = 0;
+      return;
+    }
+    currentMapSessionIndex--;
     activateMapSession(currentMapSessionIndex);
   }
 
@@ -2707,6 +2752,12 @@ export function initApp() {
   // ============== Stage Management ==============
 
   function setStage(newStage) {
+    var enteringStage4 = (newStage === 4 && state.stage !== 4);
+    if (enteringStage4 && mapSessions.length < 1) {
+      setError('Add at least one map view before starting Stage 4.');
+      window.alert('Add at least one map view before starting Stage 4.');
+      return;
+    }
     if (vgaModeActive && newStage !== 3) {
       setVgaMode(false);
     }
@@ -2743,6 +2794,17 @@ export function initApp() {
     updateHamburgerMenuVisibility();
     updateBackState();
     updateShowResultsButton();
+
+    if (enteringStage4 && mapSessions.length > 0) {
+      var startIndex = 0;
+      for (var si = 0; si < mapSessions.length; si++) {
+        if (parseInt(mapSessions[si] && mapSessions[si].id, 10) === 1) {
+          startIndex = si;
+          break;
+        }
+      }
+      activateMapSession(startIndex);
+    }
   }
 
   function onNextClicked() {
