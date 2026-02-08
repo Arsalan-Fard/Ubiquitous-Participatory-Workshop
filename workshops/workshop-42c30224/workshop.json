@@ -1,0 +1,67 @@
+{
+  "workshopId": "workshop-42c30224",
+  "createdAtEpochMs": 1770541511782,
+  "setupDefinition": {
+    "participantCount": 2,
+    "participantPrimaryTagIds": [
+      13,
+      25
+    ],
+    "participantTriggerTagIds": [
+      14,
+      26
+    ],
+    "setupItems": [
+      {
+        "type": "dot",
+        "x": 349.5,
+        "y": 708,
+        "rotationDeg": 0,
+        "color": "#2bb8ff",
+        "triggerTagId": "14",
+        "text": "",
+        "noteText": ""
+      },
+      {
+        "type": "draw",
+        "x": 457.5,
+        "y": 709,
+        "rotationDeg": 0,
+        "color": "#2bb8ff",
+        "triggerTagId": "26",
+        "text": "",
+        "noteText": ""
+      },
+      {
+        "type": "label",
+        "x": 930.531,
+        "y": 54,
+        "rotationDeg": 0,
+        "color": null,
+        "triggerTagId": "",
+        "text": "aaa",
+        "noteText": ""
+      },
+      {
+        "type": "label",
+        "x": 94.375,
+        "y": 531,
+        "rotationDeg": 0,
+        "color": null,
+        "triggerTagId": "",
+        "text": "bbb",
+        "noteText": ""
+      },
+      {
+        "type": "note",
+        "x": 575.5,
+        "y": 699.891,
+        "rotationDeg": 0,
+        "color": "#2bb8ff",
+        "triggerTagId": "14",
+        "text": "",
+        "noteText": ""
+      }
+    ]
+  }
+}

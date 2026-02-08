@@ -232,10 +232,21 @@ h1 {
 }
 
 .tool-tag-controls__row {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    align-items: start;
+}
+
+.tool-tag-controls__row--single {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.tool-tag-controls__separator {
+    width: 100%;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.16);
+    margin: 1px 0;
 }
 
 .tool-tag-controls__layer-btn {
@@ -1533,10 +1544,14 @@ body.vga-mode-active #leafletMap {
 }
 
 #stage3WorkspacePanel .tool-tag-controls__row {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
-    align-items: center;
+    align-items: start;
+}
+
+#stage3WorkspacePanel .tool-tag-controls__row--single {
+    grid-template-columns: minmax(0, 1fr);
 }
 
 #stage3WorkspacePanel .tool-tag-controls__item {

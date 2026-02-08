@@ -1,5 +1,8 @@
 import { state } from './state.js';
 
+var PARTICIPANT_TAG_ID_MIN = 10;
+var PARTICIPANT_TAG_ID_MAX = 30;
+
 function normalizeTriggerTagId(value) {
   var n = parseInt(value, 10);
   if (!isFinite(n)) return '';
@@ -9,13 +12,37 @@ function normalizeTriggerTagId(value) {
 export function getAvailableTriggerTagIds() {
   var out = [];
   var seen = {};
-  var src = Array.isArray(state.stage3ParticipantTriggerTagIds) ? state.stage3ParticipantTriggerTagIds : [];
-  for (var i = 0; i < src.length; i++) {
-    var n = parseInt(src[i], 10);
-    if (!isFinite(n)) continue;
-    if (seen[n]) continue;
+  function pushIfValid(value) {
+    var n = parseInt(value, 10);
+    if (!isFinite(n)) return;
+    if (n < PARTICIPANT_TAG_ID_MIN || n > PARTICIPANT_TAG_ID_MAX) return;
+    if (seen[n]) return;
     seen[n] = true;
     out.push(n);
+  }
+
+  var src = Array.isArray(state.stage3ParticipantTriggerTagIds) ? state.stage3ParticipantTriggerTagIds : [];
+  for (var i = 0; i < src.length; i++) {
+    pushIfValid(src[i]);
+  }
+
+  // Defensive fallback: if trigger IDs are not initialized yet, derive defaults from participant count.
+  if (out.length === 0) {
+    var count = parseInt(state.stage3ParticipantCount, 10);
+    if (!isFinite(count) || count < 1) count = 0;
+    if (count > 10) count = 10;
+
+    if (!Array.isArray(state.stage3ParticipantTriggerTagIds)) state.stage3ParticipantTriggerTagIds = [];
+    state.stage3ParticipantTriggerTagIds.length = count;
+
+    for (var ti = 0; ti < count; ti++) {
+      var existing = parseInt(state.stage3ParticipantTriggerTagIds[ti], 10);
+      var fallback = isFinite(existing) ? existing : (PARTICIPANT_TAG_ID_MIN + ti + 1);
+      if (fallback > PARTICIPANT_TAG_ID_MAX) fallback = PARTICIPANT_TAG_ID_MIN;
+      if (fallback < PARTICIPANT_TAG_ID_MIN) fallback = PARTICIPANT_TAG_ID_MIN;
+      state.stage3ParticipantTriggerTagIds[ti] = fallback;
+      pushIfValid(fallback);
+    }
   }
   out.sort(function(a, b) { return a - b; });
   return out;
@@ -62,6 +89,14 @@ function populateTriggerSelectOptions(selectEl, selectedTagId) {
 
 export function attachInteractionTriggerSelect(el, initialTriggerTagId) {
   if (!el || !el.dataset) return null;
+  if (String(el.dataset.uiType || '') === 'layer-square' || (el.classList && el.classList.contains('ui-layer-square'))) {
+    var existingLayerSelect = el.querySelector('.ui-trigger-select');
+    if (existingLayerSelect && existingLayerSelect.parentNode) {
+      existingLayerSelect.parentNode.removeChild(existingLayerSelect);
+    }
+    delete el.dataset.triggerTagId;
+    return null;
+  }
   var selectEl = el.querySelector('.ui-trigger-select');
   if (!selectEl) {
     selectEl = document.createElement('select');
@@ -95,7 +130,15 @@ export function refreshInteractionTriggerSelects(rootEl) {
     var el = interactiveEls[i];
     if (!el || !el.dataset) continue;
     var uiType = String(el.dataset.uiType || '');
-    if (uiType !== 'dot' && uiType !== 'draw' && uiType !== 'note' && uiType !== 'eraser' && uiType !== 'selection' && uiType !== 'layer-square') continue;
+    if (uiType === 'layer-square') {
+      var existingLayerSelect = el.querySelector('.ui-trigger-select');
+      if (existingLayerSelect && existingLayerSelect.parentNode) {
+        existingLayerSelect.parentNode.removeChild(existingLayerSelect);
+      }
+      delete el.dataset.triggerTagId;
+      continue;
+    }
+    if (uiType !== 'dot' && uiType !== 'draw' && uiType !== 'note' && uiType !== 'eraser' && uiType !== 'selection') continue;
     attachInteractionTriggerSelect(el, el.dataset.triggerTagId || '');
   }
 }
@@ -218,7 +261,7 @@ export function initUiSetup(options) {
       triggerSelectEl.className = 'ui-setup-select';
       triggerSelectEl.setAttribute('aria-label', 'Participant ' + (i + 1) + ' trigger AprilTag ID');
 
-      for (var tagId = 11; tagId <= 20; tagId++) {
+      for (var tagId = 10; tagId <= 30; tagId++) {
         var optPrimary = document.createElement('option');
         optPrimary.value = String(tagId);
         optPrimary.textContent = String(tagId);
@@ -231,17 +274,17 @@ export function initUiSetup(options) {
       }
 
       var currentPrimary = parseInt(state.stage3ParticipantTagIds[i], 10);
-      if (!isFinite(currentPrimary) || currentPrimary < 11 || currentPrimary > 20) {
-        currentPrimary = 11 + i;
-        if (currentPrimary > 20) currentPrimary = 11;
+      if (!isFinite(currentPrimary) || currentPrimary < 10 || currentPrimary > 30) {
+        currentPrimary = 10 + i;
+        if (currentPrimary > 30) currentPrimary = 10;
       }
       state.stage3ParticipantTagIds[i] = currentPrimary;
       primarySelectEl.value = String(currentPrimary);
 
       var currentTrigger = parseInt(state.stage3ParticipantTriggerTagIds[i], 10);
-      if (!isFinite(currentTrigger) || currentTrigger < 11 || currentTrigger > 20) {
-        currentTrigger = 11 + i + 1;
-        if (currentTrigger > 20) currentTrigger = 11;
+      if (!isFinite(currentTrigger) || currentTrigger < 10 || currentTrigger > 30) {
+        currentTrigger = 10 + i + 1;
+        if (currentTrigger > 30) currentTrigger = 10;
       }
       state.stage3ParticipantTriggerTagIds[i] = currentTrigger;
       triggerSelectEl.value = String(currentTrigger);

@@ -6,7 +6,7 @@
 import { getDom } from './dom.js';
 import { stopCameraStream } from './camera.js';
 import { clearOverlay, drawSurface } from './render.js';
-import { initUiSetup, attachInteractionTriggerSelect } from './uiSetup.js';
+import { initUiSetup } from './uiSetup.js';
 import { clamp, saveNumberSetting, waitForImageLoad } from './utils.js';
 import { state } from './state.js';
 
@@ -374,6 +374,7 @@ export function initApp() {
     'Next': '#4caf50',
     'Back': '#f6c945'
   };
+  var layerNavVoteLatch = { next: false, back: false };
   var roadColorPalette = ['#ff5a5f', '#2bb8ff', '#2ec27e', '#f6c945', '#ff8a3d', '#9c6dff'];
   var importedRoadEntries = [];
 
@@ -434,7 +435,6 @@ export function initApp() {
     stickerEl.appendChild(textEl);
 
     dom.uiSetupOverlayEl.appendChild(stickerEl);
-    attachInteractionTriggerSelect(stickerEl);
     return stickerEl;
   }
 
@@ -1452,6 +1452,32 @@ export function initApp() {
     activateMapSession(currentMapSessionIndex);
   }
 
+  function processLayerNavigationVotes(voteState) {
+    if (state.viewMode !== 'map' || (state.stage !== 3 && state.stage !== 4) || vgaModeActive) {
+      layerNavVoteLatch.next = false;
+      layerNavVoteLatch.back = false;
+      return;
+    }
+
+    var nextActive = !!(voteState && Array.isArray(voteState.nextHandIds) && voteState.nextHandIds.length > 0);
+    var backActive = !!(voteState && Array.isArray(voteState.backHandIds) && voteState.backHandIds.length > 0);
+
+    if (!nextActive) layerNavVoteLatch.next = false;
+    if (!backActive) layerNavVoteLatch.back = false;
+
+    if (nextActive && backActive) return;
+
+    if (nextActive && !layerNavVoteLatch.next) {
+      layerNavVoteLatch.next = true;
+      goToNextMapSession();
+      return;
+    }
+    if (backActive && !layerNavVoteLatch.back) {
+      layerNavVoteLatch.back = true;
+      goToPrevMapSession();
+    }
+  }
+
   function activateMapSession(index) {
     if (index < 0 || index >= mapSessions.length) {
       clearActiveMapSessionSelection();
@@ -2338,7 +2364,7 @@ export function initApp() {
     // Layer controls now use draggable sticker buttons in the panel.
   }
 
-  // Tracking offset sliders (for AprilTags 11-20)
+  // Tracking offset sliders (for participant AprilTags 10-30)
   dom.trackingOffsetXSliderEl.value = String(Math.round(state.apriltagTrackingOffsetX));
   dom.trackingOffsetXValueEl.textContent = String(Math.round(state.apriltagTrackingOffsetX));
   dom.trackingOffsetXSliderEl.addEventListener('input', function() {
@@ -2967,7 +2993,7 @@ export function initApp() {
         var x = mapRect.left + uv.x * mapW;
         var y = mapRect.top + uv.y * mapH;
 
-        if (applyTrackingOffset && tagId >= 11 && tagId <= 20) {
+        if (applyTrackingOffset && tagId >= 10 && tagId <= 30) {
           var ox = state.apriltagTrackingOffsetX;
           var oy = state.apriltagTrackingOffsetY;
           if (detByTag.corners && detByTag.corners.length >= 4 && (ox !== 0 || oy !== 0)) {
@@ -3031,9 +3057,11 @@ export function initApp() {
         }
       }
 
-      updateApriltagTriggerSelections(apriltagTriggerPoints, apriltagPoints);
+      var layerNavVoteState = updateApriltagTriggerSelections(apriltagTriggerPoints, apriltagPoints);
+      processLayerNavigationVotes(layerNavVoteState);
       handleStage3Gestures(apriltagPoints);
     } else {
+      processLayerNavigationVotes(null);
       resetStage3Gestures();
     }
 
@@ -3205,8 +3233,8 @@ export function initApp() {
       var x = uv.x * w;
       var y = uv.y * h;
 
-      // Apply tracking offset for participant tags (11-20) rotated by tag angle
-      if (tagId >= 11 && tagId <= 20) {
+      // Apply tracking offset for participant tags (10-30) rotated by tag angle
+      if (tagId >= 10 && tagId <= 30) {
         var ox = state.apriltagTrackingOffsetX;
         var oy = state.apriltagTrackingOffsetY;
         // Compute tag rotation angle in screen space from two adjacent corners
