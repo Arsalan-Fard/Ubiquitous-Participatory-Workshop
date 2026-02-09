@@ -81,3 +81,10 @@ export function waitForImageLoad(imgEl, url) {
     imgEl.src = cacheBustedUrl;
   });
 }
+
+// Normalize a tag ID value to a canonical string
+export function normalizeTagId(value) {
+  var n = parseInt(value, 10);
+  if (!isFinite(n)) return '';
+  return String(n);
+}

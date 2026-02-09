@@ -78,10 +78,10 @@ export var state = {
   stage4IsDrawing: false,
   stage4LastDrawContainerPt: null,
   stage4ActiveStroke: null,
-  stage4DrawLayer: null,
-  stage4RouteLayer: null,
-  stage4IsovistLayer: null,
-  stage4OsmBuildingsLayer: null,
+  drawGroup: null,
+  routeGroup: null,
+  isovistGroup: null,
+  buildingsGroup: null,
 
   // Stage 3 participant setup (AprilTags)
   stage3ParticipantCount: 0,
@@ -100,10 +100,9 @@ export var state = {
   lastApriltagDetections2: null,
   apriltagTouchById: null,
 
-  // Leaflet/Maptastic
-  leafletGlobal: null,
-  leafletMap: null,
-  leafletTileLayer: null,
+  // MapLibre / Maptastic
+  map: null,
+  mapReady: false,
   maptasticInitialized: false,
 
   // Map session state

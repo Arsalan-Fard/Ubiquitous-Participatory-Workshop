@@ -7,6 +7,7 @@
  */
 
 import { state } from './state.js';
+import { normalizeTagId } from './utils.js';
 import {
   activateDrawingForPointer,
   deactivateDrawingForPointer,
@@ -160,12 +161,6 @@ function isTemplateInteractionElement(el) {
 }
 
 function normalizePrimaryHandId(value) {
-  var n = parseInt(value, 10);
-  if (!isFinite(n)) return '';
-  return String(n);
-}
-
-function normalizeTagId(value) {
   var n = parseInt(value, 10);
   if (!isFinite(n)) return '';
   return String(n);

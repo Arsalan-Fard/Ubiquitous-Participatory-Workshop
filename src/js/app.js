@@ -9,6 +9,11 @@ import { clearOverlay, drawSurface } from './render.js';
 import { initUiSetup } from './uiSetup.js';
 import { clamp, saveNumberSetting, waitForImageLoad } from './utils.js';
 import { state } from './state.js';
+import {
+  addPolyline, addPolygon, addCircleMarker, addImageOverlay,
+  removeMapLayer, createLayerGroup, addToGroup, clearGroup,
+  updateSourceData
+} from './mapHelpers.js';
 
 // Surface calibration
 import {
@@ -46,7 +51,8 @@ import {
   clearStage4ShortestPath,
   setStage4IsovistOrigin,
   clearStage4IsovistOverlay,
-  computeStage4IsovistScore
+  computeStage4IsovistScore,
+  fetchBuildingsForBounds
 } from './stage4Drawing.js';
 
 var BACKEND_CAMERA_FEED_URL = '/video_feed';
@@ -295,7 +301,7 @@ export function initApp() {
   }, true);
 
   window.addEventListener('resize', function() {
-    if (state.leafletMap) state.leafletMap.invalidateSize();
+    if (state.map) state.map.resize();
   });
 
   // Stage 4 drawing event listeners
@@ -476,67 +482,111 @@ export function initApp() {
   }
 
   function removeRoadLayer(entry) {
-    if (!entry || !entry.roadLayer || !state.leafletMap) return;
-    if (typeof state.leafletMap.hasLayer === 'function' && state.leafletMap.hasLayer(entry.roadLayer)) {
-      state.leafletMap.removeLayer(entry.roadLayer);
+    if (!entry || !entry.roadLayers || !state.map) return;
+    for (var i = 0; i < entry.roadLayers.length; i++) {
+      removeMapLayer(state.map, entry.roadLayers[i]);
     }
-    entry.roadLayer = null;
+    entry.roadLayers = null;
   }
 
   function ensureRoadLayerOnMap(entry) {
     if (!entry || entry.removed) return;
     if (!entry.geojsonData) return;
-    if (!state.leafletGlobal || !state.leafletMap) return;
+    if (!state.map) return;
 
-    var L = state.leafletGlobal;
     var color = entry.colorInput && entry.colorInput.value ? entry.colorInput.value : '#2bb8ff';
 
-    if (!entry.roadLayer) {
-      entry.roadLayer = L.geoJSON(entry.geojsonData, {
-        pointToLayer: function(feature, latlng) {
-          return L.circleMarker(latlng, {
-            radius: 4,
-            color: color,
-            weight: 1,
-            fillColor: color,
-            fillOpacity: 0.95,
-            opacity: 0.95
+    if (!entry.roadLayers) {
+      entry.roadLayers = [];
+      var features = entry.geojsonData.features || [];
+      for (var i = 0; i < features.length; i++) {
+        var feature = features[i];
+        if (!feature || !feature.geometry) continue;
+        var geomType = feature.geometry.type;
+        var coords = feature.geometry.coordinates;
+        var ref = null;
+        if (geomType === 'Point') {
+          ref = addCircleMarker(state.map, coords, {
+            radius: 4, color: color, weight: 1, fillColor: color, fillOpacity: 0.95, opacity: 0.95
           });
-        },
-        style: function() {
-          return {
-            color: color,
-            weight: 3,
-            opacity: 0.95
-          };
+        } else if (geomType === 'LineString') {
+          ref = addPolyline(state.map, coords, { color: color, weight: 3, opacity: 0.95 });
+        } else if (geomType === 'Polygon') {
+          ref = addPolygon(state.map, coords, { color: color, weight: 3, opacity: 0.95 });
+        } else if (geomType === 'MultiLineString') {
+          for (var ml = 0; ml < coords.length; ml++) {
+            var mlRef = addPolyline(state.map, coords[ml], { color: color, weight: 3, opacity: 0.95 });
+            entry.roadLayers.push(mlRef);
+          }
+          continue;
         }
-      });
-    } else if (typeof entry.roadLayer.setStyle === 'function') {
-      entry.roadLayer.setStyle({ color: color, fillColor: color });
+        if (ref) entry.roadLayers.push(ref);
+      }
+    } else {
+      // Update color on existing layers
+      for (var j = 0; j < entry.roadLayers.length; j++) {
+        var ref2 = entry.roadLayers[j];
+        if (!ref2 || !ref2.layerId) continue;
+        try {
+          var layer = state.map.getLayer(ref2.layerId);
+          if (!layer) continue;
+          var type = layer.type;
+          if (type === 'line') {
+            state.map.setPaintProperty(ref2.layerId, 'line-color', color);
+          } else if (type === 'circle') {
+            state.map.setPaintProperty(ref2.layerId, 'circle-color', color);
+            state.map.setPaintProperty(ref2.layerId, 'circle-stroke-color', color);
+          } else if (type === 'fill' && ref2.fillLayerId) {
+            state.map.setPaintProperty(ref2.fillLayerId, 'fill-color', color);
+          }
+        } catch (e) { /* ignore */ }
+      }
     }
   }
 
+  function computeRoadLayerBounds(entry) {
+    if (!entry || !entry.geojsonData || !entry.geojsonData.features) return null;
+    var minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+    var features = entry.geojsonData.features;
+    function extendCoord(c) {
+      if (!Array.isArray(c) || c.length < 2) return;
+      if (c[0] < minLng) minLng = c[0];
+      if (c[0] > maxLng) maxLng = c[0];
+      if (c[1] < minLat) minLat = c[1];
+      if (c[1] > maxLat) maxLat = c[1];
+    }
+    function extendCoords(arr) {
+      if (!Array.isArray(arr)) return;
+      for (var i = 0; i < arr.length; i++) {
+        if (Array.isArray(arr[i]) && Array.isArray(arr[i][0])) extendCoords(arr[i]);
+        else extendCoord(arr[i]);
+      }
+    }
+    for (var i = 0; i < features.length; i++) {
+      var geom = features[i] && features[i].geometry;
+      if (!geom) continue;
+      if (geom.type === 'Point') extendCoord(geom.coordinates);
+      else extendCoords(geom.coordinates);
+    }
+    if (!isFinite(minLng) || !isFinite(minLat)) return null;
+    return [[minLng, minLat], [maxLng, maxLat]];
+  }
+
   function setRoadLayerVisible(entry, visible) {
-    if (!entry || entry.removed || !state.leafletMap) return;
+    if (!entry || entry.removed || !state.map) return;
 
     if (!visible) {
-      if (entry.roadLayer && typeof state.leafletMap.hasLayer === 'function' && state.leafletMap.hasLayer(entry.roadLayer)) {
-        state.leafletMap.removeLayer(entry.roadLayer);
-      }
+      removeRoadLayer(entry);
       return;
     }
 
     ensureRoadLayerOnMap(entry);
-    if (!entry.roadLayer) return;
+    if (!entry.roadLayers || entry.roadLayers.length < 1) return;
 
-    if (typeof state.leafletMap.hasLayer !== 'function' || !state.leafletMap.hasLayer(entry.roadLayer)) {
-      entry.roadLayer.addTo(state.leafletMap);
-    }
-
-    if (!entry.hasFittedToBounds && typeof entry.roadLayer.getBounds === 'function') {
-      var bounds = entry.roadLayer.getBounds();
-      if (bounds && typeof bounds.isValid === 'function' && bounds.isValid()) {
-        state.leafletMap.fitBounds(bounds, { padding: [24, 24], maxZoom: 18 });
+    if (!entry.hasFittedToBounds) {
+      var bounds = computeRoadLayerBounds(entry);
+      if (bounds) {
+        state.map.fitBounds(bounds, { padding: 24, maxZoom: 18 });
       }
       entry.hasFittedToBounds = true;
     }
@@ -652,7 +702,7 @@ export function initApp() {
       fileName: file && file.name ? String(file.name) : 'roads.geojson',
       rowEl: row,
       colorInput: colorInput,
-      roadLayer: null,
+      roadLayers: null,
       geojsonData: null,
       hasFittedToBounds: false,
       removed: false
@@ -784,10 +834,10 @@ export function initApp() {
   dom.mapSessionAddBtnEl.addEventListener('click', function(e) {
     e.preventDefault();
     e.stopPropagation();
-    if (!state.leafletMap) return;
+    if (!state.map) return;
 
-    var center = state.leafletMap.getCenter();
-    var zoom = state.leafletMap.getZoom();
+    var center = state.map.getCenter();
+    var zoom = state.map.getZoom();
     var nextSessionId = getNextAvailableMapSessionId();
     mapSessionCounter = Math.max(mapSessionCounter, nextSessionId);
 
@@ -936,21 +986,6 @@ export function initApp() {
       workshopFinishInProgress = false;
       dom.nextBtn.disabled = false;
     });
-  }
-
-  function flattenLatLngsForGeoJson(latlngs, out) {
-    if (!Array.isArray(latlngs)) return;
-    for (var i = 0; i < latlngs.length; i++) {
-      var v = latlngs[i];
-      if (!v) continue;
-      if (Array.isArray(v)) {
-        flattenLatLngsForGeoJson(v, out);
-        continue;
-      }
-      if (typeof v.lat === 'number' && typeof v.lng === 'number') {
-        out.push(v);
-      }
-    }
   }
 
   function downloadGeoJsonFile(featureCollection, filename) {
@@ -1196,18 +1231,16 @@ export function initApp() {
   }
 
   function ensureResultsLayerGroup() {
-    if (!state.leafletMap || !state.leafletGlobal) return null;
+    if (!state.map) return null;
     if (!resultsLayerGroup) {
-      resultsLayerGroup = state.leafletGlobal.layerGroup().addTo(state.leafletMap);
+      resultsLayerGroup = createLayerGroup();
     }
     return resultsLayerGroup;
   }
 
   function clearResultsLayerGroup() {
     if (!resultsLayerGroup) return;
-    if (typeof resultsLayerGroup.clearLayers === 'function') {
-      resultsLayerGroup.clearLayers();
-    }
+    clearGroup(state.map, resultsLayerGroup);
   }
 
   function getResultsFeatureColor(feature) {
@@ -1282,61 +1315,77 @@ export function initApp() {
       ' | sessions: ' + String(sessionCount);
 
     var group = ensureResultsLayerGroup();
-    if (!group || !state.leafletGlobal || !state.leafletMap || features.length < 1) return;
+    if (!group || !state.map || features.length < 1) return;
 
-    var L = state.leafletGlobal;
-    var geoLayer = L.geoJSON(
-      { type: 'FeatureCollection', features: features },
-      {
-        pointToLayer: function(feature, latlng) {
-          var color = getResultsFeatureColor(feature);
-          return L.circleMarker(latlng, {
-            radius: 7,
-            color: '#111111',
-            weight: 1,
-            fillColor: color,
-            fillOpacity: 0.95
-          });
-        },
-        style: function(feature) {
-          var color = getResultsFeatureColor(feature);
-          var sourceType = feature && feature.properties ? feature.properties.sourceType : '';
-          return {
-            color: color,
-            weight: sourceType === 'drawing' ? 6 : 3,
-            opacity: 0.95
-          };
-        },
-        onEachFeature: function(feature, layer) {
-          if (!feature || !layer) return;
-          var props = feature.properties && typeof feature.properties === 'object' ? feature.properties : null;
-          if (!props || props.sourceType !== 'annotation') return;
-          var text = String(props.noteText || '').trim();
-          if (!text) return;
-          if (typeof layer.bindPopup !== 'function') return;
-          layer.bindPopup('<div class="results-note-popup">' + escapeHtmlForPopup(text).replace(/\n/g, '<br>') + '</div>', {
-            autoPan: true,
-            maxWidth: 320,
-            closeButton: true
-          });
+    var minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+
+    function extendBounds(coords) {
+      for (var ci = 0; ci < coords.length; ci++) {
+        var c = coords[ci];
+        if (c[0] < minLng) minLng = c[0];
+        if (c[0] > maxLng) maxLng = c[0];
+        if (c[1] < minLat) minLat = c[1];
+        if (c[1] > maxLat) maxLat = c[1];
+      }
+    }
+
+    for (var fi = 0; fi < features.length; fi++) {
+      var feature = features[fi];
+      if (!feature || !feature.geometry) continue;
+      var geomType = feature.geometry.type;
+      var coords = feature.geometry.coordinates;
+      var color = getResultsFeatureColor(feature);
+      var ref = null;
+
+      if (geomType === 'Point') {
+        ref = addCircleMarker(state.map, coords, {
+          radius: 7, color: '#111111', weight: 1, fillColor: color, fillOpacity: 0.95
+        });
+        extendBounds([coords]);
+      } else if (geomType === 'LineString') {
+        var sourceType = feature.properties ? feature.properties.sourceType : '';
+        ref = addPolyline(state.map, coords, {
+          color: color, weight: sourceType === 'drawing' ? 6 : 3, opacity: 0.95
+        });
+        extendBounds(coords);
+      } else if (geomType === 'Polygon') {
+        ref = addPolygon(state.map, coords, {
+          color: color, weight: 3, opacity: 0.95
+        });
+        if (coords[0]) extendBounds(coords[0]);
+      }
+
+      if (ref) {
+        // For annotation features, add a popup
+        var props = feature.properties && typeof feature.properties === 'object' ? feature.properties : null;
+        if (props && props.sourceType === 'annotation') {
+          var noteText = String(props.noteText || '').trim();
+          if (noteText && geomType === 'Point') {
+            var popup = new window.maplibregl.Popup({ closeButton: true, maxWidth: '320px' })
+              .setLngLat(coords)
+              .setHTML('<div class="results-note-popup">' + escapeHtmlForPopup(noteText).replace(/\n/g, '<br>') + '</div>');
+            ref._popup = popup;
+            // Bind click to open popup
+            state.map.on('click', ref.layerId, function(popupRef) {
+              return function(ev) {
+                if (popupRef._popup) popupRef._popup.addTo(state.map);
+              };
+            }(ref));
+          }
         }
+        addToGroup(group, ref);
       }
-    );
+    }
 
-    group.addLayer(geoLayer);
-
-    if (typeof geoLayer.getBounds === 'function') {
-      var bounds = geoLayer.getBounds();
-      if (bounds && typeof bounds.isValid === 'function' && bounds.isValid()) {
-        state.leafletMap.fitBounds(bounds, { padding: [36, 36], maxZoom: 18 });
-      }
+    if (isFinite(minLng) && isFinite(minLat)) {
+      state.map.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding: 36, maxZoom: 18 });
     }
   }
 
   function enterResultsMode(workshopId, payload) {
     initMaptasticIfNeeded();
     initLeafletIfNeeded();
-    if (!state.leafletMap || !state.leafletGlobal) {
+    if (!state.map) {
       setError('Map is not available.');
       return;
     }
@@ -1355,7 +1404,7 @@ export function initApp() {
     updateShowResultsButton();
 
     setTimeout(function() {
-      if (state.leafletMap) state.leafletMap.invalidateSize();
+      if (state.map) state.map.resize();
       renderResultsMapView();
     }, 0);
   }
@@ -1440,45 +1489,56 @@ export function initApp() {
         }
       }
 
-      // Export drawings from Leaflet draw layer
-      if (state.stage4DrawLayer && typeof state.stage4DrawLayer.eachLayer === 'function') {
-        state.stage4DrawLayer.eachLayer(function(layer) {
-          if (!layer || typeof layer.getLatLngs !== 'function') return;
+      // Export drawings from draw group
+      if (state.drawGroup && state.map) {
+        var drawLayers = state.drawGroup.layers;
+        for (var di = 0; di < drawLayers.length; di++) {
+          var drawRef = drawLayers[di];
+          if (!drawRef || !drawRef.sourceId) continue;
 
-          var strokeId = layer.strokeId ? String(layer.strokeId) : '';
+          var strokeId = drawRef.strokeId ? String(drawRef.strokeId) : '';
           if (strokeId) {
-            if (exportedStrokeIds[strokeId]) return;
+            if (exportedStrokeIds[strokeId]) continue;
             exportedStrokeIds[strokeId] = true;
           } else {
-            // Old strokes may not have strokeId; avoid glow duplicates by skipping thick glow layers.
-            var weightLegacy = layer.options && isFinite(layer.options.weight) ? Number(layer.options.weight) : 0;
-            if (weightLegacy > 10) return;
+            // Skip glow layers (they have large weight)
+            var refWeight = drawRef._weight;
+            if (isFinite(refWeight) && refWeight > 10) continue;
           }
 
-          var flat = [];
-          flattenLatLngsForGeoJson(layer.getLatLngs(), flat);
-          if (flat.length < 2) return;
+          try {
+            var src = state.map.getSource(drawRef.sourceId);
+            if (!src || !src._data) continue;
+            var geom = src._data.geometry || (src._data.type === 'Feature' ? src._data.geometry : null);
+            if (!geom || geom.type !== 'LineString') continue;
+            var drawCoords = geom.coordinates;
+            if (!drawCoords || drawCoords.length < 2) continue;
 
-          var coords = [];
-          for (var li = 0; li < flat.length; li++) {
-            coords.push([flat[li].lng, flat[li].lat]);
-          }
+            var drawingViewInfo = getMapViewInfo(drawRef.sessionId || null);
+            var drawColor = null;
+            try {
+              drawColor = state.map.getPaintProperty(drawRef.layerId, 'line-color');
+            } catch (e) { /* ignore */ }
+            var drawWeight = null;
+            try {
+              drawWeight = state.map.getPaintProperty(drawRef.layerId, 'line-width');
+            } catch (e) { /* ignore */ }
 
-          var drawingViewInfo = getMapViewInfo(layer.sessionId || null);
-
-          features.push({
-            type: 'Feature',
-            geometry: { type: 'LineString', coordinates: coords },
-            properties: {
-              sourceType: 'drawing',
-              color: layer.options && layer.options.color ? layer.options.color : null,
-              strokeWidth: layer.options && isFinite(layer.options.weight) ? Number(layer.options.weight) : null,
-              sessionId: layer.sessionId || null,
-              mapViewId: drawingViewInfo.mapViewId,
-              mapViewName: drawingViewInfo.mapViewName
-            }
-          });
-        });
+            // Coords are [lng, lat] in MapLibre
+            features.push({
+              type: 'Feature',
+              geometry: { type: 'LineString', coordinates: drawCoords },
+              properties: {
+                sourceType: 'drawing',
+                color: drawColor || null,
+                strokeWidth: isFinite(drawWeight) ? Number(drawWeight) : null,
+                sessionId: drawRef.sessionId || null,
+                mapViewId: drawingViewInfo.mapViewId,
+                mapViewName: drawingViewInfo.mapViewName
+              }
+            });
+          } catch (e) { /* ignore */ }
+        }
       }
 
       var byMapView = {};
@@ -1597,7 +1657,7 @@ export function initApp() {
   }
 
   function processLayerPanVotes(voteState, primaryPoints) {
-    if (state.viewMode !== 'map' || (state.stage !== 3 && state.stage !== 4) || vgaModeActive || !state.leafletMap) {
+    if (state.viewMode !== 'map' || (state.stage !== 3 && state.stage !== 4) || vgaModeActive || !state.map) {
       resetPanTagRuntime();
       return;
     }
@@ -1656,7 +1716,7 @@ export function initApp() {
     if ((nowMs - panTagRuntime.lastApplyAtMs) < PAN_MIN_UPDATE_INTERVAL_MS) return;
 
     try {
-      state.leafletMap.panBy([-dx, -dy], { animate: false });
+      state.map.panBy([-dx, -dy], { animate: false });
     } catch (err) {
       // Ignore transient pan errors.
     }
@@ -1665,7 +1725,7 @@ export function initApp() {
   }
 
   function processLayerZoomVotes(voteState, primaryPoints) {
-    if (state.viewMode !== 'map' || (state.stage !== 3 && state.stage !== 4) || vgaModeActive || !state.leafletMap) {
+    if (state.viewMode !== 'map' || (state.stage !== 3 && state.stage !== 4) || vgaModeActive || !state.map) {
       resetZoomTagRuntime();
       return;
     }
@@ -1677,7 +1737,7 @@ export function initApp() {
     }
 
     if (!zoomTagRuntime.baselineZoomReady) {
-      var initialZoom = state.leafletMap.getZoom();
+      var initialZoom = state.map.getZoom();
       if (!isFinite(initialZoom)) initialZoom = 0;
       zoomTagRuntime.baselineZoom = initialZoom;
       zoomTagRuntime.baselineZoomReady = true;
@@ -1746,17 +1806,17 @@ export function initApp() {
     if ((nowMs - zoomTagRuntime.lastApplyAtMs) < ZOOM_MIN_UPDATE_INTERVAL_MS) return;
 
     var targetZoomAvg = targetZoomSum / targetZoomCount;
-    var minZoom = typeof state.leafletMap.getMinZoom === 'function' ? state.leafletMap.getMinZoom() : -Infinity;
-    var maxZoom = typeof state.leafletMap.getMaxZoom === 'function' ? state.leafletMap.getMaxZoom() : Infinity;
+    var minZoom = typeof state.map.getMinZoom === 'function' ? state.map.getMinZoom() : -Infinity;
+    var maxZoom = typeof state.map.getMaxZoom === 'function' ? state.map.getMaxZoom() : Infinity;
     if (!isFinite(minZoom)) minZoom = -Infinity;
     if (!isFinite(maxZoom)) maxZoom = Infinity;
     targetZoomAvg = clamp(targetZoomAvg, minZoom, maxZoom);
 
-    var currentZoom = state.leafletMap.getZoom();
+    var currentZoom = state.map.getZoom();
     if (Math.abs(targetZoomAvg - currentZoom) < 0.01) return;
 
     try {
-      state.leafletMap.setZoom(targetZoomAvg, { animate: false });
+      state.map.jumpTo({ zoom: targetZoomAvg });
       zoomTagRuntime.lastApplyAtMs = nowMs;
     } catch (err) {
       // Ignore transient zoom errors.
@@ -1776,8 +1836,8 @@ export function initApp() {
     resetPanTagRuntime();
     resetZoomTagRuntime();
 
-    if (state.leafletMap) {
-      state.leafletMap.setView([session.lat, session.lng], session.zoom);
+    if (state.map) {
+      state.map.jumpTo({ center: [session.lng, session.lat], zoom: session.zoom });
     }
 
     filterElementsBySession(session.id);
@@ -1808,7 +1868,7 @@ export function initApp() {
       }
     }
 
-    // Filter Leaflet polyline drawings
+    // Filter polyline drawings by session
     filterPolylinesBySession(sessionId);
   }
 
@@ -1987,31 +2047,23 @@ export function initApp() {
   }
 
   function ensureVgaLayers() {
-    if (!state.leafletMap || !state.leafletGlobal) return;
-    var L = state.leafletGlobal;
+    if (!state.map) return;
     if (!vgaSelectionLayer) {
-      vgaSelectionLayer = L.layerGroup().addTo(state.leafletMap);
-      vgaSelectionLayer._skipIsovistGeometry = true;
+      vgaSelectionLayer = createLayerGroup();
     }
     if (!vgaHeatmapLayer) {
-      vgaHeatmapLayer = L.layerGroup().addTo(state.leafletMap);
-      vgaHeatmapLayer._skipIsovistGeometry = true;
+      vgaHeatmapLayer = createLayerGroup();
     }
-  }
-
-  function clearLeafletLayer(layer) {
-    if (!layer || typeof layer.clearLayers !== 'function') return;
-    layer.clearLayers();
   }
 
   function clearVgaSelection() {
     vgaSelectedCorners = [];
-    clearLeafletLayer(vgaSelectionLayer);
+    if (vgaSelectionLayer) clearGroup(state.map, vgaSelectionLayer);
     updateVgaPanelMeta();
   }
 
   function clearVgaHeatmap() {
-    clearLeafletLayer(vgaHeatmapLayer);
+    if (vgaHeatmapLayer) clearGroup(state.map, vgaHeatmapLayer);
     vgaHeatPointRadiusPx = 10;
   }
 
@@ -2027,8 +2079,8 @@ export function initApp() {
   }
 
   function ensureVgaMapClickBinding() {
-    if (vgaMapClickBound || !state.leafletMap) return;
-    state.leafletMap.on('click', onVgaMapClick);
+    if (vgaMapClickBound || !state.map) return;
+    state.map.on('click', onVgaMapClick);
     vgaMapClickBound = true;
   }
 
@@ -2043,7 +2095,7 @@ export function initApp() {
   }
 
   function setVgaMode(active) {
-    var shouldEnable = !!active && state.stage === 3 && state.viewMode === 'map' && !!state.leafletMap;
+    var shouldEnable = !!active && state.stage === 3 && state.viewMode === 'map' && !!state.map;
     if (!shouldEnable && !vgaModeActive) {
       document.body.classList.remove('vga-mode-active');
       setVgaPanelVisible(false);
@@ -2119,55 +2171,51 @@ export function initApp() {
   }
 
   function redrawVgaSelectionOverlay() {
-    if (!vgaSelectionLayer || !state.leafletGlobal) return;
-    clearLeafletLayer(vgaSelectionLayer);
-    var L = state.leafletGlobal;
+    if (!vgaSelectionLayer || !state.map) return;
+    clearGroup(state.map, vgaSelectionLayer);
 
     for (var i = 0; i < vgaSelectedCorners.length; i++) {
       var p = vgaSelectedCorners[i];
       if (!p) continue;
-      var marker = L.circleMarker([p.lat, p.lng], {
+      var markerRef = addCircleMarker(state.map, [p.lng, p.lat], {
         radius: 6,
         color: '#f59e0b',
         weight: 2,
         fillColor: '#f59e0b',
-        fillOpacity: 0.95,
-        interactive: false
+        fillOpacity: 0.95
       });
-      marker._skipIsovistGeometry = true;
-      marker.addTo(vgaSelectionLayer);
+      addToGroup(vgaSelectionLayer, markerRef);
     }
 
     var ordered = orderLatLngsClockwise(vgaSelectedCorners);
     if (ordered.length >= 3) {
-      var polygonLatLngs = [];
+      var ring = [];
       for (var k = 0; k < ordered.length; k++) {
-        polygonLatLngs.push([ordered[k].lat, ordered[k].lng]);
+        ring.push([ordered[k].lng, ordered[k].lat]);
       }
-      var poly = L.polygon(polygonLatLngs, {
+      ring.push(ring[0]); // close ring
+      var polyRef = addPolygon(state.map, [ring], {
         color: '#f59e0b',
         weight: 2,
         fillColor: '#f59e0b',
         fillOpacity: 0.08,
-        opacity: 0.95,
-        interactive: false
+        opacity: 0.95
       });
-      poly._skipIsovistGeometry = true;
-      poly.addTo(vgaSelectionLayer);
+      addToGroup(vgaSelectionLayer, polyRef);
     }
   }
 
   function onVgaMapClick(e) {
     if (!vgaModeActive || vgaApplying) return;
     if (state.stage !== 3 || state.viewMode !== 'map') return;
-    if (!e || !e.latlng) return;
+    if (!e || !e.lngLat) return;
     var originalEvent = e.originalEvent;
     var isCtrlClick = !!(originalEvent && (originalEvent.ctrlKey || originalEvent.metaKey));
     if (!isCtrlClick) return;
     if (originalEvent && typeof originalEvent.preventDefault === 'function') originalEvent.preventDefault();
     if (originalEvent && typeof originalEvent.stopPropagation === 'function') originalEvent.stopPropagation();
 
-    var nextPoint = cloneLatLngForVga(e.latlng);
+    var nextPoint = { lat: e.lngLat.lat, lng: e.lngLat.lng };
     if (!nextPoint) return;
 
     if (vgaSelectedCorners.length >= VGA_REQUIRED_POINTS) {
@@ -2201,18 +2249,17 @@ export function initApp() {
   }
 
   function buildVgaSamplesFromCorners(corners) {
-    if (!state.leafletMap || !state.leafletGlobal) return null;
+    if (!state.map) return null;
     if (!Array.isArray(corners) || corners.length < VGA_REQUIRED_POINTS) return null;
 
     var orderedCorners = orderLatLngsClockwise(corners);
     if (orderedCorners.length < 3) return null;
 
-    var map = state.leafletMap;
-    var L = state.leafletGlobal;
+    var map = state.map;
     var polygonPoints = [];
     for (var i = 0; i < orderedCorners.length; i++) {
       var ll = orderedCorners[i];
-      var pt = map.latLngToContainerPoint([ll.lat, ll.lng]);
+      var pt = map.project([ll.lng, ll.lat]);
       if (!pt || !isFinite(pt.x) || !isFinite(pt.y)) continue;
       polygonPoints.push([pt.x, pt.y]);
     }
@@ -2240,8 +2287,8 @@ export function initApp() {
     for (var y = minY + stepPx * 0.5; y <= maxY; y += stepPx) {
       for (var x = minX + stepPx * 0.5; x <= maxX; x += stepPx) {
         if (!pointInsidePolygon(x, y, polygonPoints)) continue;
-        var llSample = map.containerPointToLatLng(L.point(x, y));
-        var sample = cloneLatLngForVga(llSample);
+        var llSample = map.unproject([x, y]);
+        var sample = llSample ? { lat: llSample.lat, lng: llSample.lng } : null;
         if (sample) samples.push(sample);
       }
     }
@@ -2294,12 +2341,11 @@ export function initApp() {
   }
 
   function drawVgaHeatmap(samples, stepPx) {
-    if (!vgaHeatmapLayer || !state.leafletGlobal || !state.leafletMap) return;
-    clearLeafletLayer(vgaHeatmapLayer);
+    if (!vgaHeatmapLayer || !state.map) return;
+    clearGroup(state.map, vgaHeatmapLayer);
     if (!Array.isArray(samples) || samples.length < 1) return;
 
-    var L = state.leafletGlobal;
-    var map = state.leafletMap;
+    var map = state.map;
     var orderedCorners = orderLatLngsClockwise(vgaSelectedCorners);
     if (orderedCorners.length < 3) return;
 
@@ -2310,7 +2356,7 @@ export function initApp() {
     var maxY = -Infinity;
     for (var ci = 0; ci < orderedCorners.length; ci++) {
       var c = orderedCorners[ci];
-      var cpt = map.latLngToContainerPoint([c.lat, c.lng]);
+      var cpt = map.project([c.lng, c.lat]);
       if (!cpt || !isFinite(cpt.x) || !isFinite(cpt.y)) continue;
       polygonContainer.push([cpt.x, cpt.y]);
       minX = Math.min(minX, cpt.x);
@@ -2343,7 +2389,7 @@ export function initApp() {
     for (var si = 0; si < samples.length; si++) {
       var sample = samples[si];
       if (!sample || !sample.latlng) continue;
-      var spt = map.latLngToContainerPoint([sample.latlng.lat, sample.latlng.lng]);
+      var spt = map.project([sample.latlng.lng, sample.latlng.lat]);
       if (!spt || !isFinite(spt.x) || !isFinite(spt.y)) continue;
       var rawScore = isFinite(sample.score) ? sample.score : minScore;
       var normScore = (maxScore > minScore) ? ((rawScore - minScore) / (maxScore - minScore)) : 0.5;
@@ -2448,14 +2494,11 @@ export function initApp() {
     outCtx.fill();
     outCtx.globalCompositeOperation = 'source-over';
 
-    var nw = map.containerPointToLatLng(L.point(minX, minY));
-    var se = map.containerPointToLatLng(L.point(maxX, maxY));
-    var overlay = L.imageOverlay(outCanvas.toDataURL('image/png'), L.latLngBounds(nw, se), {
-      opacity: 0.92,
-      interactive: false
-    });
-    overlay._skipIsovistGeometry = true;
-    overlay.addTo(vgaHeatmapLayer);
+    var nw = map.unproject([minX, minY]);
+    var se = map.unproject([maxX, maxY]);
+    var imgRef = addImageOverlay(state.map, outCanvas.toDataURL('image/png'),
+      [[nw.lng, se.lat], [se.lng, nw.lat]], { opacity: 0.92 });
+    addToGroup(vgaHeatmapLayer, imgRef);
   }
 
   function runVgaApply() {
@@ -2470,38 +2513,65 @@ export function initApp() {
     updateVgaPanelMeta();
     clearVgaHeatmap();
 
-    var total = sampleInfo.samples.length;
-    var scored = [];
-    var i = 0;
+    // Compute bounding box from the 4 selected corners
+    var minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+    for (var ci = 0; ci < vgaSelectedCorners.length; ci++) {
+      var c = vgaSelectedCorners[ci];
+      if (!c) continue;
+      if (c.lat < minLat) minLat = c.lat;
+      if (c.lat > maxLat) maxLat = c.lat;
+      if (c.lng < minLng) minLng = c.lng;
+      if (c.lng > maxLng) maxLng = c.lng;
+    }
 
-    function processChunk() {
+    setVgaStatus('Fetching buildings...');
+
+    // Fetch buildings only for the selected area, then compute isovist scores
+    fetchBuildingsForBounds(minLat, minLng, maxLat, maxLng).then(function() {
       if (!vgaModeActive || applyRunId !== vgaApplyRunId) {
         vgaApplying = false;
         updateVgaPanelMeta();
         return;
       }
 
-      var chunkEnd = Math.min(i + 6, total);
-      for (; i < chunkEnd; i++) {
-        var sampleLatLng = sampleInfo.samples[i];
-        var scoreInfo = computeStage4IsovistScore(sampleLatLng);
-        var score = (scoreInfo && isFinite(scoreInfo.score)) ? scoreInfo.score : 0;
-        scored.push({ latlng: sampleLatLng, score: score });
+      var total = sampleInfo.samples.length;
+      var scored = [];
+      var i = 0;
+
+      function processChunk() {
+        if (!vgaModeActive || applyRunId !== vgaApplyRunId) {
+          vgaApplying = false;
+          updateVgaPanelMeta();
+          return;
+        }
+
+        var chunkEnd = Math.min(i + 6, total);
+        for (; i < chunkEnd; i++) {
+          var sampleLatLng = sampleInfo.samples[i];
+          var scoreInfo = computeStage4IsovistScore(sampleLatLng);
+          var score = (scoreInfo && isFinite(scoreInfo.score)) ? scoreInfo.score : 0;
+          scored.push({ latlng: sampleLatLng, score: score });
+        }
+
+        setVgaStatus('Computing VGA: ' + String(i) + '/' + String(total));
+        if (i < total) {
+          setTimeout(processChunk, 0);
+          return;
+        }
+
+        drawVgaHeatmap(scored, sampleInfo.stepPx);
+        vgaApplying = false;
+        updateVgaPanelMeta();
+        setVgaStatus('VGA heatmap ready (' + String(scored.length) + ' samples).');
       }
 
-      setVgaStatus('Computing VGA: ' + String(i) + '/' + String(total));
-      if (i < total) {
-        setTimeout(processChunk, 0);
-        return;
-      }
-
-      drawVgaHeatmap(scored, sampleInfo.stepPx);
+      processChunk();
+    }).catch(function(err) {
+      console.warn('Building fetch failed during VGA:', err);
+      setVgaStatus('Building fetch failed. Retrying may help.');
       vgaApplying = false;
       updateVgaPanelMeta();
-      setVgaStatus('VGA heatmap ready (' + String(scored.length) + ' samples).');
-    }
-
-    processChunk();
+    });
   }
 
   function onVgaApplyClicked() {
@@ -2646,7 +2716,7 @@ export function initApp() {
   function projectDetectionToMapContainerPoint(det, options) {
     options = options || {};
     if (!det || !det.center) return null;
-    if (!state.surfaceHomography || !state.leafletMap) return null;
+    if (!state.surfaceHomography || !state.map) return null;
 
     var mapW = dom.mapWarpEl.offsetWidth;
     var mapH = dom.mapWarpEl.offsetHeight;
@@ -2675,12 +2745,10 @@ export function initApp() {
   function projectDetectionToMapLatLng(det, options) {
     var containerPt = projectDetectionToMapContainerPoint(det, options);
     if (!containerPt) return null;
-    var pt = state.leafletGlobal && state.leafletGlobal.point
-      ? state.leafletGlobal.point(containerPt.x, containerPt.y)
-      : { x: containerPt.x, y: containerPt.y };
 
     try {
-      return cloneShortestPathLatLng(state.leafletMap.containerPointToLatLng(pt));
+      var ll = state.map.unproject([containerPt.x, containerPt.y]);
+      return ll ? { lat: ll.lat, lng: ll.lng } : null;
     } catch (err) {
       return null;
     }
@@ -2688,20 +2756,20 @@ export function initApp() {
 
   function applyPanAnchorToTagPoint(anchorLatLng, tagPoint) {
     if (!anchorLatLng || !tagPoint) return;
-    if (!state.leafletMap || !state.leafletGlobal) return;
-    var map = state.leafletMap;
-    var L = state.leafletGlobal;
+    if (!state.map) return;
+    var map = state.map;
     var zoom = map.getZoom();
     if (!isFinite(zoom)) return;
 
     try {
-      var anchor = L.latLng(anchorLatLng.lat, anchorLatLng.lng);
-      var anchorProjected = map.project(anchor, zoom);
-      var tagProjected = L.point(tagPoint.x, tagPoint.y);
-      var size = map.getSize();
-      var targetCenterProjected = anchorProjected.subtract(tagProjected).add(size.divideBy(2));
-      var targetCenter = map.unproject(targetCenterProjected, zoom);
-      map.setView(targetCenter, zoom, { animate: false });
+      var anchorProjected = map.project([anchorLatLng.lng, anchorLatLng.lat]);
+      var container = map.getContainer();
+      var halfW = container.offsetWidth / 2;
+      var halfH = container.offsetHeight / 2;
+      var targetX = anchorProjected.x - tagPoint.x + halfW;
+      var targetY = anchorProjected.y - tagPoint.y + halfH;
+      var targetCenter = map.unproject([targetX, targetY]);
+      map.jumpTo({ center: [targetCenter.lng, targetCenter.lat], zoom: zoom });
     } catch (err) {
       // Ignore transient projection errors.
     }
@@ -2965,7 +3033,7 @@ export function initApp() {
       updateTrackingOffsetControlsVisibility();
       updateToolTagControlsVisibility();
       updateHamburgerMenuVisibility();
-      if (state.leafletMap) state.leafletMap.invalidateSize();
+      if (state.map) state.map.resize();
       setStage4DrawMode(state.stage4DrawMode);
       updateStage4MapInteractivity();
       updateStickerMappingForCurrentView();
