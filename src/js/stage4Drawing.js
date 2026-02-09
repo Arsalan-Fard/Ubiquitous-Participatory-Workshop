@@ -41,6 +41,24 @@ var OSM_BUILDINGS_ENDPOINTS = [
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.openstreetmap.ru/api/interpreter'
 ];
+var BASE_TILES_SOURCE_ID = 'base-tiles';
+var BASE_TILES_LAYER_ID = 'base-tiles';
+var BASE_MAP_MODE_DEFAULT = 'default';
+var BASE_MAP_MODE_MONO = 'mono';
+var baseMapMode = BASE_MAP_MODE_DEFAULT;
+var BASE_TILES_BY_MODE = {
+  default: [
+    'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
+  ],
+  mono: [
+    'https://a.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
+    'https://b.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
+    'https://c.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
+    'https://d.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png'
+  ]
+};
 
 // Multi-hand drawing state: keyed by pointerId
 var handDrawStates = {};
@@ -209,6 +227,77 @@ function updateDrawModeVisuals() {
 }
 
 // --- Stroke creation helper (removes duplication) ---
+
+function resolveBaseMapMode(mode) {
+  return mode === BASE_MAP_MODE_MONO ? BASE_MAP_MODE_MONO : BASE_MAP_MODE_DEFAULT;
+}
+
+function getBaseTilesForMode(mode) {
+  var resolved = resolveBaseMapMode(mode);
+  var tiles = BASE_TILES_BY_MODE[resolved];
+  return Array.isArray(tiles) && tiles.length > 0 ? tiles : BASE_TILES_BY_MODE.default;
+}
+
+function getBaseLayerPaintForMode(mode) {
+  var resolved = resolveBaseMapMode(mode);
+  if (resolved === BASE_MAP_MODE_MONO) {
+    return {
+      'raster-opacity': 1,
+      'raster-brightness-min': 0.05,
+      'raster-brightness-max': 0.75,
+      'raster-contrast': 0.35,
+      'raster-saturation': -0.15
+    };
+  }
+  return { 'raster-opacity': 1 };
+}
+
+function applyBaseTilesToMap() {
+  if (!state.map || !state.mapReady) return;
+  var map = state.map;
+  var beforeId = null;
+  try {
+    var style = map.getStyle();
+    var layers = style && Array.isArray(style.layers) ? style.layers : [];
+    for (var i = 0; i < layers.length; i++) {
+      var lid = layers[i] && layers[i].id ? layers[i].id : '';
+      if (lid && lid !== BASE_TILES_LAYER_ID) {
+        beforeId = lid;
+        break;
+      }
+    }
+  } catch (e) { /* ignore */ }
+
+  try {
+    if (map.getLayer(BASE_TILES_LAYER_ID)) map.removeLayer(BASE_TILES_LAYER_ID);
+  } catch (e1) { /* ignore */ }
+  try {
+    if (map.getSource(BASE_TILES_SOURCE_ID)) map.removeSource(BASE_TILES_SOURCE_ID);
+  } catch (e2) { /* ignore */ }
+
+  map.addSource(BASE_TILES_SOURCE_ID, {
+    type: 'raster',
+    tiles: getBaseTilesForMode(baseMapMode),
+    tileSize: 256,
+    maxzoom: 19
+  });
+
+  map.addLayer({
+    id: BASE_TILES_LAYER_ID,
+    type: 'raster',
+    source: BASE_TILES_SOURCE_ID,
+    paint: getBaseLayerPaintForMode(baseMapMode)
+  }, beforeId || undefined);
+}
+
+export function setMapBaseMode(mode) {
+  baseMapMode = resolveBaseMapMode(mode);
+  applyBaseTilesToMap();
+}
+
+export function getMapBaseMode() {
+  return baseMapMode;
+}
 
 function distanceSqPoints(a, b) {
   if (!a || !b) return Infinity;
@@ -1367,18 +1456,8 @@ export function initLeafletIfNeeded() {
   state.map.on('load', function() {
     state.mapReady = true;
 
-    // Base tiles
-    state.map.addSource('base-tiles', {
-      type: 'raster',
-      tiles: [
-        'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
-        'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
-        'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
-      ],
-      tileSize: 256,
-      maxzoom: 19
-    });
-    state.map.addLayer({ id: 'base-tiles', type: 'raster', source: 'base-tiles' });
+    // Base tiles (supports runtime theme switching).
+    applyBaseTilesToMap();
 
     // Layer groups
     state.buildingsGroup = createLayerGroup();

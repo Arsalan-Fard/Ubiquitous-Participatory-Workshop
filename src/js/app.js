@@ -11,7 +11,7 @@ import { clamp, normalizeTagId, saveNumberSetting, waitForImageLoad } from './ut
 import { state } from './state.js';
 import {
   addPolyline, addPolygon, addCircleMarker, addImageOverlay,
-  removeMapLayer, createLayerGroup, addToGroup, clearGroup,
+  createLayerGroup, addToGroup, clearGroup,
   updateSourceData
 } from './mapHelpers.js';
 
@@ -52,7 +52,8 @@ import {
   setStage4IsovistOrigin,
   clearStage4IsovistOverlay,
   computeStage4IsovistScore,
-  fetchBuildingsForBounds
+  fetchBuildingsForBounds,
+  setMapBaseMode
 } from './stage4Drawing.js';
 
 var BACKEND_CAMERA_FEED_URL = '/video_feed';
@@ -71,6 +72,7 @@ var APRILTAG_BLACKOUT_TOOL_SELECTOR = '.ui-dot, .ui-note, .ui-draw, .ui-eraser, 
 var BLACKOUT_PULSE_INTERVAL_MS = 1000;
 var BLACKOUT_PULSE_DURATION_MS = 100;
 var BLACKOUT_PULSE_STORAGE_KEY = 'apriltagBlackoutPulseEnabled';
+var MAP_MONO_STYLE_STORAGE_KEY = 'mapMonochromeStyleEnabled';
 var apriltagPollInFlight = false;
 var apriltagLastPollMs = 0;
 var apriltagPollBackoffMs = 0;
@@ -90,6 +92,7 @@ var blackoutPulseUntilMs = 0;
 var blackoutPulseNextAtMs = 0;
 var blackoutPulseActive = false;
 var blackoutOverlayEl = null;
+var mapMonochromeStyleEnabled = false;
 
 export function initApp() {
   // Initialize DOM and state
@@ -133,6 +136,7 @@ export function initApp() {
   });
   mountVgaButtonToActionBar();
   initBlackoutPulseToggle();
+  initMapStyleToggle();
 
   // Event listeners
   dom.startBtn.addEventListener('click', startCamera);
@@ -441,6 +445,9 @@ export function initApp() {
   var layerNavVoteLatch = { next: false, back: false };
   var roadColorPalette = ['#ff5a5f', '#2bb8ff', '#2ec27e', '#f6c945', '#ff8a3d', '#9c6dff'];
   var importedRoadEntries = [];
+  var importedRoadLayerCounter = 1;
+  var roadLayersVisible = false;
+  var roadVisibilityDirty = true;
 
   document.addEventListener('pointerdown', function(e) {
     if (state.stage !== 3 || state.viewMode !== 'map') return;
@@ -502,67 +509,167 @@ export function initApp() {
     return stickerEl;
   }
 
-  function removeRoadLayer(entry) {
-    if (!entry || !entry.roadLayers || !state.map) return;
-    for (var i = 0; i < entry.roadLayers.length; i++) {
-      removeMapLayer(state.map, entry.roadLayers[i]);
+  function markRoadVisibilityDirty() {
+    roadVisibilityDirty = true;
+  }
+
+  function getRoadEntryColor(entry) {
+    return entry && entry.colorInput && entry.colorInput.value ? entry.colorInput.value : '#2bb8ff';
+  }
+
+  function setRoadLayerIdsVisibility(entry, visible) {
+    if (!entry || !entry.roadLayerIds || !state.map) return;
+    var ids = entry.roadLayerIds;
+    var visibility = visible ? 'visible' : 'none';
+    var keys = ['point', 'line', 'polygonFill', 'polygonStroke'];
+    for (var i = 0; i < keys.length; i++) {
+      var layerId = ids[keys[i]];
+      if (!layerId) continue;
+      try {
+        if (state.map.getLayer(layerId)) {
+          state.map.setLayoutProperty(layerId, 'visibility', visibility);
+        }
+      } catch (e) { /* ignore */ }
     }
-    entry.roadLayers = null;
+  }
+
+  function updateRoadLayerColor(entry) {
+    if (!entry || !entry.roadLayerIds || !state.map) return;
+    var color = getRoadEntryColor(entry);
+    var ids = entry.roadLayerIds;
+    try {
+      if (ids.line && state.map.getLayer(ids.line)) {
+        state.map.setPaintProperty(ids.line, 'line-color', color);
+      }
+      if (ids.point && state.map.getLayer(ids.point)) {
+        state.map.setPaintProperty(ids.point, 'circle-color', color);
+        state.map.setPaintProperty(ids.point, 'circle-stroke-color', color);
+      }
+      if (ids.polygonFill && state.map.getLayer(ids.polygonFill)) {
+        state.map.setPaintProperty(ids.polygonFill, 'fill-color', color);
+      }
+      if (ids.polygonStroke && state.map.getLayer(ids.polygonStroke)) {
+        state.map.setPaintProperty(ids.polygonStroke, 'line-color', color);
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  function removeRoadLayer(entry) {
+    if (!entry) return;
+
+    if (!state.map) {
+      entry.roadSourceId = '';
+      entry.roadLayerIds = null;
+      return;
+    }
+
+    if (entry.roadLayerIds) {
+      var ids = entry.roadLayerIds;
+      var keys = ['point', 'line', 'polygonFill', 'polygonStroke'];
+      for (var i = 0; i < keys.length; i++) {
+        var layerId = ids[keys[i]];
+        if (!layerId) continue;
+        try {
+          if (state.map.getLayer(layerId)) state.map.removeLayer(layerId);
+        } catch (e1) { /* ignore */ }
+      }
+    }
+    if (entry.roadSourceId) {
+      try {
+        if (state.map.getSource(entry.roadSourceId)) state.map.removeSource(entry.roadSourceId);
+      } catch (e2) { /* ignore */ }
+    }
+    entry.roadSourceId = '';
+    entry.roadLayerIds = null;
   }
 
   function ensureRoadLayerOnMap(entry) {
     if (!entry || entry.removed) return;
     if (!entry.geojsonData) return;
-    if (!state.map) return;
+    if (!state.map || !state.mapReady) return;
 
-    var color = entry.colorInput && entry.colorInput.value ? entry.colorInput.value : '#2bb8ff';
+    var color = getRoadEntryColor(entry);
 
-    if (!entry.roadLayers) {
-      entry.roadLayers = [];
-      var features = entry.geojsonData.features || [];
-      for (var i = 0; i < features.length; i++) {
-        var feature = features[i];
-        if (!feature || !feature.geometry) continue;
-        var geomType = feature.geometry.type;
-        var coords = feature.geometry.coordinates;
-        var ref = null;
-        if (geomType === 'Point') {
-          ref = addCircleMarker(state.map, coords, {
-            radius: 4, color: color, weight: 1, fillColor: color, fillOpacity: 0.95, opacity: 0.95
-          });
-        } else if (geomType === 'LineString') {
-          ref = addPolyline(state.map, coords, { color: color, weight: 3, opacity: 0.95 });
-        } else if (geomType === 'Polygon') {
-          ref = addPolygon(state.map, coords, { color: color, weight: 3, opacity: 0.95 });
-        } else if (geomType === 'MultiLineString') {
-          for (var ml = 0; ml < coords.length; ml++) {
-            var mlRef = addPolyline(state.map, coords[ml], { color: color, weight: 3, opacity: 0.95 });
-            entry.roadLayers.push(mlRef);
-          }
-          continue;
+    if (!entry.roadLayerIds || !entry.roadSourceId) {
+      var sourceId = 'roads-' + String(importedRoadLayerCounter++) + '-src';
+      var lineLayerId = sourceId + '-ln';
+      var pointLayerId = sourceId + '-pt';
+      var polygonFillLayerId = sourceId + '-pgf';
+      var polygonStrokeLayerId = sourceId + '-pgl';
+
+      state.map.addSource(sourceId, {
+        type: 'geojson',
+        data: entry.geojsonData
+      });
+
+      state.map.addLayer({
+        id: polygonFillLayerId,
+        type: 'fill',
+        source: sourceId,
+        filter: ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
+        paint: {
+          'fill-color': color,
+          'fill-opacity': 0.14
         }
-        if (ref) entry.roadLayers.push(ref);
-      }
-    } else {
-      // Update color on existing layers
-      for (var j = 0; j < entry.roadLayers.length; j++) {
-        var ref2 = entry.roadLayers[j];
-        if (!ref2 || !ref2.layerId) continue;
-        try {
-          var layer = state.map.getLayer(ref2.layerId);
-          if (!layer) continue;
-          var type = layer.type;
-          if (type === 'line') {
-            state.map.setPaintProperty(ref2.layerId, 'line-color', color);
-          } else if (type === 'circle') {
-            state.map.setPaintProperty(ref2.layerId, 'circle-color', color);
-            state.map.setPaintProperty(ref2.layerId, 'circle-stroke-color', color);
-          } else if (type === 'fill' && ref2.fillLayerId) {
-            state.map.setPaintProperty(ref2.fillLayerId, 'fill-color', color);
-          }
-        } catch (e) { /* ignore */ }
-      }
+      });
+
+      state.map.addLayer({
+        id: polygonStrokeLayerId,
+        type: 'line',
+        source: sourceId,
+        filter: ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false],
+        paint: {
+          'line-color': color,
+          'line-width': 2,
+          'line-opacity': 0.95
+        },
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round'
+        }
+      });
+
+      state.map.addLayer({
+        id: lineLayerId,
+        type: 'line',
+        source: sourceId,
+        filter: ['match', ['geometry-type'], ['LineString', 'MultiLineString'], true, false],
+        paint: {
+          'line-color': color,
+          'line-width': 3,
+          'line-opacity': 0.95
+        },
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round'
+        }
+      });
+
+      state.map.addLayer({
+        id: pointLayerId,
+        type: 'circle',
+        source: sourceId,
+        filter: ['==', ['geometry-type'], 'Point'],
+        paint: {
+          'circle-radius': 4,
+          'circle-color': color,
+          'circle-opacity': 0.95,
+          'circle-stroke-color': color,
+          'circle-stroke-width': 1,
+          'circle-stroke-opacity': 0.95
+        }
+      });
+
+      entry.roadSourceId = sourceId;
+      entry.roadLayerIds = {
+        point: pointLayerId,
+        line: lineLayerId,
+        polygonFill: polygonFillLayerId,
+        polygonStroke: polygonStrokeLayerId
+      };
     }
+
+    updateRoadLayerColor(entry);
   }
 
   function computeRoadLayerBounds(entry) {
@@ -596,13 +703,16 @@ export function initApp() {
   function setRoadLayerVisible(entry, visible) {
     if (!entry || entry.removed || !state.map) return;
 
-    if (!visible) {
-      removeRoadLayer(entry);
-      return;
+    if (visible) {
+      ensureRoadLayerOnMap(entry);
+      setRoadLayerIdsVisibility(entry, true);
+    } else if (entry.roadLayerIds) {
+      setRoadLayerIdsVisibility(entry, false);
     }
 
-    ensureRoadLayerOnMap(entry);
-    if (!entry.roadLayers || entry.roadLayers.length < 1) return;
+    if (!visible || !entry.roadLayerIds) {
+      return;
+    }
 
     if (!entry.hasFittedToBounds) {
       var bounds = computeRoadLayerBounds(entry);
@@ -614,14 +724,29 @@ export function initApp() {
   }
 
   function updateRoadLayersVisibilityByTags() {
-    if (!Array.isArray(importedRoadEntries) || importedRoadEntries.length < 1) return;
+    if (!Array.isArray(importedRoadEntries) || importedRoadEntries.length < 1) {
+      roadLayersVisible = false;
+      roadVisibilityDirty = false;
+      return;
+    }
+
     var visible = state.viewMode === 'map' && (state.stage === 3 || state.stage === 4);
+    if (visible && (!state.map || !state.mapReady)) {
+      roadVisibilityDirty = true;
+      return;
+    }
+
+    if (!roadVisibilityDirty && roadLayersVisible === visible) {
+      return;
+    }
 
     for (var ei = 0; ei < importedRoadEntries.length; ei++) {
       var entry = importedRoadEntries[ei];
       if (!entry || entry.removed) continue;
       setRoadLayerVisible(entry, visible);
     }
+    roadLayersVisible = visible;
+    roadVisibilityDirty = false;
   }
 
   function readGeojsonFileText(file) {
@@ -831,6 +956,38 @@ export function initApp() {
     });
   }
 
+  function loadMapMonochromeStyleSetting() {
+    try {
+      return localStorage.getItem(MAP_MONO_STYLE_STORAGE_KEY) === '1';
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function saveMapMonochromeStyleSetting(enabled) {
+    try {
+      localStorage.setItem(MAP_MONO_STYLE_STORAGE_KEY, enabled ? '1' : '0');
+    } catch (err) { /* ignore */ }
+  }
+
+  function applyMapBaseModeFromToggle() {
+    setMapBaseMode(mapMonochromeStyleEnabled ? 'mono' : 'default');
+  }
+
+  function initMapStyleToggle() {
+    mapMonochromeStyleEnabled = loadMapMonochromeStyleSetting();
+    applyMapBaseModeFromToggle();
+
+    var toggleEl = document.getElementById('mapMonochromeToggle');
+    if (!toggleEl) return;
+    toggleEl.checked = mapMonochromeStyleEnabled;
+    toggleEl.addEventListener('change', function() {
+      mapMonochromeStyleEnabled = !!toggleEl.checked;
+      saveMapMonochromeStyleSetting(mapMonochromeStyleEnabled);
+      applyMapBaseModeFromToggle();
+    });
+  }
+
   // Roads GeoJSON file import
   dom.geojsonImportBtnEl.addEventListener('click', function(e) {
     e.preventDefault();
@@ -873,17 +1030,18 @@ export function initApp() {
       fileName: file && file.name ? String(file.name) : 'roads.geojson',
       rowEl: row,
       colorInput: colorInput,
-      roadLayers: null,
+      roadSourceId: '',
+      roadLayerIds: null,
       geojsonData: null,
       hasFittedToBounds: false,
       removed: false
     };
     importedRoadEntries.push(roadEntry);
+    markRoadVisibilityDirty();
 
     colorInput.addEventListener('input', function() {
       row.dataset.roadColor = colorInput.value;
-      ensureRoadLayerOnMap(roadEntry);
-      updateRoadLayersVisibilityByTags();
+      updateRoadLayerColor(roadEntry);
     });
 
     var removeBtn = document.createElement('button');
@@ -897,6 +1055,7 @@ export function initApp() {
       removeRoadLayer(roadEntry);
       var roadIdx = importedRoadEntries.indexOf(roadEntry);
       if (roadIdx !== -1) importedRoadEntries.splice(roadIdx, 1);
+      markRoadVisibilityDirty();
       row.parentNode.removeChild(row);
     });
 
@@ -908,6 +1067,7 @@ export function initApp() {
     readGeojsonFileText(file).then(function(text) {
       if (rowRemoved || roadEntry.removed) return;
       roadEntry.geojsonData = parseRoadGeojsonText(text);
+      markRoadVisibilityDirty();
       updateRoadLayersVisibilityByTags();
       setError('');
     }).catch(function(err) {
@@ -2104,6 +2264,8 @@ export function initApp() {
       removeRoadLayer(entry);
     }
     importedRoadEntries = [];
+    roadLayersVisible = false;
+    roadVisibilityDirty = false;
     dom.geojsonFilesListEl.textContent = '';
   }
 

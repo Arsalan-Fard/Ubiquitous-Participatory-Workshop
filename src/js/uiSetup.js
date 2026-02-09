@@ -478,6 +478,31 @@ export function initUiSetup(options) {
   blackoutToggleLabel.appendChild(blackoutToggleText);
   blackoutToggleLabel.appendChild(blackoutSwitch);
 
+  var mapStyleToggleLabel = document.createElement('label');
+  mapStyleToggleLabel.className = 'ui-setup-mapstyle-toggle';
+  mapStyleToggleLabel.setAttribute('for', 'mapMonochromeToggle');
+
+  var mapStyleToggleText = document.createElement('span');
+  mapStyleToggleText.className = 'ui-setup-blackout-toggle__text';
+  mapStyleToggleText.textContent = 'B/W Map';
+
+  var mapStyleSwitch = document.createElement('span');
+  mapStyleSwitch.className = 'switch';
+
+  var mapStyleToggleInput = document.createElement('input');
+  mapStyleToggleInput.id = 'mapMonochromeToggle';
+  mapStyleToggleInput.type = 'checkbox';
+  mapStyleToggleInput.setAttribute('aria-label', 'Use monochrome map style');
+
+  var mapStyleToggleSlider = document.createElement('span');
+  mapStyleToggleSlider.className = 'slider';
+  mapStyleToggleSlider.setAttribute('aria-hidden', 'true');
+
+  mapStyleSwitch.appendChild(mapStyleToggleInput);
+  mapStyleSwitch.appendChild(mapStyleToggleSlider);
+  mapStyleToggleLabel.appendChild(mapStyleToggleText);
+  mapStyleToggleLabel.appendChild(mapStyleSwitch);
+
   var nextBtn = document.createElement('button');
   nextBtn.className = 'ui-setup-action-btn ui-setup-action-btn--primary';
   nextBtn.type = 'button';
@@ -492,6 +517,7 @@ export function initUiSetup(options) {
   importFileEl.style.height = '1px';
   importFileEl.setAttribute('aria-hidden', 'true');
 
+  footer.appendChild(mapStyleToggleLabel);
   footer.appendChild(blackoutToggleLabel);
   footer.appendChild(exportBtn);
   footer.appendChild(importBtn);

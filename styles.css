@@ -1551,7 +1551,8 @@ body.vga-mode-active #leafletMap {
     height: 40px;
 }
 
-#stage3ActionBar .ui-setup-blackout-toggle {
+#stage3ActionBar .ui-setup-blackout-toggle,
+#stage3ActionBar .ui-setup-mapstyle-toggle {
     flex: 0 0 auto;
     height: 40px;
 }
@@ -1675,7 +1676,8 @@ body.vga-mode-active #leafletMap {
         flex: 1 1 0;
         min-width: 0;
     }
-    #stage3ActionBar .ui-setup-blackout-toggle {
+    #stage3ActionBar .ui-setup-blackout-toggle,
+    #stage3ActionBar .ui-setup-mapstyle-toggle {
         flex: 1 1 0;
         min-width: 0;
         justify-content: space-between;
@@ -1731,7 +1733,8 @@ body.vga-mode-active #leafletMap {
     gap: 10px;
 }
 
-.ui-setup-blackout-toggle {
+.ui-setup-blackout-toggle,
+.ui-setup-mapstyle-toggle {
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -1750,17 +1753,20 @@ body.vga-mode-active #leafletMap {
     letter-spacing: 0.2px;
 }
 
-.ui-setup-blackout-toggle .switch {
+.ui-setup-blackout-toggle .switch,
+.ui-setup-mapstyle-toggle .switch {
     width: 46px;
     height: 26px;
 }
 
-.ui-setup-blackout-toggle .slider:before {
+.ui-setup-blackout-toggle .slider:before,
+.ui-setup-mapstyle-toggle .slider:before {
     width: 20px;
     height: 20px;
 }
 
-.ui-setup-blackout-toggle .switch input:checked + .slider:before {
+.ui-setup-blackout-toggle .switch input:checked + .slider:before,
+.ui-setup-mapstyle-toggle .switch input:checked + .slider:before {
     transform: translate(19px, -50%);
 }
 
