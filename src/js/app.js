@@ -83,9 +83,16 @@ export function initApp() {
 
   var videoContainer = document.getElementById('videoContainer1');
 
-  // Render AprilTag black masks above all map overlays/UI while keeping map warp alignment.
+  // Render AprilTag black masks above map overlays/UI while keeping map warp alignment.
   if (dom.mapTagMasksEl && dom.mapViewEl && dom.mapTagMasksEl.parentNode !== dom.mapViewEl) {
     dom.mapViewEl.appendChild(dom.mapTagMasksEl);
+  }
+  // Debug dots must stay visible above black masks.
+  if (dom.mapApriltagDotsEl && dom.mapViewEl && dom.mapApriltagDotsEl.parentNode !== dom.mapViewEl) {
+    dom.mapViewEl.appendChild(dom.mapApriltagDotsEl);
+  }
+  if (dom.mapFingerDotsEl && dom.mapViewEl && dom.mapFingerDotsEl.parentNode !== dom.mapViewEl) {
+    dom.mapViewEl.appendChild(dom.mapFingerDotsEl);
   }
 
   initUiSetup({
@@ -1848,7 +1855,9 @@ export function initApp() {
       version: 1,
       trackingOffset: {
         x: state.apriltagTrackingOffsetX,
-        y: state.apriltagTrackingOffsetY
+        y: state.apriltagTrackingOffsetY,
+        triggerX: state.apriltagTriggerTrackingOffsetX,
+        triggerY: state.apriltagTriggerTrackingOffsetY
       },
       mapViews: mapViewEntries,
       activeMapViewId: state.currentMapSessionId || null,
@@ -1888,16 +1897,28 @@ export function initApp() {
     if (mapSetup.trackingOffset && typeof mapSetup.trackingOffset === 'object') {
       var importedX = clamp(parseFloat(mapSetup.trackingOffset.x), -200, 200);
       var importedY = clamp(parseFloat(mapSetup.trackingOffset.y), -200, 200);
+      var importedTriggerX = clamp(parseFloat(mapSetup.trackingOffset.triggerX), -200, 200);
+      var importedTriggerY = clamp(parseFloat(mapSetup.trackingOffset.triggerY), -200, 200);
       if (!isFinite(importedX)) importedX = 0;
       if (!isFinite(importedY)) importedY = 0;
+      if (!isFinite(importedTriggerX)) importedTriggerX = 0;
+      if (!isFinite(importedTriggerY)) importedTriggerY = 0;
       state.apriltagTrackingOffsetX = importedX;
       state.apriltagTrackingOffsetY = importedY;
+      state.apriltagTriggerTrackingOffsetX = importedTriggerX;
+      state.apriltagTriggerTrackingOffsetY = importedTriggerY;
       dom.trackingOffsetXSliderEl.value = String(Math.round(importedX));
       dom.trackingOffsetXValueEl.textContent = String(Math.round(importedX));
       dom.trackingOffsetYSliderEl.value = String(Math.round(importedY));
       dom.trackingOffsetYValueEl.textContent = String(Math.round(importedY));
+      dom.trackingTriggerOffsetXSliderEl.value = String(Math.round(importedTriggerX));
+      dom.trackingTriggerOffsetXValueEl.textContent = String(Math.round(importedTriggerX));
+      dom.trackingTriggerOffsetYSliderEl.value = String(Math.round(importedTriggerY));
+      dom.trackingTriggerOffsetYValueEl.textContent = String(Math.round(importedTriggerY));
       saveNumberSetting('apriltagTrackingOffsetX', state.apriltagTrackingOffsetX);
       saveNumberSetting('apriltagTrackingOffsetY', state.apriltagTrackingOffsetY);
+      saveNumberSetting('apriltagTriggerTrackingOffsetX', state.apriltagTriggerTrackingOffsetX);
+      saveNumberSetting('apriltagTriggerTrackingOffsetY', state.apriltagTriggerTrackingOffsetY);
     }
 
     clearImportedRoadEntries();
@@ -2725,6 +2746,34 @@ export function initApp() {
     // Layer controls now use draggable sticker buttons in the panel.
   }
 
+  function applyTrackedTagOffset(det, tagId, x, y, mapWidth, mapHeight, offsetMode) {
+    if (!offsetMode || !isFinite(tagId) || tagId < 10 || tagId > 30) {
+      return { x: x, y: y };
+    }
+
+    var ox = offsetMode === 'trigger' ? state.apriltagTriggerTrackingOffsetX : state.apriltagTrackingOffsetX;
+    var oy = offsetMode === 'trigger' ? state.apriltagTriggerTrackingOffsetY : state.apriltagTrackingOffsetY;
+    if (!ox && !oy) {
+      return { x: x, y: y };
+    }
+
+    if (det && det.corners && det.corners.length >= 4) {
+      var c0 = applyHomography(state.surfaceHomography, det.corners[0].x, det.corners[0].y);
+      var c1 = applyHomography(state.surfaceHomography, det.corners[1].x, det.corners[1].y);
+      if (c0 && c1) {
+        var angle = Math.atan2((c1.y - c0.y) * mapHeight, (c1.x - c0.x) * mapWidth);
+        var cosA = Math.cos(angle);
+        var sinA = Math.sin(angle);
+        return {
+          x: x + ox * cosA - oy * sinA,
+          y: y + ox * sinA + oy * cosA
+        };
+      }
+    }
+
+    return { x: x + ox, y: y + oy };
+  }
+
   // Tracking offset sliders (for participant AprilTags 10-30)
   dom.trackingOffsetXSliderEl.value = String(Math.round(state.apriltagTrackingOffsetX));
   dom.trackingOffsetXValueEl.textContent = String(Math.round(state.apriltagTrackingOffsetX));
@@ -2744,6 +2793,26 @@ export function initApp() {
     state.apriltagTrackingOffsetY = clamp(v, -200, 200);
     dom.trackingOffsetYValueEl.textContent = String(Math.round(state.apriltagTrackingOffsetY));
     saveNumberSetting('apriltagTrackingOffsetY', state.apriltagTrackingOffsetY);
+  });
+
+  dom.trackingTriggerOffsetXSliderEl.value = String(Math.round(state.apriltagTriggerTrackingOffsetX));
+  dom.trackingTriggerOffsetXValueEl.textContent = String(Math.round(state.apriltagTriggerTrackingOffsetX));
+  dom.trackingTriggerOffsetXSliderEl.addEventListener('input', function() {
+    var v = parseFloat(dom.trackingTriggerOffsetXSliderEl.value);
+    if (!isFinite(v)) return;
+    state.apriltagTriggerTrackingOffsetX = clamp(v, -200, 200);
+    dom.trackingTriggerOffsetXValueEl.textContent = String(Math.round(state.apriltagTriggerTrackingOffsetX));
+    saveNumberSetting('apriltagTriggerTrackingOffsetX', state.apriltagTriggerTrackingOffsetX);
+  });
+
+  dom.trackingTriggerOffsetYSliderEl.value = String(Math.round(state.apriltagTriggerTrackingOffsetY));
+  dom.trackingTriggerOffsetYValueEl.textContent = String(Math.round(state.apriltagTriggerTrackingOffsetY));
+  dom.trackingTriggerOffsetYSliderEl.addEventListener('input', function() {
+    var v = parseFloat(dom.trackingTriggerOffsetYSliderEl.value);
+    if (!isFinite(v)) return;
+    state.apriltagTriggerTrackingOffsetY = clamp(v, -200, 200);
+    dom.trackingTriggerOffsetYValueEl.textContent = String(Math.round(state.apriltagTriggerTrackingOffsetY));
+    saveNumberSetting('apriltagTriggerTrackingOffsetY', state.apriltagTriggerTrackingOffsetY);
   });
 
   // ============== Helper Functions ==============
@@ -3412,7 +3481,7 @@ export function initApp() {
       var canProjectToMap = !!state.surfaceHomography && mapW > 0 && mapH > 0;
       var maxExtrapolation = 1.5;
 
-      function projectTagDetectionToMap(detByTag, tagId, applyTrackingOffset) {
+      function projectTagDetectionToMap(detByTag, tagId, offsetMode) {
         if (!detByTag || !detByTag.center || !canProjectToMap) return null;
         var uv = applyHomography(state.surfaceHomography, detByTag.center.x, detByTag.center.y);
         if (!uv || uv.x < -maxExtrapolation || uv.x > 1 + maxExtrapolation || uv.y < -maxExtrapolation || uv.y > 1 + maxExtrapolation) {
@@ -3421,29 +3490,7 @@ export function initApp() {
 
         var x = mapRect.left + uv.x * mapW;
         var y = mapRect.top + uv.y * mapH;
-
-        if (applyTrackingOffset && tagId >= 10 && tagId <= 30) {
-          var ox = state.apriltagTrackingOffsetX;
-          var oy = state.apriltagTrackingOffsetY;
-          if (detByTag.corners && detByTag.corners.length >= 4 && (ox !== 0 || oy !== 0)) {
-            var c0 = applyHomography(state.surfaceHomography, detByTag.corners[0].x, detByTag.corners[0].y);
-            var c1 = applyHomography(state.surfaceHomography, detByTag.corners[1].x, detByTag.corners[1].y);
-            if (c0 && c1) {
-              var angle = Math.atan2((c1.y - c0.y) * mapH, (c1.x - c0.x) * mapW);
-              var cosA = Math.cos(angle);
-              var sinA = Math.sin(angle);
-              x += ox * cosA - oy * sinA;
-              y += ox * sinA + oy * cosA;
-            } else {
-              x += ox;
-              y += oy;
-            }
-          } else {
-            x += ox;
-            y += oy;
-          }
-        }
-        return { x: x, y: y };
+        return applyTrackedTagOffset(detByTag, tagId, x, y, mapW, mapH, offsetMode);
       }
 
       if (Array.isArray(state.stage3ParticipantTagIds)) {
@@ -3462,7 +3509,7 @@ export function initApp() {
                 isTouch: touchInfo ? !!touchInfo.isTouch : null
               };
 
-              var projectedPrimary = projectTagDetectionToMap(primaryDet, primaryTagId, true);
+              var projectedPrimary = projectTagDetectionToMap(primaryDet, primaryTagId, 'primary');
               if (projectedPrimary) {
                 point.x = projectedPrimary.x;
                 point.y = projectedPrimary.y;
@@ -3473,7 +3520,7 @@ export function initApp() {
 
           if (isFinite(primaryTagId) && isFinite(triggerTagId)) {
             var triggerDet = detectionById[triggerTagId];
-            var projectedTrigger = projectTagDetectionToMap(triggerDet, triggerTagId, false);
+            var projectedTrigger = projectTagDetectionToMap(triggerDet, triggerTagId, 'trigger');
             if (projectedTrigger) {
               apriltagTriggerPoints.push({
                 handId: String(primaryTagId),
@@ -3563,6 +3610,11 @@ export function initApp() {
 
   function updateMapFingerDots(cameraPoints) {
     if (!state.surfaceHomography) { setMapFingerDotsVisible(false); return; }
+    if (dom.mapWarpEl && dom.mapFingerDotsEl) {
+      var warpTransform = window.getComputedStyle(dom.mapWarpEl).transform;
+      dom.mapFingerDotsEl.style.transform = (warpTransform && warpTransform !== 'none') ? warpTransform : 'none';
+      dom.mapFingerDotsEl.style.transformOrigin = '0 0';
+    }
 
     var w = dom.mapWarpEl.offsetWidth;
     var h = dom.mapWarpEl.offsetHeight;
@@ -3616,13 +3668,33 @@ export function initApp() {
   function updateMapApriltagDots(detections) {
     if (!dom.mapApriltagDotsEl) { return; }
     if (!state.surfaceHomography) { setMapApriltagDotsVisible(false); return; }
-    if (!Array.isArray(state.stage3ParticipantTagIds) || state.stage3ParticipantTagIds.length < 1) { setMapApriltagDotsVisible(false); return; }
+    if (dom.mapWarpEl) {
+      var warpTransform = window.getComputedStyle(dom.mapWarpEl).transform;
+      dom.mapApriltagDotsEl.style.transform = (warpTransform && warpTransform !== 'none') ? warpTransform : 'none';
+      dom.mapApriltagDotsEl.style.transformOrigin = '0 0';
+    }
 
     var w = dom.mapWarpEl.offsetWidth;
     var h = dom.mapWarpEl.offsetHeight;
     if (!w || !h) { setMapApriltagDotsVisible(false); return; }
 
-    var required = state.stage3ParticipantTagIds.length;
+    var primaryTagIds = Array.isArray(state.stage3ParticipantTagIds) ? state.stage3ParticipantTagIds : [];
+    var triggerTagIds = Array.isArray(state.stage3ParticipantTriggerTagIds) ? state.stage3ParticipantTriggerTagIds : [];
+    var dotSpecs = [];
+    var pi;
+    for (pi = 0; pi < primaryTagIds.length; pi++) {
+      var primaryTagId = parseInt(primaryTagIds[pi], 10);
+      if (!isFinite(primaryTagId)) continue;
+      dotSpecs.push({ tagId: primaryTagId, role: 'primary' });
+    }
+    for (pi = 0; pi < triggerTagIds.length; pi++) {
+      var triggerTagId = parseInt(triggerTagIds[pi], 10);
+      if (!isFinite(triggerTagId)) continue;
+      dotSpecs.push({ tagId: triggerTagId, role: 'trigger' });
+    }
+    if (dotSpecs.length < 1) { setMapApriltagDotsVisible(false); return; }
+
+    var required = dotSpecs.length;
     while (dom.mapApriltagDotsEl.children.length < required) {
       var dotEl = document.createElement('div');
       dotEl.className = 'map-finger-dot';
@@ -3648,9 +3720,13 @@ export function initApp() {
     var maxExtrapolation = 1.5;
 
     for (var j = 0; j < required; j++) {
-      var tagId = parseInt(state.stage3ParticipantTagIds[j], 10);
+      var spec = dotSpecs[j];
+      var tagId = spec.tagId;
+      var role = spec.role;
       var dot = dom.mapApriltagDotsEl.children[j];
       var det = isFinite(tagId) ? detById[tagId] : null;
+
+      dot.className = role === 'trigger' ? 'map-finger-dot map-finger-dot--trigger' : 'map-finger-dot map-finger-dot--primary';
 
       if (!det || !det.center) {
         dot.classList.add('hidden');
@@ -3665,33 +3741,13 @@ export function initApp() {
 
       var x = uv.x * w;
       var y = uv.y * h;
-
-      // Apply tracking offset for participant tags (10-30) rotated by tag angle
-      if (tagId >= 10 && tagId <= 30) {
-        var ox = state.apriltagTrackingOffsetX;
-        var oy = state.apriltagTrackingOffsetY;
-        // Compute tag rotation angle in screen space from two adjacent corners
-        if (det.corners && det.corners.length >= 4 && (ox !== 0 || oy !== 0)) {
-          var c0 = applyHomography(state.surfaceHomography, det.corners[0].x, det.corners[0].y);
-          var c1 = applyHomography(state.surfaceHomography, det.corners[1].x, det.corners[1].y);
-          if (c0 && c1) {
-            var angle = Math.atan2((c1.y - c0.y) * h, (c1.x - c0.x) * w);
-            var cosA = Math.cos(angle);
-            var sinA = Math.sin(angle);
-            x += ox * cosA - oy * sinA;
-            y += ox * sinA + oy * cosA;
-          } else {
-            x += ox;
-            y += oy;
-          }
-        } else {
-          x += ox;
-          y += oy;
-        }
-      }
+      var projected = applyTrackedTagOffset(det, tagId, x, y, w, h, role === 'trigger' ? 'trigger' : 'primary');
+      x = projected.x;
+      y = projected.y;
       dot.style.transform = 'translate(' + (x - 7) + 'px, ' + (y - 7) + 'px)';
       dot.classList.remove('hidden');
       dot.dataset.tagId = String(tagId);
+      dot.dataset.tagRole = role;
       anyVisible = true;
     }
 

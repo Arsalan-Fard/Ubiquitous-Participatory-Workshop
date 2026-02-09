@@ -89,9 +89,11 @@ export var state = {
   stage3ParticipantTriggerTagIds: [],
   stage3SecondaryVisibleByPrimaryTag: {},
 
-  // AprilTag tracking offset (for tags 11-20)
+  // AprilTag tracking offsets (for participant tags 10-30)
   apriltagTrackingOffsetX: loadNumberSetting('apriltagTrackingOffsetX', 0, -200, 200),
   apriltagTrackingOffsetY: loadNumberSetting('apriltagTrackingOffsetY', 0, -200, 200),
+  apriltagTriggerTrackingOffsetX: loadNumberSetting('apriltagTriggerTrackingOffsetX', 0, -200, 200),
+  apriltagTriggerTrackingOffsetY: loadNumberSetting('apriltagTriggerTrackingOffsetY', 0, -200, 200),
 
   // AprilTag detections (latest frame)
   lastApriltagDetections: null,
