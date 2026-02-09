@@ -1,13 +1,14 @@
 import argparse
 import atexit
 import json
+import os
 from pathlib import Path
 import re
 import threading
 import time
 
 import cv2
-from flask import Flask, Response, abort, jsonify, request, send_from_directory
+from flask import Flask, Response, abort, jsonify, request, send_from_directory, stream_with_context
 
 try:
   from pupil_apriltags import Detector
@@ -42,6 +43,7 @@ latest_frame_height = 0
 
 latest_apriltags = []
 latest_apriltag_updated_at = 0.0
+latest_apriltag_seq = 0
 apriltag_error = None
 stream_clients = 0
 
@@ -163,7 +165,7 @@ def camera_loop(jpeg_quality: int) -> None:
 
 
 def apriltag_loop(max_fps: float) -> None:
-  global latest_apriltags, latest_apriltag_updated_at, apriltag_error
+  global latest_apriltags, latest_apriltag_updated_at, latest_apriltag_seq, apriltag_error
 
   if Detector is None or apriltag_detector is None:
     with apriltag_lock:
@@ -200,10 +202,14 @@ def apriltag_loop(max_fps: float) -> None:
       with apriltag_lock:
         latest_apriltags = mapped
         latest_apriltag_updated_at = time.time()
+        latest_apriltag_seq += 1
         apriltag_error = None
     except Exception as exc:
       with apriltag_lock:
-        apriltag_error = str(exc)
+        message = str(exc)
+        if apriltag_error != message:
+          latest_apriltag_seq += 1
+        apriltag_error = message
 
     if interval > 0:
       time.sleep(interval)
@@ -286,9 +292,46 @@ def video_feed():
 
 @app.route("/api/apriltags")
 def api_apriltags():
+  return jsonify(build_apriltag_payload())
+
+
+@app.route("/api/apriltags/stream")
+def api_apriltags_stream():
+  def event_stream():
+    last_sent_seq = -1
+    last_keepalive_at = time.time()
+    yield "retry: 1000\n\n"
+
+    while not shutdown_event.is_set():
+      payload = build_apriltag_payload()
+      seq = int(payload.get("seq", 0))
+
+      if seq != last_sent_seq:
+        last_sent_seq = seq
+        yield "data: " + json.dumps(payload, separators=(",", ":")) + "\n\n"
+        last_keepalive_at = time.time()
+      else:
+        now = time.time()
+        if (now - last_keepalive_at) >= 15.0:
+          yield ": keepalive\n\n"
+          last_keepalive_at = now
+        time.sleep(0.01)
+
+  return Response(
+    stream_with_context(event_stream()),
+    mimetype="text/event-stream",
+    headers={
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      "X-Accel-Buffering": "no",
+    },
+  )
+
+
+def build_apriltag_payload():
   with apriltag_lock:
     detections = list(latest_apriltags)
     updated_at = float(latest_apriltag_updated_at or 0.0)
+    seq = int(latest_apriltag_seq or 0)
     error = apriltag_error
 
   with frame_lock:
@@ -303,6 +346,7 @@ def api_apriltags():
     "ok": error is None,
     "error": error,
     "detections": detections,
+    "seq": seq,
     "frame": {
       "width": width,
       "height": height,
@@ -313,7 +357,7 @@ def api_apriltags():
     "source": str(camera_source),
     "streamClients": active_stream_clients,
   }
-  return jsonify(payload)
+  return payload
 
 
 @app.route("/api/workshop_session", methods=["POST"])
@@ -523,17 +567,22 @@ def static_proxy(path: str):
 
 
 if __name__ == "__main__":
+  detected_cores = os.cpu_count() or 4
+  default_apriltag_threads = max(1, int(round(detected_cores / 2.0)))
+
   parser = argparse.ArgumentParser(description="Flask camera stream server with backend AprilTag detection")
   parser.add_argument("--source", default="0", help="Camera index or stream URL")
   parser.add_argument("--host", default="0.0.0.0", help="Host to bind")
   parser.add_argument("--port", type=int, default=5000, help="Port to bind")
   parser.add_argument("--jpeg-quality", type=int, default=100, help="MJPEG quality (1-100)")
-  parser.add_argument("--apriltag-fps", type=float, default=25.0, help="Backend AprilTag detection max FPS")
+  parser.add_argument("--apriltag-fps", type=float, default=45.0, help="Backend AprilTag detection max FPS")
   parser.add_argument("--apriltag-family", default="tag36h11", help="AprilTag family")
-  parser.add_argument("--apriltag-threads", type=int, default=4, help="AprilTag detector threads")
+  parser.add_argument("--apriltag-threads", type=int, default=default_apriltag_threads, help="AprilTag detector threads")
   parser.add_argument("--apriltag-quad-decimate", type=float, default=1.0, help="AprilTag quad decimate")
   parser.add_argument("--apriltag-quad-sigma", type=float, default=0.0, help="AprilTag quad sigma")
-  parser.add_argument("--apriltag-refine-edges", action="store_true", help="Enable AprilTag edge refinement")
+  parser.add_argument("--apriltag-refine-edges", dest="apriltag_refine_edges", action="store_true", help="Enable AprilTag edge refinement")
+  parser.add_argument("--no-apriltag-refine-edges", dest="apriltag_refine_edges", action="store_false", help="Disable AprilTag edge refinement")
+  parser.set_defaults(apriltag_refine_edges=True)
   args = parser.parse_args()
 
   source = parse_source(args.source)

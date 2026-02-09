@@ -57,12 +57,15 @@ import {
 
 var BACKEND_CAMERA_FEED_URL = '/video_feed';
 var BACKEND_APRILTAG_API_URL = '/api/apriltags';
+var BACKEND_APRILTAG_STREAM_URL = '/api/apriltags/stream';
 var BACKEND_WORKSHOP_SESSION_API_URL = '/api/workshop_session';
 var BACKEND_WORKSHOPS_API_URL = '/api/workshops';
 var BACKEND_APRILTAG_POLL_CAMERA_MS = 60;
 var BACKEND_APRILTAG_POLL_MAP_MS = 40;
 var BACKEND_APRILTAG_POLL_BACKOFF_BASE_MS = 250;
 var BACKEND_APRILTAG_POLL_BACKOFF_MAX_MS = 5000;
+var BACKEND_APRILTAG_STREAM_RECONNECT_BASE_MS = 500;
+var BACKEND_APRILTAG_STREAM_RECONNECT_MAX_MS = 5000;
 var MAP_TAG_MASK_HOLD_MS = 1000;
 var apriltagPollInFlight = false;
 var apriltagLastPollMs = 0;
@@ -70,6 +73,12 @@ var apriltagPollBackoffMs = 0;
 var apriltagPollBlockedUntilMs = 0;
 var apriltagBackendErrorNotified = false;
 var apriltagBackoffNotified = false;
+var apriltagEventSource = null;
+var apriltagStreamState = 'idle'; // idle | connecting | open | backoff
+var apriltagStreamReconnectMs = 0;
+var apriltagStreamReconnectTimerId = 0;
+var apriltagStreamBackoffNotified = false;
+var apriltagLastStreamSeq = -1;
 var backendFeedActive = false;
 
 export function initApp() {
@@ -3198,7 +3207,130 @@ export function initApp() {
     }
   }
 
+  function applyApriltagPayload(payload, source) {
+    if (!payload || !Array.isArray(payload.detections)) return;
+
+    if (source === 'stream') {
+      var seq = parseInt(payload.seq, 10);
+      if (isFinite(seq)) {
+        if (seq <= apriltagLastStreamSeq) return;
+        apriltagLastStreamSeq = seq;
+      }
+    }
+
+    state.lastApriltagDetections = payload.detections;
+    apriltagPollBackoffMs = 0;
+    apriltagPollBlockedUntilMs = 0;
+    apriltagBackoffNotified = false;
+
+    if (payload.ok) {
+      apriltagBackendErrorNotified = false;
+    } else if (payload.error && !apriltagBackendErrorNotified) {
+      setError('AprilTag backend error: ' + payload.error);
+      apriltagBackendErrorNotified = true;
+    }
+  }
+
+  function clearApriltagStreamReconnectTimer() {
+    if (!apriltagStreamReconnectTimerId) return;
+    clearTimeout(apriltagStreamReconnectTimerId);
+    apriltagStreamReconnectTimerId = 0;
+  }
+
+  function closeApriltagStream(options) {
+    options = options || {};
+    clearApriltagStreamReconnectTimer();
+
+    if (apriltagEventSource) {
+      apriltagEventSource.onopen = null;
+      apriltagEventSource.onmessage = null;
+      apriltagEventSource.onerror = null;
+      try { apriltagEventSource.close(); } catch (e) { /* ignore */ }
+      apriltagEventSource = null;
+    }
+
+    apriltagStreamState = 'idle';
+    apriltagStreamBackoffNotified = false;
+    apriltagLastStreamSeq = -1;
+    if (!options.keepReconnectBackoff) {
+      apriltagStreamReconnectMs = 0;
+    }
+  }
+
+  function scheduleApriltagStreamReconnect() {
+    if (typeof EventSource === 'undefined') return;
+    if (!state.cameraReady || !state.usingIpCamera) return;
+
+    clearApriltagStreamReconnectTimer();
+    apriltagStreamReconnectMs = apriltagStreamReconnectMs > 0
+      ? Math.min(BACKEND_APRILTAG_STREAM_RECONNECT_MAX_MS, apriltagStreamReconnectMs * 2)
+      : BACKEND_APRILTAG_STREAM_RECONNECT_BASE_MS;
+    apriltagStreamState = 'backoff';
+
+    var delayMs = apriltagStreamReconnectMs;
+    apriltagStreamReconnectTimerId = setTimeout(function() {
+      apriltagStreamReconnectTimerId = 0;
+      connectApriltagStream();
+    }, delayMs);
+  }
+
+  function connectApriltagStream() {
+    if (typeof EventSource === 'undefined') return;
+    if (!state.cameraReady || !state.usingIpCamera) return;
+    if (apriltagEventSource || apriltagStreamState === 'open' || apriltagStreamState === 'connecting') return;
+
+    clearApriltagStreamReconnectTimer();
+    apriltagStreamState = 'connecting';
+    var sep = BACKEND_APRILTAG_STREAM_URL.indexOf('?') === -1 ? '?' : '&';
+    var streamUrl = BACKEND_APRILTAG_STREAM_URL + sep + 't=' + Date.now();
+    var source = null;
+
+    try {
+      source = new EventSource(streamUrl);
+    } catch (err) {
+      console.warn('Failed to open AprilTag stream, falling back to polling:', err);
+      scheduleApriltagStreamReconnect();
+      return;
+    }
+
+    apriltagEventSource = source;
+
+    source.onopen = function() {
+      if (apriltagEventSource !== source) return;
+      apriltagStreamState = 'open';
+      apriltagStreamReconnectMs = 0;
+      apriltagStreamBackoffNotified = false;
+      apriltagBackoffNotified = false;
+      apriltagPollBackoffMs = 0;
+      apriltagPollBlockedUntilMs = 0;
+    };
+
+    source.onmessage = function(event) {
+      if (apriltagEventSource !== source) return;
+      if (!event || typeof event.data !== 'string' || !event.data) return;
+      try {
+        var payload = JSON.parse(event.data);
+        applyApriltagPayload(payload, 'stream');
+      } catch (err) {
+        console.warn('Failed to parse AprilTag stream payload:', err);
+      }
+    };
+
+    source.onerror = function() {
+      if (apriltagEventSource !== source) return;
+      closeApriltagStream({ keepReconnectBackoff: true });
+
+      if (!state.cameraReady || !state.usingIpCamera) return;
+      if (!apriltagStreamBackoffNotified) {
+        console.warn('AprilTag stream disconnected; temporarily falling back to polling.');
+        apriltagStreamBackoffNotified = true;
+      }
+      scheduleApriltagStreamReconnect();
+    };
+  }
+
   function pollBackendApriltagsMaybe() {
+    if (apriltagStreamState === 'open') return;
     if (apriltagPollInFlight) return;
     var now = Date.now();
     if (apriltagPollBlockedUntilMs > now) return;
@@ -3221,17 +3353,7 @@ export function initApp() {
       return resp.json();
     }).then(function(payload) {
       if (!payload) return;
-      apriltagPollBackoffMs = 0;
-      apriltagPollBlockedUntilMs = 0;
-      apriltagBackoffNotified = false;
-      if (!payload || !Array.isArray(payload.detections)) return;
-      state.lastApriltagDetections = payload.detections;
-      if (payload.ok) {
-        apriltagBackendErrorNotified = false;
-      } else if (payload.error && !apriltagBackendErrorNotified) {
-        setError('AprilTag backend error: ' + payload.error);
-        apriltagBackendErrorNotified = true;
-      }
+      applyApriltagPayload(payload, 'poll');
     }).catch(function(err) {
       if (!err || !err.apriltagBackoffApplied) {
         applyApriltagPollBackoff(Date.now(), '', 'network');
@@ -3268,6 +3390,7 @@ export function initApp() {
 
   function stopCamera() {
     pauseProcessing();
+    closeApriltagStream();
     stopIpCameraIfRunning();
     stopCameraStream(state.currentStream);
     state.currentStream = null;
@@ -3309,6 +3432,7 @@ export function initApp() {
     try {
       await waitForImageLoad(state.ipCameraImg, buildBackendFeedUrl(url || BACKEND_CAMERA_FEED_URL));
     } catch (err) {
+      closeApriltagStream();
       backendFeedActive = false;
       state.cameraStarting = false;
       state.cameraReady = false;
@@ -3344,6 +3468,10 @@ export function initApp() {
     apriltagPollBlockedUntilMs = 0;
     apriltagBackendErrorNotified = false;
     apriltagBackoffNotified = false;
+    apriltagStreamReconnectMs = 0;
+    apriltagStreamBackoffNotified = false;
+    apriltagLastStreamSeq = -1;
+    connectApriltagStream();
     startProcessing();
   }
 
@@ -3372,6 +3500,7 @@ export function initApp() {
 
   function stopIpCameraIfRunning() {
     if (!state.usingIpCamera) return;
+    closeApriltagStream();
     state.usingIpCamera = false;
     backendFeedActive = false;
     if (state.ipCameraImg) {
