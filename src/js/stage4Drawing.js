@@ -41,24 +41,12 @@ var OSM_BUILDINGS_ENDPOINTS = [
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.openstreetmap.ru/api/interpreter'
 ];
-var BASE_TILES_SOURCE_ID = 'base-tiles';
-var BASE_TILES_LAYER_ID = 'base-tiles';
+var BASE_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
 var BASE_MAP_MODE_DEFAULT = 'default';
 var BASE_MAP_MODE_MONO = 'mono';
 var baseMapMode = BASE_MAP_MODE_DEFAULT;
-var BASE_TILES_BY_MODE = {
-  default: [
-    'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
-  ],
-  mono: [
-    'https://a.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
-    'https://b.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
-    'https://c.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
-    'https://d.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png'
-  ]
-};
+var baseStyleLayerIds = [];
+var baseLayerSnapshotById = {};
 
 // Multi-hand drawing state: keyed by pointerId
 var handDrawStates = {};
@@ -232,67 +220,169 @@ function resolveBaseMapMode(mode) {
   return mode === BASE_MAP_MODE_MONO ? BASE_MAP_MODE_MONO : BASE_MAP_MODE_DEFAULT;
 }
 
-function getBaseTilesForMode(mode) {
-  var resolved = resolveBaseMapMode(mode);
-  var tiles = BASE_TILES_BY_MODE[resolved];
-  return Array.isArray(tiles) && tiles.length > 0 ? tiles : BASE_TILES_BY_MODE.default;
+function shouldSnapshotPaintValue(value) {
+  return value !== undefined;
 }
 
-function getBaseLayerPaintForMode(mode) {
-  var resolved = resolveBaseMapMode(mode);
-  if (resolved === BASE_MAP_MODE_MONO) {
-    return {
-      'raster-opacity': 1,
-      'raster-brightness-min': 0.05,
-      'raster-brightness-max': 0.75,
-      'raster-contrast': 0.35,
-      'raster-saturation': -0.15
-    };
-  }
-  return { 'raster-opacity': 1 };
-}
-
-function applyBaseTilesToMap() {
+function captureBaseStyleLayerSnapshot() {
   if (!state.map || !state.mapReady) return;
-  var map = state.map;
-  var beforeId = null;
+  if (baseStyleLayerIds.length > 0) return;
+
+  var style = null;
   try {
-    var style = map.getStyle();
-    var layers = style && Array.isArray(style.layers) ? style.layers : [];
-    for (var i = 0; i < layers.length; i++) {
-      var lid = layers[i] && layers[i].id ? layers[i].id : '';
-      if (lid && lid !== BASE_TILES_LAYER_ID) {
-        beforeId = lid;
-        break;
-      }
+    style = state.map.getStyle();
+  } catch (e) {
+    style = null;
+  }
+  var layers = style && Array.isArray(style.layers) ? style.layers : [];
+  if (layers.length < 1) return;
+
+  for (var i = 0; i < layers.length; i++) {
+    var layer = layers[i];
+    if (!layer || !layer.id) continue;
+    var layerId = layer.id;
+    var layerType = String(layer.type || '');
+    var snapshot = {
+      type: layerType,
+      visibility: 'visible',
+      paint: {}
+    };
+
+    try {
+      var visibility = state.map.getLayoutProperty(layerId, 'visibility');
+      if (visibility === 'none') snapshot.visibility = 'none';
+    } catch (err1) { /* ignore */ }
+
+    function capturePaint(prop) {
+      try {
+        var value = state.map.getPaintProperty(layerId, prop);
+        if (shouldSnapshotPaintValue(value)) snapshot.paint[prop] = value;
+      } catch (err2) { /* ignore */ }
+    }
+
+    if (layerType === 'background') {
+      capturePaint('background-color');
+      capturePaint('background-opacity');
+    } else if (layerType === 'line') {
+      capturePaint('line-color');
+      capturePaint('line-opacity');
+    } else if (layerType === 'fill') {
+      capturePaint('fill-color');
+      capturePaint('fill-opacity');
+    } else if (layerType === 'fill-extrusion') {
+      capturePaint('fill-extrusion-color');
+      capturePaint('fill-extrusion-opacity');
+    }
+
+    baseStyleLayerIds.push(layerId);
+    baseLayerSnapshotById[layerId] = snapshot;
+  }
+}
+
+function isRoadLikeLayer(type, id, sourceLayer) {
+  if (type !== 'line') return false;
+  if (sourceLayer.indexOf('road') !== -1 || sourceLayer.indexOf('transportation') !== -1) return true;
+  return id.indexOf('road') !== -1 || id.indexOf('street') !== -1 || id.indexOf('transport') !== -1;
+}
+
+function isBuildingLikeLayer(type, id, sourceLayer) {
+  if (type !== 'fill' && type !== 'fill-extrusion') return false;
+  if (sourceLayer.indexOf('building') !== -1) return true;
+  return id.indexOf('building') !== -1;
+}
+
+function setLayerVisibilityIfPresent(layerId, visibility) {
+  try {
+    if (state.map.getLayer(layerId)) {
+      state.map.setLayoutProperty(layerId, 'visibility', visibility);
     }
   } catch (e) { /* ignore */ }
+}
 
+function setPaintIfPresent(layerId, prop, value) {
   try {
-    if (map.getLayer(BASE_TILES_LAYER_ID)) map.removeLayer(BASE_TILES_LAYER_ID);
-  } catch (e1) { /* ignore */ }
-  try {
-    if (map.getSource(BASE_TILES_SOURCE_ID)) map.removeSource(BASE_TILES_SOURCE_ID);
-  } catch (e2) { /* ignore */ }
+    if (state.map.getLayer(layerId)) {
+      state.map.setPaintProperty(layerId, prop, value);
+    }
+  } catch (e) { /* ignore */ }
+}
 
-  map.addSource(BASE_TILES_SOURCE_ID, {
-    type: 'raster',
-    tiles: getBaseTilesForMode(baseMapMode),
-    tileSize: 256,
-    maxzoom: 19
-  });
+function applyDefaultBaseTheme() {
+  for (var i = 0; i < baseStyleLayerIds.length; i++) {
+    var layerId = baseStyleLayerIds[i];
+    var snapshot = baseLayerSnapshotById[layerId];
+    if (!snapshot) continue;
 
-  map.addLayer({
-    id: BASE_TILES_LAYER_ID,
-    type: 'raster',
-    source: BASE_TILES_SOURCE_ID,
-    paint: getBaseLayerPaintForMode(baseMapMode)
-  }, beforeId || undefined);
+    setLayerVisibilityIfPresent(layerId, snapshot.visibility || 'visible');
+
+    var paint = snapshot.paint || {};
+    for (var prop in paint) {
+      if (!Object.prototype.hasOwnProperty.call(paint, prop)) continue;
+      setPaintIfPresent(layerId, prop, paint[prop]);
+    }
+  }
+}
+
+function applyMonoRoadBuildingTheme() {
+  for (var i = 0; i < baseStyleLayerIds.length; i++) {
+    var layerId = baseStyleLayerIds[i];
+    var layer = null;
+    try {
+      layer = state.map.getLayer(layerId);
+    } catch (e) {
+      layer = null;
+    }
+    if (!layer) continue;
+
+    var type = String(layer.type || '').toLowerCase();
+    var id = String(layerId || '').toLowerCase();
+    var sourceLayer = String((layer['source-layer'] || '')).toLowerCase();
+    var roadLike = isRoadLikeLayer(type, id, sourceLayer);
+    var buildingLike = isBuildingLikeLayer(type, id, sourceLayer);
+    var shouldKeep = roadLike || buildingLike;
+
+    if (type === 'background') {
+      setLayerVisibilityIfPresent(layerId, 'visible');
+      setPaintIfPresent(layerId, 'background-color', '#000000');
+      setPaintIfPresent(layerId, 'background-opacity', 1);
+      continue;
+    }
+
+    if (!shouldKeep) {
+      setLayerVisibilityIfPresent(layerId, 'none');
+      continue;
+    }
+
+    setLayerVisibilityIfPresent(layerId, 'visible');
+    if (roadLike && type === 'line') {
+      setPaintIfPresent(layerId, 'line-color', '#f6f6f6');
+      setPaintIfPresent(layerId, 'line-opacity', 1);
+    }
+    if (buildingLike && type === 'fill') {
+      setPaintIfPresent(layerId, 'fill-color', '#7a7a7a');
+      setPaintIfPresent(layerId, 'fill-opacity', 1);
+    }
+    if (buildingLike && type === 'fill-extrusion') {
+      setPaintIfPresent(layerId, 'fill-extrusion-color', '#7a7a7a');
+      setPaintIfPresent(layerId, 'fill-extrusion-opacity', 1);
+    }
+  }
+}
+
+function applyBaseThemeToMap() {
+  if (!state.map || !state.mapReady) return;
+  captureBaseStyleLayerSnapshot();
+  if (baseStyleLayerIds.length < 1) return;
+  if (baseMapMode === BASE_MAP_MODE_MONO) {
+    applyMonoRoadBuildingTheme();
+  } else {
+    applyDefaultBaseTheme();
+  }
 }
 
 export function setMapBaseMode(mode) {
   baseMapMode = resolveBaseMapMode(mode);
-  applyBaseTilesToMap();
+  applyBaseThemeToMap();
 }
 
 export function getMapBaseMode() {
@@ -1444,7 +1534,7 @@ export function initLeafletIfNeeded() {
 
   state.map = new window.maplibregl.Map({
     container: dom.leafletMapEl,
-    style: { version: 8, sources: {}, layers: [] },
+    style: BASE_STYLE_URL,
     center: [2.2118, 48.7133],
     zoom: 15,
     attributionControl: false,
@@ -1456,8 +1546,8 @@ export function initLeafletIfNeeded() {
   state.map.on('load', function() {
     state.mapReady = true;
 
-    // Base tiles (supports runtime theme switching).
-    applyBaseTilesToMap();
+    // Apply selected base map mode to the loaded vector style.
+    applyBaseThemeToMap();
 
     // Layer groups
     state.buildingsGroup = createLayerGroup();
