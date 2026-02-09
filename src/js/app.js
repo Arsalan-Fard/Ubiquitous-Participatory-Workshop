@@ -152,6 +152,26 @@ export function initApp() {
     if (state.stage4DrawMode) setStage4DrawMode(false);
   });
 
+  // Stage 4 shortcut: press B to return to Stage 3.
+  document.addEventListener('keydown', function(e) {
+    if (resultsModeActive) return;
+    if (state.stage !== 4) return;
+    if (e.repeat) return;
+    var key = String(e.key || '').toLowerCase();
+    if (key !== 'b') return;
+
+    var target = e.target;
+    if (target) {
+      var tag = String(target.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return;
+      if (target.closest && target.closest('.ui-note__form')) return;
+    }
+
+    e.preventDefault();
+    dom.viewToggleEl.checked = true;
+    setStage(3);
+  });
+
   // Track mouse position globally for manual corner placement
   var lastMouseX = 0;
   var lastMouseY = 0;
@@ -377,12 +397,12 @@ export function initApp() {
 
   // Stage 3 layer buttons spawn draggable 60px square stickers.
   var layerStickerColorsByName = {
-    'Isovist': '#2bb8ff',
-    'Shortest-path': '#ff8a3d',
-    'Pan': '#2ec27e',
-    'Zoom': '#9c6dff',
-    'Next': '#4caf50',
-    'Back': '#f6c945'
+    'Isovist': '#7e8794',
+    'Shortest-path': '#7e8794',
+    'Pan': '#7e8794',
+    'Zoom': '#7e8794',
+    'Next': '#7e8794',
+    'Back': '#7e8794'
   };
   var layerNavVoteLatch = { next: false, back: false };
   var roadColorPalette = ['#ff5a5f', '#2bb8ff', '#2ec27e', '#f6c945', '#ff8a3d', '#9c6dff'];
@@ -1193,6 +1213,15 @@ export function initApp() {
     return '#ff3b30';
   }
 
+  function escapeHtmlForPopup(text) {
+    return String(text || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   function normalizeResultsMapViewId(raw) {
     if (raw === null || raw === undefined) return null;
     var text = String(raw).trim();
@@ -1270,6 +1299,19 @@ export function initApp() {
             weight: sourceType === 'drawing' ? 6 : 3,
             opacity: 0.95
           };
+        },
+        onEachFeature: function(feature, layer) {
+          if (!feature || !layer) return;
+          var props = feature.properties && typeof feature.properties === 'object' ? feature.properties : null;
+          if (!props || props.sourceType !== 'annotation') return;
+          var text = String(props.noteText || '').trim();
+          if (!text) return;
+          if (typeof layer.bindPopup !== 'function') return;
+          layer.bindPopup('<div class="results-note-popup">' + escapeHtmlForPopup(text).replace(/\n/g, '<br>') + '</div>', {
+            autoPan: true,
+            maxWidth: 320,
+            closeButton: true
+          });
         }
       }
     );
@@ -2767,7 +2809,7 @@ export function initApp() {
     dom.pageTitleEl.textContent = titles[newStage] || '';
     document.title = titles[newStage] || '';
 
-    if (newStage === 2 || newStage === 3 || newStage === 4) {
+    if (newStage === 2 || newStage === 3) {
       dom.viewToggleContainerEl.classList.remove('hidden');
     } else {
       dom.viewToggleContainerEl.classList.add('hidden');
@@ -2825,11 +2867,15 @@ export function initApp() {
 
   function onViewToggleChanged() {
     if (resultsModeActive) return;
-    if (state.stage !== 2 && state.stage !== 3 && state.stage !== 4) return;
+    if (state.stage !== 2 && state.stage !== 3) return;
     setViewMode(dom.viewToggleEl.checked ? 'map' : 'camera');
   }
 
   function setViewMode(mode) {
+    if (state.stage === 4 && mode !== 'map') {
+      mode = 'map';
+      dom.viewToggleEl.checked = true;
+    }
     if (vgaModeActive && mode !== 'map') {
       setVgaMode(false);
     }
