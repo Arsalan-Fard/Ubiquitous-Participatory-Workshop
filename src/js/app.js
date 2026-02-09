@@ -7,7 +7,7 @@ import { getDom } from './dom.js';
 import { stopCameraStream } from './camera.js';
 import { clearOverlay, drawSurface } from './render.js';
 import { initUiSetup } from './uiSetup.js';
-import { clamp, saveNumberSetting, waitForImageLoad } from './utils.js';
+import { clamp, normalizeTagId, saveNumberSetting, waitForImageLoad } from './utils.js';
 import { state } from './state.js';
 import {
   addPolyline, addPolygon, addCircleMarker, addImageOverlay,
@@ -67,6 +67,10 @@ var BACKEND_APRILTAG_POLL_BACKOFF_MAX_MS = 5000;
 var BACKEND_APRILTAG_STREAM_RECONNECT_BASE_MS = 500;
 var BACKEND_APRILTAG_STREAM_RECONNECT_MAX_MS = 5000;
 var MAP_TAG_MASK_HOLD_MS = 1000;
+var APRILTAG_BLACKOUT_TOOL_SELECTOR = '.ui-dot, .ui-note, .ui-draw, .ui-eraser, .ui-selection, .ui-layer-square';
+var BLACKOUT_PULSE_INTERVAL_MS = 1000;
+var BLACKOUT_PULSE_DURATION_MS = 100;
+var BLACKOUT_PULSE_STORAGE_KEY = 'apriltagBlackoutPulseEnabled';
 var apriltagPollInFlight = false;
 var apriltagLastPollMs = 0;
 var apriltagPollBackoffMs = 0;
@@ -80,6 +84,12 @@ var apriltagStreamReconnectTimerId = 0;
 var apriltagStreamBackoffNotified = false;
 var apriltagLastStreamSeq = -1;
 var backendFeedActive = false;
+var blackoutPulseEnabled = false;
+var blackoutPulseLastAtMs = 0;
+var blackoutPulseUntilMs = 0;
+var blackoutPulseNextAtMs = 0;
+var blackoutPulseActive = false;
+var blackoutOverlayEl = null;
 
 export function initApp() {
   // Initialize DOM and state
@@ -122,6 +132,7 @@ export function initApp() {
     }
   });
   mountVgaButtonToActionBar();
+  initBlackoutPulseToggle();
 
   // Event listeners
   dom.startBtn.addEventListener('click', startCamera);
@@ -668,6 +679,156 @@ export function initApp() {
     if (previousItemEl && previousItemEl.parentNode) {
       previousItemEl.parentNode.removeChild(previousItemEl);
     }
+  }
+
+  function loadBlackoutPulseSetting() {
+    try {
+      return localStorage.getItem(BLACKOUT_PULSE_STORAGE_KEY) === '1';
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function saveBlackoutPulseSetting(enabled) {
+    try {
+      localStorage.setItem(BLACKOUT_PULSE_STORAGE_KEY, enabled ? '1' : '0');
+    } catch (err) { /* ignore */ }
+  }
+
+  function ensureBlackoutOverlay() {
+    if (blackoutOverlayEl && blackoutOverlayEl.isConnected) return blackoutOverlayEl;
+    blackoutOverlayEl = document.createElement('div');
+    blackoutOverlayEl.id = 'blackoutPulseOverlay';
+    blackoutOverlayEl.className = 'blackout-pulse-overlay';
+    blackoutOverlayEl.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(blackoutOverlayEl);
+    return blackoutOverlayEl;
+  }
+
+  function setBlackoutOverlayActive(active) {
+    var overlay = ensureBlackoutOverlay();
+    if (!overlay) return;
+    blackoutPulseActive = !!active;
+    overlay.classList.toggle('blackout-pulse-overlay--active', blackoutPulseActive);
+    overlay.setAttribute('aria-hidden', blackoutPulseActive ? 'false' : 'true');
+  }
+
+  function resetBlackoutPulseState() {
+    blackoutPulseLastAtMs = 0;
+    blackoutPulseUntilMs = 0;
+    blackoutPulseNextAtMs = 0;
+    setBlackoutOverlayActive(false);
+  }
+
+  function updateBlackoutPulse(shouldPulse, nowMs) {
+    var now = isFinite(nowMs) ? nowMs : performance.now();
+    if (!blackoutPulseEnabled || !shouldPulse) {
+      resetBlackoutPulseState();
+      return;
+    }
+
+    if (blackoutPulseActive && now >= blackoutPulseUntilMs) {
+      setBlackoutOverlayActive(false);
+    }
+
+    // Start a 1s countdown when condition becomes true; first blackout occurs at the end of that second.
+    if (blackoutPulseNextAtMs <= 0) {
+      blackoutPulseNextAtMs = now + BLACKOUT_PULSE_INTERVAL_MS;
+      return;
+    }
+
+    if (!blackoutPulseActive && now >= blackoutPulseNextAtMs) {
+      blackoutPulseLastAtMs = now;
+      blackoutPulseUntilMs = now + BLACKOUT_PULSE_DURATION_MS;
+      blackoutPulseNextAtMs = now + BLACKOUT_PULSE_INTERVAL_MS;
+      setBlackoutOverlayActive(true);
+    }
+  }
+
+  function getBlackoutToolType(toolEl) {
+    if (!toolEl || !toolEl.classList) return '';
+    var uiType = toolEl.dataset && toolEl.dataset.uiType ? String(toolEl.dataset.uiType) : '';
+    if (uiType === 'dot' || uiType === 'draw' || uiType === 'note' || uiType === 'eraser' || uiType === 'selection' || uiType === 'layer-square') {
+      return uiType;
+    }
+    if (toolEl.classList.contains('ui-selection')) return 'selection';
+    if (toolEl.classList.contains('ui-eraser')) return 'eraser';
+    if (toolEl.classList.contains('ui-draw')) return 'draw';
+    if (toolEl.classList.contains('ui-note')) return 'note';
+    if (toolEl.classList.contains('ui-layer-square')) return 'layer-square';
+    if (toolEl.classList.contains('ui-dot')) return 'dot';
+    return '';
+  }
+
+  function isBlackoutLayerActionTool(toolEl, toolType) {
+    if (toolType !== 'layer-square' || !toolEl || !toolEl.dataset) return false;
+    var layerName = String(toolEl.dataset.layerName || '').trim().toLowerCase();
+    return layerName === 'next' || layerName === 'back' || layerName === 'pan' || layerName === 'zoom';
+  }
+
+  function findActivatingToolAtPoint(pointer, triggerTagId) {
+    if (!pointer || !isFinite(pointer.x) || !isFinite(pointer.y)) return null;
+    var triggerId = normalizeTagId(triggerTagId);
+    if (!triggerId) return null;
+
+    var offsets = [
+      { dx: 0, dy: 0 },
+      { dx: 16, dy: 0 }, { dx: -16, dy: 0 },
+      { dx: 0, dy: 16 }, { dx: 0, dy: -16 },
+      { dx: 12, dy: 12 }, { dx: -12, dy: 12 },
+      { dx: 12, dy: -12 }, { dx: -12, dy: -12 }
+    ];
+
+    for (var i = 0; i < offsets.length; i++) {
+      var ox = offsets[i].dx;
+      var oy = offsets[i].dy;
+      var target = document.elementFromPoint(pointer.x + ox, pointer.y + oy);
+      if (!target || !target.closest) continue;
+      var toolEl = target.closest(APRILTAG_BLACKOUT_TOOL_SELECTOR);
+      if (!toolEl) continue;
+      var toolType = getBlackoutToolType(toolEl);
+      if (!toolType) continue;
+      var isLayerAction = isBlackoutLayerActionTool(toolEl, toolType);
+      if (!isLayerAction && normalizeTagId(toolEl.dataset && toolEl.dataset.triggerTagId) !== triggerId) continue;
+      return toolEl;
+    }
+    return null;
+  }
+
+  function shouldPulseBlackoutForApriltagState(apriltagTriggerPoints, detectionById) {
+    if (!blackoutPulseEnabled) return false;
+    if (state.viewMode !== 'map') return false;
+    if (state.stage !== 3 && state.stage !== 4) return false;
+    if (vgaModeActive) return false;
+
+    var triggerPoints = Array.isArray(apriltagTriggerPoints) ? apriltagTriggerPoints : [];
+    for (var i = 0; i < triggerPoints.length; i++) {
+      var point = triggerPoints[i];
+      if (!point || !isFinite(point.x) || !isFinite(point.y)) continue;
+      var primaryTagId = parseInt(point.handId, 10);
+      if (!isFinite(primaryTagId)) continue;
+      if (detectionById && detectionById[primaryTagId] && detectionById[primaryTagId].center) continue;
+      if (findActivatingToolAtPoint({ x: point.x, y: point.y }, point.triggerTagId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function initBlackoutPulseToggle() {
+    blackoutPulseEnabled = loadBlackoutPulseSetting();
+    ensureBlackoutOverlay();
+
+    var toggleEl = document.getElementById('blackoutPulseToggle');
+    if (!toggleEl) return;
+    toggleEl.checked = blackoutPulseEnabled;
+    toggleEl.addEventListener('change', function() {
+      blackoutPulseEnabled = !!toggleEl.checked;
+      saveBlackoutPulseSetting(blackoutPulseEnabled);
+      if (!blackoutPulseEnabled) {
+        resetBlackoutPulseState();
+      }
+    });
   }
 
   // Roads GeoJSON file import
@@ -3390,6 +3551,7 @@ export function initApp() {
 
   function stopCamera() {
     pauseProcessing();
+    resetBlackoutPulseState();
     closeApriltagStream();
     stopIpCameraIfRunning();
     stopCameraStream(state.currentStream);
@@ -3514,6 +3676,7 @@ export function initApp() {
   function pauseProcessing() {
     state.isProcessing = false;
     if (state.animationId) { cancelAnimationFrame(state.animationId); state.animationId = null; }
+    resetBlackoutPulseState();
   }
 
   function resumeProcessingIfReady() {
@@ -3633,6 +3796,7 @@ export function initApp() {
   function processFrame() {
     if (!state.isProcessing) return;
 
+    var nowMs = performance.now();
     var width = state.captureCanvas.width;
     var height = state.captureCanvas.height;
 
@@ -3750,12 +3914,16 @@ export function initApp() {
         }
       }
 
+      var shouldPulseBlackout = shouldPulseBlackoutForApriltagState(apriltagTriggerPoints, detectionById);
+      updateBlackoutPulse(shouldPulseBlackout, nowMs);
+
       var layerNavVoteState = updateApriltagTriggerSelections(apriltagTriggerPoints, apriltagPoints);
       processLayerNavigationVotes(layerNavVoteState);
       processLayerPanVotes(layerNavVoteState, apriltagPoints);
       processLayerZoomVotes(layerNavVoteState, apriltagPoints);
       handleStage3Gestures(apriltagPoints);
     } else {
+      updateBlackoutPulse(false, nowMs);
       processLayerNavigationVotes(null);
       processLayerPanVotes(null, null);
       processLayerZoomVotes(null, null);
@@ -3930,15 +4098,20 @@ export function initApp() {
       return;
     }
 
-    // Use SVG for the masks
-    var svg = dom.mapTagMasksEl.querySelector('svg');
-    if (!svg) {
-      svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;';
-      dom.mapTagMasksEl.appendChild(svg);
+    // Use canvas to draw per-tag fade masks.
+    var canvas = dom.mapTagMasksEl.querySelector('canvas');
+    if (!canvas) {
+      canvas = document.createElement('canvas');
+      canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;';
+      dom.mapTagMasksEl.appendChild(canvas);
     }
-    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-    svg.setAttribute('preserveAspectRatio', 'none');
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
+    var ctx = canvas.getContext('2d');
+    if (!ctx) {
+      dom.mapTagMasksEl.innerHTML = '';
+      return;
+    }
 
     var nowMs = performance.now();
     if (Array.isArray(detections)) {
@@ -3970,8 +4143,31 @@ export function initApp() {
       }
     }
 
-    var polygons = [];
-    var tagScale = 1.4; // Make detected tag masks 40% larger
+    function getScaledCorners(corners, cx, cy, scale) {
+      var out = [];
+      for (var i = 0; i < 4; i++) {
+        out.push({
+          x: cx + (corners[i].x - cx) * scale,
+          y: cy + (corners[i].y - cy) * scale
+        });
+      }
+      return out;
+    }
+
+    function addPolygonPath(pathCorners) {
+      if (!pathCorners || pathCorners.length < 4) return;
+      ctx.moveTo(pathCorners[0].x, pathCorners[0].y);
+      for (var pi = 1; pi < pathCorners.length; pi++) {
+        ctx.lineTo(pathCorners[pi].x, pathCorners[pi].y);
+      }
+      ctx.closePath();
+    }
+
+    var fadeStartScale = 0.7;   // Fully black until 70% of tag size from center
+    var fadeEndScale = 1.7;     // Fade reaches transparent at 170%
+    var fadeSteps = 10;         // More steps = smoother fade
+
+    ctx.clearRect(0, 0, w, h);
 
     // Draw masks for all tags seen recently (hold for MAP_TAG_MASK_HOLD_MS)
     for (var cacheKey in mapTagMaskCacheById) {
@@ -3991,18 +4187,31 @@ export function initApp() {
         var cx = (screenCorners[0].x + screenCorners[1].x + screenCorners[2].x + screenCorners[3].x) / 4;
         var cy = (screenCorners[0].y + screenCorners[1].y + screenCorners[2].y + screenCorners[3].y) / 4;
 
-        // Scale corners outward from center
-        var points = [];
-        for (var k = 0; k < 4; k++) {
-          var sx = cx + (screenCorners[k].x - cx) * tagScale;
-          var sy = cy + (screenCorners[k].y - cy) * tagScale;
-          points.push(sx + ',' + sy);
+        // Solid center area (0% -> 70%)
+        var innerSolid = getScaledCorners(screenCorners, cx, cy, fadeStartScale);
+        ctx.beginPath();
+        addPolygonPath(innerSolid);
+        ctx.fillStyle = 'rgba(0, 0, 0, 1)';
+        ctx.fill();
+
+        // Faded ring (70% -> 170%)
+        for (var step = 0; step < fadeSteps; step++) {
+          var t0 = step / fadeSteps;
+          var t1 = (step + 1) / fadeSteps;
+          var s0 = fadeStartScale + (fadeEndScale - fadeStartScale) * t0;
+          var s1 = fadeStartScale + (fadeEndScale - fadeStartScale) * t1;
+          var a = Math.max(0, 1 - t1);
+
+          var inner = getScaledCorners(screenCorners, cx, cy, s0);
+          var outer = getScaledCorners(screenCorners, cx, cy, s1);
+
+          ctx.beginPath();
+          addPolygonPath(outer);
+          addPolygonPath(inner);
+          ctx.fillStyle = 'rgba(0, 0, 0, ' + a.toFixed(3) + ')';
+          ctx.fill('evenodd');
         }
-
-        polygons.push('<polygon points="' + points.join(' ') + '" fill="#000000"/>');
     }
-
-    svg.innerHTML = polygons.join('');
   }
 
   function updateApriltagHud(containerEl, detections, w, h) {

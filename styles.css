@@ -1551,6 +1551,11 @@ body.vga-mode-active #leafletMap {
     height: 40px;
 }
 
+#stage3ActionBar .ui-setup-blackout-toggle {
+    flex: 0 0 auto;
+    height: 40px;
+}
+
 #stage3WorkspacePanel .ui-setup-panel {
     position: static;
     transform: none;
@@ -1670,6 +1675,11 @@ body.vga-mode-active #leafletMap {
         flex: 1 1 0;
         min-width: 0;
     }
+    #stage3ActionBar .ui-setup-blackout-toggle {
+        flex: 1 1 0;
+        min-width: 0;
+        justify-content: space-between;
+    }
 }
 
 .ui-setup-row-label {
@@ -1719,6 +1729,39 @@ body.vga-mode-active #leafletMap {
     margin-top: 14px;
     display: flex;
     gap: 10px;
+}
+
+.ui-setup-blackout-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.10);
+    color: #fff;
+    min-height: 44px;
+    user-select: none;
+}
+
+.ui-setup-blackout-toggle__text {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+}
+
+.ui-setup-blackout-toggle .switch {
+    width: 46px;
+    height: 26px;
+}
+
+.ui-setup-blackout-toggle .slider:before {
+    width: 20px;
+    height: 20px;
+}
+
+.ui-setup-blackout-toggle .switch input:checked + .slider:before {
+    transform: translate(19px, -50%);
 }
 
 .ui-setup-action-btn {
@@ -1796,6 +1839,19 @@ body.vga-mode-active #leafletMap {
 .ui-setup-select option {
     background: #1a1a1a;
     color: #fff;
+}
+
+.blackout-pulse-overlay {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 10000;
+}
+
+.blackout-pulse-overlay--active {
+    opacity: 1;
 }
 
 .ui-trigger-select {

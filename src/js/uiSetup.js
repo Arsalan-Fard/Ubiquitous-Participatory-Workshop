@@ -453,6 +453,31 @@ export function initUiSetup(options) {
   importBtn.type = 'button';
   importBtn.textContent = 'Import';
 
+  var blackoutToggleLabel = document.createElement('label');
+  blackoutToggleLabel.className = 'ui-setup-blackout-toggle';
+  blackoutToggleLabel.setAttribute('for', 'blackoutPulseToggle');
+
+  var blackoutToggleText = document.createElement('span');
+  blackoutToggleText.className = 'ui-setup-blackout-toggle__text';
+  blackoutToggleText.textContent = 'Blackout';
+
+  var blackoutSwitch = document.createElement('span');
+  blackoutSwitch.className = 'switch';
+
+  var blackoutToggleInput = document.createElement('input');
+  blackoutToggleInput.id = 'blackoutPulseToggle';
+  blackoutToggleInput.type = 'checkbox';
+  blackoutToggleInput.setAttribute('aria-label', 'Enable periodic blackout when trigger tag is active without primary tag');
+
+  var blackoutToggleSlider = document.createElement('span');
+  blackoutToggleSlider.className = 'slider';
+  blackoutToggleSlider.setAttribute('aria-hidden', 'true');
+
+  blackoutSwitch.appendChild(blackoutToggleInput);
+  blackoutSwitch.appendChild(blackoutToggleSlider);
+  blackoutToggleLabel.appendChild(blackoutToggleText);
+  blackoutToggleLabel.appendChild(blackoutSwitch);
+
   var nextBtn = document.createElement('button');
   nextBtn.className = 'ui-setup-action-btn ui-setup-action-btn--primary';
   nextBtn.type = 'button';
@@ -467,6 +492,7 @@ export function initUiSetup(options) {
   importFileEl.style.height = '1px';
   importFileEl.setAttribute('aria-hidden', 'true');
 
+  footer.appendChild(blackoutToggleLabel);
   footer.appendChild(exportBtn);
   footer.appendChild(importBtn);
   footer.appendChild(nextBtn);
