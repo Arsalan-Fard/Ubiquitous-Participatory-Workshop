@@ -13,7 +13,7 @@ import {
   addPolyline, addPolygon, addCircleMarker, removeMapLayer,
   updateLineCoords, updatePolygonCoords,
   createLayerGroup, addToGroup, removeFromGroup, clearGroup, eachInGroup,
-  setPaintProp
+  setPaintProp, nextId
 } from './mapHelpers.js';
 
 // --- Constants ---
@@ -29,6 +29,9 @@ var ISOVIST_STROKE_OPACITY = 0.9;
 var BUILDING_STROKE_WEIGHT = 1.4;
 var BUILDING_FILL_OPACITY = 0.40;
 var MIN_MOVE_DISTANCE_SQ = 4;
+var LIVE_SIMPLIFY_MIN_DISTANCE_SQ = 9;
+var LIVE_SIMPLIFY_COLLINEAR_SIN_THRESHOLD = 0.08;
+var FINAL_SIMPLIFY_TOLERANCE_PX = 1.5;
 
 var OSRM_ROUTE_BASE_URL = 'https://router.project-osrm.org/route/v1/driving/';
 var ISOVIST_RADIUS_METERS = 180;
@@ -152,10 +155,13 @@ export function activateDrawingForPointer(pointerId, color, buttonEl) {
 export function deactivateDrawingForPointer(pointerId) {
   var hs = handDrawStates[pointerId];
   if (hs) {
+    if (hs.activeStroke) {
+      finalizeStrokeGeometry(hs.activeStroke);
+    }
     if (hs.isDrawing) {
       hs.isDrawing = false;
-      hs.activeStroke = null;
     }
+    hs.activeStroke = null;
     if (hs.buttonEl) {
       hs.buttonEl.classList.remove('ui-draw--active');
     }
@@ -204,29 +210,224 @@ function updateDrawModeVisuals() {
 
 // --- Stroke creation helper (removes duplication) ---
 
-function createStrokePair(coord, color, sessionId, triggerTagId) {
+function distanceSqPoints(a, b) {
+  if (!a || !b) return Infinity;
+  var dx = a.x - b.x;
+  var dy = a.y - b.y;
+  return dx * dx + dy * dy;
+}
+
+function isNearlyCollinear(a, b, c) {
+  if (!a || !b || !c) return false;
+  var abx = b.x - a.x;
+  var aby = b.y - a.y;
+  var bcx = c.x - b.x;
+  var bcy = c.y - b.y;
+  var abLen = Math.sqrt(abx * abx + aby * aby);
+  var bcLen = Math.sqrt(bcx * bcx + bcy * bcy);
+  if (abLen < 1e-6 || bcLen < 1e-6) return true;
+  var crossSin = Math.abs(abx * bcy - aby * bcx) / (abLen * bcLen);
+  var dot = abx * bcx + aby * bcy;
+  return dot > 0 && crossSin < LIVE_SIMPLIFY_COLLINEAR_SIN_THRESHOLD;
+}
+
+function projectCoordsToMapPoints(coords, map) {
+  if (!Array.isArray(coords)) return null;
+  var points = [];
+  for (var i = 0; i < coords.length; i++) {
+    var pt = map.project(coords[i]);
+    if (!pt || !isFinite(pt.x) || !isFinite(pt.y)) return null;
+    points.push({ x: pt.x, y: pt.y });
+  }
+  return points;
+}
+
+function pointSegmentDistanceSq(point, a, b) {
+  var abx = b.x - a.x;
+  var aby = b.y - a.y;
+  var apx = point.x - a.x;
+  var apy = point.y - a.y;
+  var abLenSq = abx * abx + aby * aby;
+  if (abLenSq < 1e-9) return distanceSqPoints(point, a);
+  var t = (apx * abx + apy * aby) / abLenSq;
+  if (t < 0) t = 0;
+  if (t > 1) t = 1;
+  var cx = a.x + t * abx;
+  var cy = a.y + t * aby;
+  var dx = point.x - cx;
+  var dy = point.y - cy;
+  return dx * dx + dy * dy;
+}
+
+function simplifyCoordsRdpInPixels(rawCoords, map, tolerancePx) {
+  if (!Array.isArray(rawCoords) || rawCoords.length < 3 || !map) return Array.isArray(rawCoords) ? rawCoords.slice() : [];
+  var points = projectCoordsToMapPoints(rawCoords, map);
+  if (!points || points.length !== rawCoords.length) return rawCoords.slice();
+
+  var n = points.length;
+  var keep = new Array(n);
+  for (var i = 0; i < n; i++) keep[i] = false;
+  keep[0] = true;
+  keep[n - 1] = true;
+
+  var tolSq = Math.max(0.01, tolerancePx * tolerancePx);
+  var stack = [{ start: 0, end: n - 1 }];
+
+  while (stack.length > 0) {
+    var seg = stack.pop();
+    var start = seg.start;
+    var end = seg.end;
+    var a = points[start];
+    var b = points[end];
+
+    var maxDistSq = -1;
+    var maxIdx = -1;
+    for (var j = start + 1; j < end; j++) {
+      var dSq = pointSegmentDistanceSq(points[j], a, b);
+      if (dSq > maxDistSq) {
+        maxDistSq = dSq;
+        maxIdx = j;
+      }
+    }
+
+    if (maxIdx !== -1 && maxDistSq > tolSq) {
+      keep[maxIdx] = true;
+      if ((maxIdx - start) > 1) stack.push({ start: start, end: maxIdx });
+      if ((end - maxIdx) > 1) stack.push({ start: maxIdx, end: end });
+    }
+  }
+
+  var out = [];
+  for (var k = 0; k < n; k++) {
+    if (keep[k]) out.push(rawCoords[k]);
+  }
+  return out.length >= 2 ? out : rawCoords.slice();
+}
+
+function upsertLiveSimplifiedCoordinate(stroke, coord, coordPt) {
+  if (!stroke || !coord || !coordPt) return;
+  var liveCoords = stroke.liveCoords;
+  var livePts = stroke.livePts;
+
+  if (livePts.length !== liveCoords.length) {
+    stroke.livePts = projectCoordsToMapPoints(liveCoords, state.map) || [];
+    livePts = stroke.livePts;
+  }
+
+  if (livePts.length !== liveCoords.length) {
+    liveCoords.push(coord);
+    livePts.push({ x: coordPt.x, y: coordPt.y });
+    return;
+  }
+
+  var len = liveCoords.length;
+
+  if (len < 1) {
+    liveCoords.push(coord);
+    livePts.push({ x: coordPt.x, y: coordPt.y });
+    return;
+  }
+
+  var lastPt = livePts[len - 1];
+  if (distanceSqPoints(lastPt, coordPt) < LIVE_SIMPLIFY_MIN_DISTANCE_SQ) {
+    liveCoords[len - 1] = coord;
+    livePts[len - 1] = { x: coordPt.x, y: coordPt.y };
+    return;
+  }
+
+  if (len >= 2 && isNearlyCollinear(livePts[len - 2], livePts[len - 1], coordPt)) {
+    liveCoords[len - 1] = coord;
+    livePts[len - 1] = { x: coordPt.x, y: coordPt.y };
+    return;
+  }
+
+  liveCoords.push(coord);
+  livePts.push({ x: coordPt.x, y: coordPt.y });
+}
+
+function finalizeStrokeGeometry(stroke) {
+  if (!stroke || !stroke.ref || !stroke.ref.sourceId || !state.map) return;
+  var raw = Array.isArray(stroke.rawCoords) ? stroke.rawCoords : [];
+  if (raw.length < 1) return;
+
+  var finalCoords = raw.length >= 3
+    ? simplifyCoordsRdpInPixels(raw, state.map, FINAL_SIMPLIFY_TOLERANCE_PX)
+    : raw.slice();
+
+  if (!finalCoords || finalCoords.length < 1) finalCoords = raw.slice();
+  stroke.liveCoords = finalCoords;
+  stroke.livePts = projectCoordsToMapPoints(finalCoords, state.map) || [];
+  updateLineCoords(state.map, stroke.ref.sourceId, finalCoords);
+}
+
+function createStrokeRef(coord, color, sessionId, triggerTagId) {
   var map = state.map;
-  var coords = [coord];
   var strokeId = 'stroke_' + (nextStrokeId++);
-  var glow = addPolyline(map, coords, {
-    color: color, weight: STROKE_GLOW_WEIGHT, opacity: STROKE_GLOW_OPACITY,
-    lineCap: 'round', lineJoin: 'round'
+  var baseId = nextId('stroke');
+  var sourceId = baseId + '-src';
+  var glowLayerId = baseId + '-gl';
+  var mainLayerId = baseId + '-mn';
+
+  map.addSource(sourceId, {
+    type: 'geojson',
+    data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [coord] } }
   });
-  var main = addPolyline(map, coords, {
-    color: color, weight: STROKE_MAIN_WEIGHT, opacity: STROKE_MAIN_OPACITY,
-    lineCap: 'round', lineJoin: 'round'
+
+  map.addLayer({
+    id: glowLayerId,
+    type: 'line',
+    source: sourceId,
+    paint: {
+      'line-color': color || '#2bb8ff',
+      'line-width': STROKE_GLOW_WEIGHT,
+      'line-opacity': STROKE_GLOW_OPACITY
+    },
+    layout: { 'line-cap': 'round', 'line-join': 'round' }
   });
-  glow.sessionId = sessionId || '';
-  main.sessionId = sessionId || '';
-  glow.triggerTagId = triggerTagId || '';
-  main.triggerTagId = triggerTagId || '';
-  glow.strokeId = strokeId;
-  main.strokeId = strokeId;
-  glow.isGlow = true;
-  main.isGlow = false;
-  addToGroup(state.drawGroup, glow);
-  addToGroup(state.drawGroup, main);
-  return { coords: coords, glow: glow, main: main };
+
+  map.addLayer({
+    id: mainLayerId,
+    type: 'line',
+    source: sourceId,
+    paint: {
+      'line-color': color || '#2bb8ff',
+      'line-width': STROKE_MAIN_WEIGHT,
+      'line-opacity': STROKE_MAIN_OPACITY
+    },
+    layout: { 'line-cap': 'round', 'line-join': 'round' }
+  });
+
+  var ref = {
+    sourceId: sourceId,
+    layerId: mainLayerId,
+    fillLayerId: glowLayerId,
+    glowLayerId: glowLayerId,
+    sessionId: sessionId || '',
+    triggerTagId: triggerTagId || '',
+    strokeId: strokeId,
+    isGlow: false
+  };
+  addToGroup(state.drawGroup, ref);
+  return ref;
+}
+
+function appendCoordToStroke(stroke, coord, coordPt) {
+  if (!stroke || !stroke.ref || !stroke.ref.sourceId || !coord || !coordPt || !state.map) return;
+  stroke.rawCoords.push(coord);
+  upsertLiveSimplifiedCoordinate(stroke, coord, coordPt);
+  updateLineCoords(state.map, stroke.ref.sourceId, stroke.liveCoords);
+}
+
+function createStrokePair(coord, color, sessionId, triggerTagId) {
+  var ref = createStrokeRef(coord, color, sessionId, triggerTagId);
+  var pt = state.map.project(coord);
+  var projPt = (pt && isFinite(pt.x) && isFinite(pt.y)) ? { x: pt.x, y: pt.y } : null;
+  return {
+    ref: ref,
+    rawCoords: [coord],
+    liveCoords: [coord],
+    livePts: projPt ? [projPt] : []
+  };
 }
 
 // --- Drawing event handlers ---
@@ -282,9 +483,7 @@ export function stage4PointermoveOnMap(e) {
   }
 
   if (pt) hs.lastContainerPt = { x: pt.x, y: pt.y };
-  hs.activeStroke.coords.push(coord);
-  updateLineCoords(state.map, hs.activeStroke.glow.sourceId, hs.activeStroke.coords);
-  updateLineCoords(state.map, hs.activeStroke.main.sourceId, hs.activeStroke.coords);
+  appendCoordToStroke(hs.activeStroke, coord, pt);
 }
 
 export function stage4StopDrawing(e) {
@@ -294,6 +493,7 @@ export function stage4StopDrawing(e) {
 
   hs.isDrawing = false;
   hs.lastContainerPt = null;
+  if (hs.activeStroke) finalizeStrokeGeometry(hs.activeStroke);
   hs.activeStroke = null;
 
   if (pointerId < 100) {
@@ -336,9 +536,7 @@ export function continueDrawingAtPoint(pointerId, clientX, clientY) {
   }
 
   if (pt) hs.lastContainerPt = { x: pt.x, y: pt.y };
-  hs.activeStroke.coords.push(coord);
-  updateLineCoords(state.map, hs.activeStroke.glow.sourceId, hs.activeStroke.coords);
-  updateLineCoords(state.map, hs.activeStroke.main.sourceId, hs.activeStroke.coords);
+  appendCoordToStroke(hs.activeStroke, coord, pt);
 }
 
 export function stopDrawingForPointer(pointerId) {
@@ -346,6 +544,7 @@ export function stopDrawingForPointer(pointerId) {
   if (!hs) return;
   hs.isDrawing = false;
   hs.lastContainerPt = null;
+  if (hs.activeStroke) finalizeStrokeGeometry(hs.activeStroke);
   hs.activeStroke = null;
 }
 
@@ -1073,7 +1272,8 @@ export function eraseAtPoint(clientX, clientY, radiusPx, ownerTriggerTagId) {
     }
   });
 
-  // Also remove paired strokes (glow + main share strokeId)
+  // Backward compatibility: if older sessions created separate glow/main refs,
+  // remove any sibling refs that share the same strokeId.
   if (Object.keys(removeStrokeIds).length > 0) {
     eachInGroup(state.drawGroup, function(ref) {
       if (!ref || !ref.strokeId) return;
@@ -1121,13 +1321,19 @@ export function filterPolylinesBySession(sessionId) {
     var layerSessionId = (ref.sessionId === null || ref.sessionId === undefined || String(ref.sessionId).trim() === '')
       ? '' : String(ref.sessionId).trim();
 
-    var targetOpacity;
-    if (!activeSessionId || layerSessionId === activeSessionId) {
-      targetOpacity = ref.isGlow ? STROKE_GLOW_OPACITY : STROKE_MAIN_OPACITY;
-    } else {
-      targetOpacity = 0;
+    var visible = (!activeSessionId || layerSessionId === activeSessionId);
+    var mainOpacity = visible ? STROKE_MAIN_OPACITY : 0;
+    var glowOpacity = visible ? STROKE_GLOW_OPACITY : 0;
+
+    if (ref.glowLayerId) {
+      setPaintProp(state.map, ref.layerId, 'line-opacity', mainOpacity);
+      setPaintProp(state.map, ref.glowLayerId, 'line-opacity', glowOpacity);
+      return;
     }
-    setPaintProp(state.map, ref.layerId, 'line-opacity', targetOpacity);
+
+    // Backward compatibility for older refs that used one layer per stroke visual.
+    var fallbackOpacity = ref.isGlow ? glowOpacity : mainOpacity;
+    setPaintProp(state.map, ref.layerId, 'line-opacity', fallbackOpacity);
   });
 }
 
