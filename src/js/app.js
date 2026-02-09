@@ -89,11 +89,12 @@ export function initApp() {
 
   var videoContainer = document.getElementById('videoContainer1');
 
-  // Render AprilTag black masks above map overlays/UI while keeping map warp alignment.
+  // Dots and masks use screen-space coordinates from the surface homography.
+  // They must live in mapView (not mapWarp) so Maptastic doesn't double-warp them.
+  // UV from homography maps directly to physical screen position.
   if (dom.mapTagMasksEl && dom.mapViewEl && dom.mapTagMasksEl.parentNode !== dom.mapViewEl) {
     dom.mapViewEl.appendChild(dom.mapTagMasksEl);
   }
-  // Debug dots must stay visible above black masks.
   if (dom.mapApriltagDotsEl && dom.mapViewEl && dom.mapApriltagDotsEl.parentNode !== dom.mapViewEl) {
     dom.mapViewEl.appendChild(dom.mapApriltagDotsEl);
   }
@@ -2713,14 +2714,17 @@ export function initApp() {
     }
   }
 
+  // Convert a detection's UV (screen-space) to mapWarp-local container coordinates.
+  // The Maptastic perspective transform means screen UV ≠ mapWarp local coords,
+  // so we must invert the Maptastic matrix to go from screen → mapWarp-local.
   function projectDetectionToMapContainerPoint(det, options) {
     options = options || {};
     if (!det || !det.center) return null;
     if (!state.surfaceHomography || !state.map) return null;
 
-    var mapW = dom.mapWarpEl.offsetWidth;
-    var mapH = dom.mapWarpEl.offsetHeight;
-    if (!mapW || !mapH) return null;
+    var viewW = dom.mapViewEl.offsetWidth;
+    var viewH = dom.mapViewEl.offsetHeight;
+    if (!viewW || !viewH) return null;
 
     var uv = applyHomography(state.surfaceHomography, det.center.x, det.center.y);
     if (!uv) return null;
@@ -2736,10 +2740,27 @@ export function initApp() {
       return null;
     }
 
-    var containerX = uv.x * mapW;
-    var containerY = uv.y * mapH;
-    if (!isFinite(containerX) || !isFinite(containerY)) return null;
-    return { x: containerX, y: containerY };
+    // UV → screen-space pixel position
+    var screenX = uv.x * viewW;
+    var screenY = uv.y * viewH;
+
+    // Invert the Maptastic warp to get mapWarp-local container coords
+    try {
+      var transform = window.getComputedStyle(dom.mapWarpEl).transform;
+      if (transform && transform !== 'none') {
+        var m = new DOMMatrixReadOnly(transform);
+        var inv = m.inverse();
+        var local = new DOMPoint(screenX, screenY, 0, 1).matrixTransform(inv);
+        if (local && typeof local.w === 'number' && local.w && local.w !== 1) {
+          local = new DOMPoint(local.x / local.w, local.y / local.w, local.z / local.w, 1);
+        }
+        screenX = local.x;
+        screenY = local.y;
+      }
+    } catch (err) { /* use screen coords as fallback */ }
+
+    if (!isFinite(screenX) || !isFinite(screenY)) return null;
+    return { x: screenX, y: screenY };
   }
 
   function projectDetectionToMapLatLng(det, options) {
@@ -3528,7 +3549,6 @@ export function initApp() {
 
     // Map view (Stage 2, 3, and 4)
     var isMapViewWithHomography = (state.stage === 2 || state.stage === 3 || state.stage === 4) && state.viewMode === 'map';
-    setMapFingerDotsVisible(false);
     var detections = Array.isArray(state.lastApriltagDetections) ? state.lastApriltagDetections : [];
     var detectionById = {};
     for (var di = 0; di < detections.length; di++) {
@@ -3543,9 +3563,9 @@ export function initApp() {
     if ((state.stage === 3 || state.stage === 4) && state.viewMode === 'map' && !vgaModeActive) {
       var apriltagPoints = [];
       var apriltagTriggerPoints = [];
-      var mapRect = dom.mapWarpEl.getBoundingClientRect();
-      var mapW = dom.mapWarpEl.offsetWidth;
-      var mapH = dom.mapWarpEl.offsetHeight;
+      var viewRect = dom.mapViewEl.getBoundingClientRect();
+      var mapW = dom.mapViewEl.offsetWidth;
+      var mapH = dom.mapViewEl.offsetHeight;
       var canProjectToMap = !!state.surfaceHomography && mapW > 0 && mapH > 0;
       var maxExtrapolation = 1.5;
 
@@ -3556,8 +3576,8 @@ export function initApp() {
           return null;
         }
 
-        var x = mapRect.left + uv.x * mapW;
-        var y = mapRect.top + uv.y * mapH;
+        var x = viewRect.left + uv.x * mapW;
+        var y = viewRect.top + uv.y * mapH;
         return applyTrackedTagOffset(detByTag, tagId, x, y, mapW, mapH, offsetMode);
       }
 
@@ -3676,57 +3696,6 @@ export function initApp() {
     state.animationId = requestAnimationFrame(processFrame);
   }
 
-  function updateMapFingerDots(cameraPoints) {
-    if (!state.surfaceHomography) { setMapFingerDotsVisible(false); return; }
-    if (dom.mapWarpEl && dom.mapFingerDotsEl) {
-      var warpTransform = window.getComputedStyle(dom.mapWarpEl).transform;
-      dom.mapFingerDotsEl.style.transform = (warpTransform && warpTransform !== 'none') ? warpTransform : 'none';
-      dom.mapFingerDotsEl.style.transformOrigin = '0 0';
-    }
-
-    var w = dom.mapWarpEl.offsetWidth;
-    var h = dom.mapWarpEl.offsetHeight;
-    if (!w || !h) { setMapFingerDotsVisible(false); return; }
-
-    var required = cameraPoints.length;
-    while (dom.mapFingerDotsEl.children.length < required) {
-      var dotEl = document.createElement('div');
-      dotEl.className = 'map-finger-dot';
-      dom.mapFingerDotsEl.appendChild(dotEl);
-    }
-    while (dom.mapFingerDotsEl.children.length > required) {
-      dom.mapFingerDotsEl.removeChild(dom.mapFingerDotsEl.lastChild);
-    }
-
-    var anyVisible = false;
-    // Allow extrapolation beyond surface bounds to reach UI outside maptastic
-    // Limit to reasonable range to avoid dots going too far off screen
-    var maxExtrapolation = 1.5; // Allow up to 150% beyond surface in any direction
-
-    for (var i = 0; i < required; i++) {
-      var point = cameraPoints[i];
-      var dotEl = dom.mapFingerDotsEl.children[i];
-      var uv = applyHomography(state.surfaceHomography, point.x, point.y);
-
-      if (!uv || uv.x < -maxExtrapolation || uv.x > 1 + maxExtrapolation || uv.y < -maxExtrapolation || uv.y > 1 + maxExtrapolation) {
-        dotEl.classList.add('hidden');
-        continue;
-      }
-
-      // Don't clamp - allow extrapolation beyond maptastic bounds
-      var x = uv.x * w;
-      var y = uv.y * h;
-
-      dotEl.style.transform = 'translate(' + (x - 7) + 'px, ' + (y - 7) + 'px)';
-      dotEl.classList.remove('hidden');
-      // Store handId on the DOM element for gesture tracking
-      dotEl.dataset.handId = point.handId || ('hand' + i);
-      anyVisible = true;
-    }
-
-    setMapFingerDotsVisible(anyVisible);
-  }
-
   function setMapApriltagDotsVisible(visible) {
     if (!dom.mapApriltagDotsEl) return;
     dom.mapApriltagDotsEl.classList.toggle('hidden', !visible);
@@ -3736,14 +3705,9 @@ export function initApp() {
   function updateMapApriltagDots(detections) {
     if (!dom.mapApriltagDotsEl) { return; }
     if (!state.surfaceHomography) { setMapApriltagDotsVisible(false); return; }
-    if (dom.mapWarpEl) {
-      var warpTransform = window.getComputedStyle(dom.mapWarpEl).transform;
-      dom.mapApriltagDotsEl.style.transform = (warpTransform && warpTransform !== 'none') ? warpTransform : 'none';
-      dom.mapApriltagDotsEl.style.transformOrigin = '0 0';
-    }
 
-    var w = dom.mapWarpEl.offsetWidth;
-    var h = dom.mapWarpEl.offsetHeight;
+    var w = dom.mapViewEl.offsetWidth;
+    var h = dom.mapViewEl.offsetHeight;
     if (!w || !h) { setMapApriltagDotsVisible(false); return; }
 
     var primaryTagIds = Array.isArray(state.stage3ParticipantTagIds) ? state.stage3ParticipantTagIds : [];
@@ -3825,18 +3789,13 @@ export function initApp() {
   // Update black masks over detected AprilTag positions in the projected map view
   function updateMapTagMasks(detections) {
     if (!dom.mapTagMasksEl) return;
-    if (dom.mapWarpEl) {
-      var warpTransform = window.getComputedStyle(dom.mapWarpEl).transform;
-      dom.mapTagMasksEl.style.transform = (warpTransform && warpTransform !== 'none') ? warpTransform : 'none';
-      dom.mapTagMasksEl.style.transformOrigin = '0 0';
-    }
     if (!state.surfaceHomography) {
       dom.mapTagMasksEl.innerHTML = '';
       return;
     }
 
-    var w = dom.mapWarpEl.offsetWidth;
-    var h = dom.mapWarpEl.offsetHeight;
+    var w = dom.mapViewEl.offsetWidth;
+    var h = dom.mapViewEl.offsetHeight;
     if (!w || !h) {
       dom.mapTagMasksEl.innerHTML = '';
       return;
