@@ -2248,7 +2248,8 @@ export function initApp() {
         x: state.apriltagTrackingOffsetX,
         y: state.apriltagTrackingOffsetY,
         triggerX: state.apriltagTriggerTrackingOffsetX,
-        triggerY: state.apriltagTriggerTrackingOffsetY
+        triggerY: state.apriltagTriggerTrackingOffsetY,
+        compressionPct: state.apriltagOffsetBottomCompressionPct
       },
       mapViews: mapViewEntries,
       activeMapViewId: state.currentMapSessionId || null,
@@ -2288,18 +2289,21 @@ export function initApp() {
     if (!mapSetup || typeof mapSetup !== 'object') return;
 
     if (mapSetup.trackingOffset && typeof mapSetup.trackingOffset === 'object') {
-      var importedX = clamp(parseFloat(mapSetup.trackingOffset.x), -300, 300);
-      var importedY = clamp(parseFloat(mapSetup.trackingOffset.y), -300, 300);
-      var importedTriggerX = clamp(parseFloat(mapSetup.trackingOffset.triggerX), -300, 300);
-      var importedTriggerY = clamp(parseFloat(mapSetup.trackingOffset.triggerY), -300, 300);
+      var importedX = clamp(parseFloat(mapSetup.trackingOffset.x), -500, 500);
+      var importedY = clamp(parseFloat(mapSetup.trackingOffset.y), -500, 500);
+      var importedTriggerX = clamp(parseFloat(mapSetup.trackingOffset.triggerX), -500, 500);
+      var importedTriggerY = clamp(parseFloat(mapSetup.trackingOffset.triggerY), -500, 500);
+      var importedCompressionPct = clamp(parseFloat(mapSetup.trackingOffset.compressionPct), 0, 60);
       if (!isFinite(importedX)) importedX = 0;
       if (!isFinite(importedY)) importedY = 0;
       if (!isFinite(importedTriggerX)) importedTriggerX = 0;
       if (!isFinite(importedTriggerY)) importedTriggerY = 0;
+      if (!isFinite(importedCompressionPct)) importedCompressionPct = 0;
       state.apriltagTrackingOffsetX = importedX;
       state.apriltagTrackingOffsetY = importedY;
       state.apriltagTriggerTrackingOffsetX = importedTriggerX;
       state.apriltagTriggerTrackingOffsetY = importedTriggerY;
+      state.apriltagOffsetBottomCompressionPct = importedCompressionPct;
       dom.trackingOffsetXSliderEl.value = String(Math.round(importedX));
       dom.trackingOffsetXValueEl.textContent = String(Math.round(importedX));
       dom.trackingOffsetYSliderEl.value = String(Math.round(importedY));
@@ -2308,10 +2312,13 @@ export function initApp() {
       dom.trackingTriggerOffsetXValueEl.textContent = String(Math.round(importedTriggerX));
       dom.trackingTriggerOffsetYSliderEl.value = String(Math.round(importedTriggerY));
       dom.trackingTriggerOffsetYValueEl.textContent = String(Math.round(importedTriggerY));
+      dom.trackingOffsetCompressionSliderEl.value = String(Math.round(importedCompressionPct));
+      dom.trackingOffsetCompressionValueEl.textContent = String(Math.round(importedCompressionPct)) + '%';
       saveNumberSetting('apriltagTrackingOffsetX', state.apriltagTrackingOffsetX);
       saveNumberSetting('apriltagTrackingOffsetY', state.apriltagTrackingOffsetY);
       saveNumberSetting('apriltagTriggerTrackingOffsetX', state.apriltagTriggerTrackingOffsetX);
       saveNumberSetting('apriltagTriggerTrackingOffsetY', state.apriltagTriggerTrackingOffsetY);
+      saveNumberSetting('apriltagOffsetBottomCompressionPct', state.apriltagOffsetBottomCompressionPct);
     }
 
     clearImportedRoadEntries();
@@ -3178,6 +3185,15 @@ export function initApp() {
       return { x: x, y: y };
     }
 
+    var compressionPct = clamp(state.apriltagOffsetBottomCompressionPct, 0, 60);
+    if (compressionPct > 0 && mapHeight > 0) {
+      var yNorm = clamp(y / mapHeight, 0, 1);
+      var compressionAtY = (compressionPct / 100) * yNorm;
+      var scaleAtY = 1 - compressionAtY;
+      ox *= scaleAtY;
+      oy *= scaleAtY;
+    }
+
     if (det && det.corners && det.corners.length >= 4) {
       var mappedCorners = [];
       for (var ci = 0; ci < 4; ci++) {
@@ -3246,7 +3262,7 @@ export function initApp() {
   dom.trackingOffsetXSliderEl.addEventListener('input', function() {
     var v = parseFloat(dom.trackingOffsetXSliderEl.value);
     if (!isFinite(v)) return;
-    state.apriltagTrackingOffsetX = clamp(v, -300, 300);
+    state.apriltagTrackingOffsetX = clamp(v, -500, 500);
     dom.trackingOffsetXValueEl.textContent = String(Math.round(state.apriltagTrackingOffsetX));
     saveNumberSetting('apriltagTrackingOffsetX', state.apriltagTrackingOffsetX);
   });
@@ -3256,7 +3272,7 @@ export function initApp() {
   dom.trackingOffsetYSliderEl.addEventListener('input', function() {
     var v = parseFloat(dom.trackingOffsetYSliderEl.value);
     if (!isFinite(v)) return;
-    state.apriltagTrackingOffsetY = clamp(v, -300, 300);
+    state.apriltagTrackingOffsetY = clamp(v, -500, 500);
     dom.trackingOffsetYValueEl.textContent = String(Math.round(state.apriltagTrackingOffsetY));
     saveNumberSetting('apriltagTrackingOffsetY', state.apriltagTrackingOffsetY);
   });
@@ -3266,7 +3282,7 @@ export function initApp() {
   dom.trackingTriggerOffsetXSliderEl.addEventListener('input', function() {
     var v = parseFloat(dom.trackingTriggerOffsetXSliderEl.value);
     if (!isFinite(v)) return;
-    state.apriltagTriggerTrackingOffsetX = clamp(v, -300, 300);
+    state.apriltagTriggerTrackingOffsetX = clamp(v, -500, 500);
     dom.trackingTriggerOffsetXValueEl.textContent = String(Math.round(state.apriltagTriggerTrackingOffsetX));
     saveNumberSetting('apriltagTriggerTrackingOffsetX', state.apriltagTriggerTrackingOffsetX);
   });
@@ -3276,9 +3292,19 @@ export function initApp() {
   dom.trackingTriggerOffsetYSliderEl.addEventListener('input', function() {
     var v = parseFloat(dom.trackingTriggerOffsetYSliderEl.value);
     if (!isFinite(v)) return;
-    state.apriltagTriggerTrackingOffsetY = clamp(v, -300, 300);
+    state.apriltagTriggerTrackingOffsetY = clamp(v, -500, 500);
     dom.trackingTriggerOffsetYValueEl.textContent = String(Math.round(state.apriltagTriggerTrackingOffsetY));
     saveNumberSetting('apriltagTriggerTrackingOffsetY', state.apriltagTriggerTrackingOffsetY);
+  });
+
+  dom.trackingOffsetCompressionSliderEl.value = String(Math.round(state.apriltagOffsetBottomCompressionPct));
+  dom.trackingOffsetCompressionValueEl.textContent = String(Math.round(state.apriltagOffsetBottomCompressionPct)) + '%';
+  dom.trackingOffsetCompressionSliderEl.addEventListener('input', function() {
+    var v = parseFloat(dom.trackingOffsetCompressionSliderEl.value);
+    if (!isFinite(v)) return;
+    state.apriltagOffsetBottomCompressionPct = clamp(v, 0, 60);
+    dom.trackingOffsetCompressionValueEl.textContent = String(Math.round(state.apriltagOffsetBottomCompressionPct)) + '%';
+    saveNumberSetting('apriltagOffsetBottomCompressionPct', state.apriltagOffsetBottomCompressionPct);
   });
 
   // ============== Helper Functions ==============

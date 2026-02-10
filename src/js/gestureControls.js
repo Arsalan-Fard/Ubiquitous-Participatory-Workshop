@@ -603,12 +603,27 @@ function syncPointerToolWithApriltagSelection(ps, handId) {
   var toolType = entry.toolType || 'selection';
   var toolEl = entry.toolEl && entry.toolEl.isConnected ? entry.toolEl : null;
   var prevToolType = ps.activeToolType;
+  var participantTriggerTagId = normalizeTagId(entry && entry.triggerTagId);
 
   if (toolType !== 'selection' && toolType !== APRILTAG_TOOL_NONE && !toolEl) {
     toolType = 'selection';
     toolEl = findSelectionToolElementForTriggerTag(entry.triggerTagId);
     entry.toolType = 'selection';
     entry.toolEl = toolEl;
+  }
+
+  // If a note tool loses its trigger assignment (e.g., user selects "None"),
+  // finalize the active annotation at the current primary-tag cursor position.
+  if (toolType === 'note' && toolEl && participantTriggerTagId) {
+    var toolTriggerTagId = normalizeTagId(toolEl.dataset && toolEl.dataset.triggerTagId);
+    if (toolTriggerTagId !== participantTriggerTagId) {
+      if (ps.activeFollowStickerEl) ps.followFinalizeRequested = true;
+      toolType = APRILTAG_TOOL_NONE;
+      toolEl = null;
+      entry.lastTriggerContactKey = '';
+      entry.activeLayerNavAction = '';
+      clearTriggerHoverVisual(entry);
+    }
   }
 
   if (ps.activeToolType === toolType && ps.activeToolElement === toolEl) {
