@@ -2288,10 +2288,10 @@ export function initApp() {
     if (!mapSetup || typeof mapSetup !== 'object') return;
 
     if (mapSetup.trackingOffset && typeof mapSetup.trackingOffset === 'object') {
-      var importedX = clamp(parseFloat(mapSetup.trackingOffset.x), -200, 200);
-      var importedY = clamp(parseFloat(mapSetup.trackingOffset.y), -200, 200);
-      var importedTriggerX = clamp(parseFloat(mapSetup.trackingOffset.triggerX), -200, 200);
-      var importedTriggerY = clamp(parseFloat(mapSetup.trackingOffset.triggerY), -200, 200);
+      var importedX = clamp(parseFloat(mapSetup.trackingOffset.x), -300, 300);
+      var importedY = clamp(parseFloat(mapSetup.trackingOffset.y), -300, 300);
+      var importedTriggerX = clamp(parseFloat(mapSetup.trackingOffset.triggerX), -300, 300);
+      var importedTriggerY = clamp(parseFloat(mapSetup.trackingOffset.triggerY), -300, 300);
       if (!isFinite(importedX)) importedX = 0;
       if (!isFinite(importedY)) importedY = 0;
       if (!isFinite(importedTriggerX)) importedTriggerX = 0;
@@ -3179,15 +3179,60 @@ export function initApp() {
     }
 
     if (det && det.corners && det.corners.length >= 4) {
-      var c0 = applyHomography(state.surfaceHomography, det.corners[0].x, det.corners[0].y);
-      var c1 = applyHomography(state.surfaceHomography, det.corners[1].x, det.corners[1].y);
-      if (c0 && c1) {
-        var angle = Math.atan2((c1.y - c0.y) * mapHeight, (c1.x - c0.x) * mapWidth);
-        var cosA = Math.cos(angle);
-        var sinA = Math.sin(angle);
+      var mappedCorners = [];
+      for (var ci = 0; ci < 4; ci++) {
+        var corner = det.corners[ci];
+        if (!corner) continue;
+        var mapped = applyHomography(state.surfaceHomography, corner.x, corner.y);
+        mappedCorners[ci] = mapped || null;
+      }
+
+      function buildUnitVector(aIndex, bIndex) {
+        var a = mappedCorners[aIndex];
+        var b = mappedCorners[bIndex];
+        if (!a || !b) return null;
+        var vx = (b.x - a.x) * mapWidth;
+        var vy = (b.y - a.y) * mapHeight;
+        var len = Math.hypot(vx, vy);
+        if (!isFinite(len) || len <= 1e-6) return null;
+        return { x: vx / len, y: vy / len };
+      }
+
+      function mergeAlignedUnitVectors(vectors) {
+        var base = null;
+        var sumX = 0;
+        var sumY = 0;
+        for (var vi = 0; vi < vectors.length; vi++) {
+          var vec = vectors[vi];
+          if (!vec) continue;
+          if (!base) {
+            base = vec;
+          } else {
+            var dot = vec.x * base.x + vec.y * base.y;
+            if (dot < 0) {
+              vec = { x: -vec.x, y: -vec.y };
+            }
+          }
+          sumX += vec.x;
+          sumY += vec.y;
+        }
+        var mag = Math.hypot(sumX, sumY);
+        if (!isFinite(mag) || mag <= 1e-6) return null;
+        return { x: sumX / mag, y: sumY / mag };
+      }
+
+      var xAxis = mergeAlignedUnitVectors([
+        buildUnitVector(0, 1),
+        buildUnitVector(3, 2)
+      ]);
+      var yAxis = mergeAlignedUnitVectors([
+        buildUnitVector(0, 3),
+        buildUnitVector(1, 2)
+      ]);
+      if (xAxis && yAxis) {
         return {
-          x: x + ox * cosA - oy * sinA,
-          y: y + ox * sinA + oy * cosA
+          x: x + ox * xAxis.x + oy * yAxis.x,
+          y: y + ox * xAxis.y + oy * yAxis.y
         };
       }
     }
@@ -3201,7 +3246,7 @@ export function initApp() {
   dom.trackingOffsetXSliderEl.addEventListener('input', function() {
     var v = parseFloat(dom.trackingOffsetXSliderEl.value);
     if (!isFinite(v)) return;
-    state.apriltagTrackingOffsetX = clamp(v, -200, 200);
+    state.apriltagTrackingOffsetX = clamp(v, -300, 300);
     dom.trackingOffsetXValueEl.textContent = String(Math.round(state.apriltagTrackingOffsetX));
     saveNumberSetting('apriltagTrackingOffsetX', state.apriltagTrackingOffsetX);
   });
@@ -3211,7 +3256,7 @@ export function initApp() {
   dom.trackingOffsetYSliderEl.addEventListener('input', function() {
     var v = parseFloat(dom.trackingOffsetYSliderEl.value);
     if (!isFinite(v)) return;
-    state.apriltagTrackingOffsetY = clamp(v, -200, 200);
+    state.apriltagTrackingOffsetY = clamp(v, -300, 300);
     dom.trackingOffsetYValueEl.textContent = String(Math.round(state.apriltagTrackingOffsetY));
     saveNumberSetting('apriltagTrackingOffsetY', state.apriltagTrackingOffsetY);
   });
@@ -3221,7 +3266,7 @@ export function initApp() {
   dom.trackingTriggerOffsetXSliderEl.addEventListener('input', function() {
     var v = parseFloat(dom.trackingTriggerOffsetXSliderEl.value);
     if (!isFinite(v)) return;
-    state.apriltagTriggerTrackingOffsetX = clamp(v, -200, 200);
+    state.apriltagTriggerTrackingOffsetX = clamp(v, -300, 300);
     dom.trackingTriggerOffsetXValueEl.textContent = String(Math.round(state.apriltagTriggerTrackingOffsetX));
     saveNumberSetting('apriltagTriggerTrackingOffsetX', state.apriltagTriggerTrackingOffsetX);
   });
@@ -3231,7 +3276,7 @@ export function initApp() {
   dom.trackingTriggerOffsetYSliderEl.addEventListener('input', function() {
     var v = parseFloat(dom.trackingTriggerOffsetYSliderEl.value);
     if (!isFinite(v)) return;
-    state.apriltagTriggerTrackingOffsetY = clamp(v, -200, 200);
+    state.apriltagTriggerTrackingOffsetY = clamp(v, -300, 300);
     dom.trackingTriggerOffsetYValueEl.textContent = String(Math.round(state.apriltagTriggerTrackingOffsetY));
     saveNumberSetting('apriltagTriggerTrackingOffsetY', state.apriltagTriggerTrackingOffsetY);
   });

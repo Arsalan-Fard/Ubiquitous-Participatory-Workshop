@@ -92,8 +92,8 @@ export var state = {
   // AprilTag tracking offsets (for participant tags 10-30)
   apriltagTrackingOffsetX: loadNumberSetting('apriltagTrackingOffsetX', 0, -300, 300),
   apriltagTrackingOffsetY: loadNumberSetting('apriltagTrackingOffsetY', 0, -300, 300),
-  apriltagTriggerTrackingOffsetX: loadNumberSetting('apriltagTriggerTrackingOffsetX', 0, -200, 200),
-  apriltagTriggerTrackingOffsetY: loadNumberSetting('apriltagTriggerTrackingOffsetY', 0, -200, 200),
+  apriltagTriggerTrackingOffsetX: loadNumberSetting('apriltagTriggerTrackingOffsetX', 0, -300, 300),
+  apriltagTriggerTrackingOffsetY: loadNumberSetting('apriltagTriggerTrackingOffsetY', 0, -300, 300),
 
   // AprilTag detections (latest frame)
   lastApriltagDetections: null,
