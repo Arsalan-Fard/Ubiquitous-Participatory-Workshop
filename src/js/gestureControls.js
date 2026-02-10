@@ -18,6 +18,7 @@ import {
   cloneSticker,
   startStickerDrag,
   eraseAtPoint,
+  setNoteFormRotation,
   bindStickerLatLngFromCurrentPosition,
   updateStickerMappingForCurrentView
 } from './stage4Drawing.js';
@@ -100,6 +101,7 @@ function getPointerState(handIndex) {
       activeFollowStickerEl: null, // Live sticker that follows primary while sticker tool is active
       activeFollowStickerContactKey: '',
       followFinalizeRequested: false,
+      noteFormRotationDeg: 0,
       drawingStarted: false,  // Whether drawing has been started by a trigger (2nd trigger enables actual drawing)
       eraserActive: false,
       eraserButtonEl: null,
@@ -384,6 +386,9 @@ function startFollowStickerForPointer(ps, templateEl, pointer, contactKey) {
   ps.activeFollowStickerEl = clonedEl;
   ps.activeFollowStickerContactKey = contactKey || '';
   ps.followFinalizeRequested = false;
+  if (clonedEl.classList && clonedEl.classList.contains('ui-note')) {
+    setNoteFormRotation(clonedEl, ps.noteFormRotationDeg);
+  }
 
   // Annotation follows as a live textfield while active.
   if (clonedEl.classList && clonedEl.classList.contains('ui-note') && state.stage === 4) {
@@ -457,6 +462,11 @@ function startFollowExistingStickerForPointer(ps, stickerEl, pointer, contactKey
   ps.activeFollowStickerEl = stickerEl;
   ps.activeFollowStickerContactKey = contactKey || '';
   ps.followFinalizeRequested = false;
+  if (stickerEl.classList && stickerEl.classList.contains('ui-note')) {
+    var existingDeg = parseFloat(stickerEl.dataset && stickerEl.dataset.noteFormRotationDeg);
+    if (isFinite(existingDeg)) ps.noteFormRotationDeg = existingDeg;
+    setNoteFormRotation(stickerEl, ps.noteFormRotationDeg);
+  }
   updateFollowStickerPosition(ps, pointer);
 
   if (stickerEl.classList && stickerEl.classList.contains('ui-note') && state.stage === 4) {
@@ -478,6 +488,37 @@ function updateFollowStickerPosition(ps, pointer) {
   var h = el.offsetHeight || 20;
   el.style.left = (pointer.x - w / 2) + 'px';
   el.style.top = (pointer.y - h / 2) + 'px';
+}
+
+function normalizeRotationDeg(value) {
+  var deg = parseFloat(value);
+  if (!isFinite(deg)) return 0;
+  while (deg <= -180) deg += 360;
+  while (deg > 180) deg -= 360;
+  return deg;
+}
+
+function computePerpendicularNoteRotation(pointer, handData, fallbackDeg) {
+  if (pointer && handData &&
+      isFinite(handData.primaryCenterX) && isFinite(handData.primaryCenterY) &&
+      isFinite(pointer.x) && isFinite(pointer.y)) {
+    var dx = pointer.x - handData.primaryCenterX;
+    var dy = pointer.y - handData.primaryCenterY;
+    var lenSq = dx * dx + dy * dy;
+    if (lenSq > 9) {
+      return normalizeRotationDeg((Math.atan2(dy, dx) * 180 / Math.PI) + 90);
+    }
+  }
+  return normalizeRotationDeg(fallbackDeg);
+}
+
+function updateNotePlacementRotation(ps, pointer, handData) {
+  if (!ps || !ps.activeFollowStickerEl) return;
+  var el = ps.activeFollowStickerEl;
+  if (!el.classList || !el.classList.contains('ui-note')) return;
+  var deg = computePerpendicularNoteRotation(pointer, handData, ps.noteFormRotationDeg);
+  ps.noteFormRotationDeg = deg;
+  setNoteFormRotation(el, deg);
 }
 
 function finalizeFollowStickerForPointer(ps, anchorPointer) {
@@ -507,6 +548,7 @@ function finalizeFollowStickerForPointer(ps, anchorPointer) {
       el.dataset.noteText = typedText;
       el.dataset.expanded = 'false';
     }
+    setNoteFormRotation(el, ps.noteFormRotationDeg);
     el.classList.remove('ui-note--expanded');
     el.classList.add('ui-note--sticker');
   }
@@ -1098,6 +1140,9 @@ function processPointerGesture(handIndex, pointer, handData) {
       startFollowStickerForPointer(ps, activeToolEl, pointer, activeContactKey);
     } else {
       updateFollowStickerPosition(ps, pointer);
+    }
+    if (activeToolType === 'note') {
+      updateNotePlacementRotation(ps, pointer, handData);
     }
     updatePointerCursor(handIndex, pointer, 0, null);
     ps.prevPointerTimeMs = nowMs;

@@ -1543,6 +1543,21 @@ export function initLeafletIfNeeded() {
     pitchWithRotate: false
   });
 
+  // Some style symbol layers reference sprite ids that may be missing at runtime.
+  // Provide a transparent 1x1 fallback to prevent repeated "style image missing" errors.
+  state.map.on('styleimagemissing', function(event) {
+    var imageId = event && event.id ? String(event.id) : '';
+    if (!imageId) return;
+    try {
+      if (state.map.hasImage(imageId)) return;
+      state.map.addImage(imageId, {
+        width: 1,
+        height: 1,
+        data: new Uint8Array([0, 0, 0, 0])
+      });
+    } catch (e) { /* ignore */ }
+  });
+
   state.map.on('load', function() {
     state.mapReady = true;
 
@@ -1631,6 +1646,9 @@ export function cloneSticker(templateEl) {
     noteEl.appendChild(iconEl);
 
     noteEl.classList.toggle('ui-note--sticker', !!String(noteEl.dataset.noteText || '').trim());
+    if (templateEl.dataset && templateEl.dataset.noteFormRotationDeg !== undefined) {
+      setNoteFormRotation(noteEl, parseFloat(templateEl.dataset.noteFormRotationDeg));
+    }
 
     templateEl.parentElement.appendChild(noteEl);
     setupNoteSticker(noteEl);
@@ -1667,6 +1685,87 @@ export function cloneSticker(templateEl) {
 
 // --- Note sticker ---
 
+function normalizeRotationDeg(value) {
+  var deg = parseFloat(value);
+  if (!isFinite(deg)) return 0;
+  while (deg <= -180) deg += 360;
+  while (deg > 180) deg -= 360;
+  return deg;
+}
+
+function colorToRgbaWithAlpha(colorText, alpha) {
+  var a = isFinite(alpha) ? Math.max(0, Math.min(1, alpha)) : 1;
+  var text = String(colorText || '').trim();
+  var m = null;
+
+  if (/^#([0-9a-f]{3})$/i.test(text)) {
+    m = /^#([0-9a-f]{3})$/i.exec(text);
+    var h3 = m[1];
+    var r3 = parseInt(h3.charAt(0) + h3.charAt(0), 16);
+    var g3 = parseInt(h3.charAt(1) + h3.charAt(1), 16);
+    var b3 = parseInt(h3.charAt(2) + h3.charAt(2), 16);
+    return 'rgba(' + r3 + ', ' + g3 + ', ' + b3 + ', ' + a + ')';
+  }
+
+  if (/^#([0-9a-f]{6})$/i.test(text)) {
+    m = /^#([0-9a-f]{6})$/i.exec(text);
+    var h6 = m[1];
+    var r6 = parseInt(h6.slice(0, 2), 16);
+    var g6 = parseInt(h6.slice(2, 4), 16);
+    var b6 = parseInt(h6.slice(4, 6), 16);
+    return 'rgba(' + r6 + ', ' + g6 + ', ' + b6 + ', ' + a + ')';
+  }
+
+  m = /^rgba?\(([^)]+)\)$/i.exec(text);
+  if (m) {
+    var parts = m[1].split(',');
+    if (parts.length >= 3) {
+      var r = parseFloat(parts[0]);
+      var g = parseFloat(parts[1]);
+      var b = parseFloat(parts[2]);
+      if (isFinite(r) && isFinite(g) && isFinite(b)) {
+        return 'rgba(' + Math.round(r) + ', ' + Math.round(g) + ', ' + Math.round(b) + ', ' + a + ')';
+      }
+    }
+  }
+
+  return 'rgba(255, 200, 87, ' + a + ')';
+}
+
+function applyNoteTextareaStyle(noteEl, textareaEl) {
+  if (!noteEl || !textareaEl) return;
+  var noteColor = noteEl.dataset && noteEl.dataset.color ? String(noteEl.dataset.color) : '#ffc857';
+  textareaEl.style.background = colorToRgbaWithAlpha(noteColor, 0.7);
+}
+
+function setExpandedNoteContainerVisual(noteEl, expanded) {
+  if (!noteEl || !noteEl.style) return;
+  if (expanded) {
+    noteEl.style.background = 'transparent';
+    noteEl.style.borderColor = 'transparent';
+    noteEl.style.boxShadow = 'none';
+    return;
+  }
+  var color = noteEl.dataset && noteEl.dataset.color ? String(noteEl.dataset.color) : '';
+  if (color) noteEl.style.background = color;
+  else noteEl.style.removeProperty('background');
+  noteEl.style.removeProperty('border-color');
+  noteEl.style.removeProperty('box-shadow');
+}
+
+export function setNoteFormRotation(noteEl, rotationDeg) {
+  if (!noteEl || !noteEl.classList || !noteEl.classList.contains('ui-note')) return;
+  var deg = normalizeRotationDeg(rotationDeg);
+  if (!noteEl.dataset) return;
+  noteEl.dataset.noteFormRotationDeg = String(deg);
+  noteEl.style.setProperty('--note-form-rotation', deg.toFixed(2) + 'deg');
+  var formEl = noteEl.querySelector ? noteEl.querySelector('.ui-note__form') : null;
+  if (formEl) {
+    formEl.style.transformOrigin = '50% 50%';
+    formEl.style.transform = 'rotate(' + deg.toFixed(2) + 'deg)';
+  }
+}
+
 function setupNoteSticker(noteEl) {
   noteEl.addEventListener('click', function (e) {
     if (state.stage !== 4) return;
@@ -1682,6 +1781,7 @@ function expandNoteSticker(noteEl) {
   noteEl.classList.remove('ui-note--sticker');
   noteEl.dataset.expanded = 'true';
   noteEl.classList.add('ui-note--expanded');
+  setExpandedNoteContainerVisual(noteEl, true);
 
   var formEl = noteEl.querySelector('.ui-note__form');
   if (!formEl) {
@@ -1692,35 +1792,31 @@ function expandNoteSticker(noteEl) {
     textareaEl.className = 'ui-note__textarea';
     textareaEl.placeholder = 'Enter your note...';
     textareaEl.rows = 3;
-
-    var submitBtn = document.createElement('button');
-    submitBtn.className = 'ui-note__submit';
-    submitBtn.type = 'button';
-    submitBtn.textContent = 'Save';
-
-    submitBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      var text = textareaEl.value.trim();
-      if (text) {
-        noteEl.dataset.noteText = text;
-        collapseNoteSticker(noteEl, text);
-      }
-    });
+    applyNoteTextareaStyle(noteEl, textareaEl);
 
     textareaEl.addEventListener('click', function (e) { e.stopPropagation(); });
     textareaEl.addEventListener('keydown', function (e) {
       e.stopPropagation();
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitBtn.click(); }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        var text = textareaEl.value.trim();
+        if (text) {
+          noteEl.dataset.noteText = text;
+          collapseNoteSticker(noteEl, text);
+        }
+      }
       if (e.key === 'Escape') { collapseNoteSticker(noteEl); }
     });
 
     formEl.appendChild(textareaEl);
-    formEl.appendChild(submitBtn);
     noteEl.appendChild(formEl);
+    setNoteFormRotation(noteEl, noteEl.dataset && noteEl.dataset.noteFormRotationDeg !== undefined ? parseFloat(noteEl.dataset.noteFormRotationDeg) : 0);
     setTimeout(function () { textareaEl.focus(); }, 50);
   } else {
+    setNoteFormRotation(noteEl, noteEl.dataset && noteEl.dataset.noteFormRotationDeg !== undefined ? parseFloat(noteEl.dataset.noteFormRotationDeg) : 0);
     var textarea = formEl.querySelector('.ui-note__textarea');
     if (textarea) {
+      applyNoteTextareaStyle(noteEl, textarea);
       textarea.value = noteEl.dataset.noteText || '';
       setTimeout(function () { textarea.focus(); }, 50);
     }
@@ -1730,6 +1826,7 @@ function expandNoteSticker(noteEl) {
 function collapseNoteSticker(noteEl, savedText) {
   noteEl.dataset.expanded = 'false';
   noteEl.classList.remove('ui-note--expanded');
+  setExpandedNoteContainerVisual(noteEl, false);
   var iconEl = noteEl.querySelector('.ui-note__icon');
   if (iconEl && savedText) iconEl.textContent = '📝✓';
   var hasText = !!String(noteEl.dataset.noteText || '').trim();

@@ -2272,7 +2272,10 @@ body.vga-mode-active #leafletMap {
     min-height: auto;
     border-radius: 14px;
     cursor: default;
-    padding: 12px;
+    padding: 0;
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
 }
 
 .ui-note--expanded .ui-note__icon {
@@ -2284,17 +2287,21 @@ body.vga-mode-active #leafletMap {
     flex-direction: column;
     gap: 8px;
     width: 100%;
+    transform-origin: 50% 50%;
+    transform: rotate(var(--note-form-rotation, 0deg));
 }
 
 .ui-note__textarea {
     width: 100%;
-    min-height: 60px;
-    padding: 8px 10px;
+    min-height: 90px;
+    padding: 12px 14px;
     border-radius: 8px;
-    border: 1px solid rgba(0, 0, 0, 0.2);
-    background: rgba(255, 255, 255, 0.95);
-    color: #333;
-    font-size: 13px;
+    border: 1px solid rgba(0, 0, 0, 0.28);
+    background: rgba(255, 200, 87, 0.70);
+    color: #111;
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.25;
     font-family: inherit;
     resize: vertical;
     outline: none;
@@ -2306,30 +2313,15 @@ body.vga-mode-active #leafletMap {
 }
 
 .ui-note__textarea::placeholder {
-    color: #999;
-}
-
-.ui-note__submit {
-    align-self: flex-end;
-    padding: 6px 16px;
-    border-radius: 6px;
-    border: none;
-    background: rgba(76, 175, 80, 0.9);
-    color: #fff;
-    font-size: 13px;
+    color: rgba(0, 0, 0, 0.55);
     font-weight: 700;
-    cursor: pointer;
-    transition: background 120ms ease;
-}
-
-.ui-note__submit:hover {
-    background: rgba(76, 175, 80, 1);
 }
 
 .ui-note.ui-sticker-instance {
     min-width: 36px;
     min-height: 36px;
     padding: 6px;
+    border-radius: 10px;
 }
 
 .ui-note.ui-sticker-instance .ui-note__icon {
@@ -2359,7 +2351,7 @@ body.vga-mode-active #leafletMap {
     min-width: 24px;
     min-height: 24px;
     padding: 0;
-    border-radius: 50%;
+    border-radius: 8px;
     border-width: 1px;
 }
 

@@ -865,11 +865,72 @@ export function initUiSetup(options) {
     });
   }
 
+  function colorToRgbaWithAlpha(colorText, alpha) {
+    var a = isFinite(alpha) ? Math.max(0, Math.min(1, alpha)) : 1;
+    var text = String(colorText || '').trim();
+    var m = null;
+
+    if (/^#([0-9a-f]{3})$/i.test(text)) {
+      m = /^#([0-9a-f]{3})$/i.exec(text);
+      var h3 = m[1];
+      var r3 = parseInt(h3.charAt(0) + h3.charAt(0), 16);
+      var g3 = parseInt(h3.charAt(1) + h3.charAt(1), 16);
+      var b3 = parseInt(h3.charAt(2) + h3.charAt(2), 16);
+      return 'rgba(' + r3 + ', ' + g3 + ', ' + b3 + ', ' + a + ')';
+    }
+
+    if (/^#([0-9a-f]{6})$/i.test(text)) {
+      m = /^#([0-9a-f]{6})$/i.exec(text);
+      var h6 = m[1];
+      var r6 = parseInt(h6.slice(0, 2), 16);
+      var g6 = parseInt(h6.slice(2, 4), 16);
+      var b6 = parseInt(h6.slice(4, 6), 16);
+      return 'rgba(' + r6 + ', ' + g6 + ', ' + b6 + ', ' + a + ')';
+    }
+
+    m = /^rgba?\(([^)]+)\)$/i.exec(text);
+    if (m) {
+      var parts = m[1].split(',');
+      if (parts.length >= 3) {
+        var r = parseFloat(parts[0]);
+        var g = parseFloat(parts[1]);
+        var b = parseFloat(parts[2]);
+        if (isFinite(r) && isFinite(g) && isFinite(b)) {
+          return 'rgba(' + Math.round(r) + ', ' + Math.round(g) + ', ' + Math.round(b) + ', ' + a + ')';
+        }
+      }
+    }
+
+    return 'rgba(255, 200, 87, ' + a + ')';
+  }
+
+  function applyNoteTextareaStyle(noteEl, textareaEl) {
+    if (!noteEl || !textareaEl) return;
+    var noteColor = noteEl.dataset && noteEl.dataset.color ? String(noteEl.dataset.color) : '#ffc857';
+    textareaEl.style.background = colorToRgbaWithAlpha(noteColor, 0.7);
+  }
+
+  function setExpandedNoteContainerVisual(noteEl, expanded) {
+    if (!noteEl || !noteEl.style) return;
+    if (expanded) {
+      noteEl.style.background = 'transparent';
+      noteEl.style.borderColor = 'transparent';
+      noteEl.style.boxShadow = 'none';
+      return;
+    }
+    var color = noteEl.dataset && noteEl.dataset.color ? String(noteEl.dataset.color) : '';
+    if (color) noteEl.style.background = color;
+    else noteEl.style.removeProperty('background');
+    noteEl.style.removeProperty('border-color');
+    noteEl.style.removeProperty('box-shadow');
+  }
+
   function expandNote(noteEl) {
     if (noteEl.dataset.expanded === 'true') return;
     noteEl.classList.remove('ui-note--sticker');
     noteEl.dataset.expanded = 'true';
     noteEl.classList.add('ui-note--expanded');
+    setExpandedNoteContainerVisual(noteEl, true);
 
     // Create form if not exists
     var formEl = noteEl.querySelector('.ui-note__form');
@@ -881,20 +942,7 @@ export function initUiSetup(options) {
       textareaEl.className = 'ui-note__textarea';
       textareaEl.placeholder = 'Enter your note...';
       textareaEl.rows = 3;
-
-      var submitBtn = document.createElement('button');
-      submitBtn.className = 'ui-note__submit';
-      submitBtn.type = 'button';
-      submitBtn.textContent = 'Save';
-
-      submitBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var text = textareaEl.value.trim();
-        if (text) {
-          noteEl.dataset.noteText = text;
-          collapseNote(noteEl, text);
-        }
-      });
+      applyNoteTextareaStyle(noteEl, textareaEl);
 
       textareaEl.addEventListener('click', function (e) {
         e.stopPropagation();
@@ -904,7 +952,11 @@ export function initUiSetup(options) {
         e.stopPropagation();
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
-          submitBtn.click();
+          var text = textareaEl.value.trim();
+          if (text) {
+            noteEl.dataset.noteText = text;
+            collapseNote(noteEl, text);
+          }
         }
         if (e.key === 'Escape') {
           collapseNote(noteEl);
@@ -912,7 +964,6 @@ export function initUiSetup(options) {
       });
 
       formEl.appendChild(textareaEl);
-      formEl.appendChild(submitBtn);
       noteEl.appendChild(formEl);
 
       // Focus textarea
@@ -922,6 +973,7 @@ export function initUiSetup(options) {
     } else {
       var textarea = formEl.querySelector('.ui-note__textarea');
       if (textarea) {
+        applyNoteTextareaStyle(noteEl, textarea);
         textarea.value = noteEl.dataset.noteText || '';
         setTimeout(function () {
           textarea.focus();
@@ -933,6 +985,7 @@ export function initUiSetup(options) {
   function collapseNote(noteEl, savedText) {
     noteEl.dataset.expanded = 'false';
     noteEl.classList.remove('ui-note--expanded');
+    setExpandedNoteContainerVisual(noteEl, false);
 
     // Update icon to show it has content
     var iconEl = noteEl.querySelector('.ui-note__icon');

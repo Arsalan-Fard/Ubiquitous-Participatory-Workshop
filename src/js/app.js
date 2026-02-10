@@ -4052,6 +4052,12 @@ export function initApp() {
                 isTouch: touchInfo ? !!touchInfo.isTouch : null
               };
 
+              var projectedPrimaryCenter = projectTagDetectionToMap(primaryDet, primaryTagId, null);
+              if (projectedPrimaryCenter) {
+                point.primaryCenterX = projectedPrimaryCenter.x;
+                point.primaryCenterY = projectedPrimaryCenter.y;
+              }
+
               var projectedPrimary = projectTagDetectionToMap(primaryDet, primaryTagId, 'primary');
               if (projectedPrimary) {
                 point.x = projectedPrimary.x;
