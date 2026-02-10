@@ -15,6 +15,10 @@ body {
     padding: 20px;
 }
 
+body.map-view-active {
+    overflow: hidden;
+}
+
 .container {
     text-align: center;
     width: 100%;

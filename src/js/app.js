@@ -3417,6 +3417,7 @@ export function initApp() {
     state.viewMode = mode === 'map' ? 'map' : 'camera';
 
     if (state.viewMode === 'map') {
+      document.body.classList.add('map-view-active');
       setBackendFeedActive(false);
       dom.mapViewEl.classList.remove('hidden');
       dom.mapViewEl.setAttribute('aria-hidden', 'false');
@@ -3436,6 +3437,7 @@ export function initApp() {
       updateStage4MapInteractivity();
       updateStickerMappingForCurrentView();
     } else {
+      document.body.classList.remove('map-view-active');
       setBackendFeedActive(true);
       dom.mapViewEl.classList.add('hidden');
       dom.mapViewEl.setAttribute('aria-hidden', 'true');
