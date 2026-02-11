@@ -32,7 +32,8 @@ import {
   handleStage3Gestures,
   resetStage3Gestures,
   updateApriltagTriggerSelections,
-  applyRemoteApriltagToolOverrides
+  applyRemoteApriltagToolOverrides,
+  applyRemoteApriltagNoteStateOverrides
 } from './gestureControls.js';
 
 // Stage 4 drawing
@@ -267,6 +268,8 @@ export function initApp() {
     if (!dom.phoneConnectPanelEl) return;
     if (!dom.phoneConnectUrlInputEl || !dom.phoneConnectGenerateBtnEl || !dom.phoneConnectQrImgEl || !dom.phoneConnectOpenLinkEl || !dom.phoneConnectCopyBtnEl) return;
 
+    var userEditedUrl = false;
+
     function updateQrFromInput() {
       var normalizedUrl = normalizePhoneControllerUrl(dom.phoneConnectUrlInputEl.value);
       if (!normalizedUrl) {
@@ -296,6 +299,10 @@ export function initApp() {
       updateQrFromInput();
     });
 
+    dom.phoneConnectUrlInputEl.addEventListener('input', function() {
+      userEditedUrl = true;
+    });
+
     dom.phoneConnectCopyBtnEl.addEventListener('click', function() {
       var normalizedUrl = normalizePhoneControllerUrl(dom.phoneConnectUrlInputEl.value);
       if (!normalizedUrl) {
@@ -315,8 +322,39 @@ export function initApp() {
       updateQrFromInput();
     });
 
-    dom.phoneConnectUrlInputEl.value = buildDefaultPhoneControllerUrl();
+    var defaultUrl = buildDefaultPhoneControllerUrl();
+    dom.phoneConnectUrlInputEl.value = defaultUrl;
     updateQrFromInput();
+
+    // Try to detect the LAN address that Flask prints as the second "Running on ...".
+    fetch('/api/server_info', { cache: 'no-store' }).then(function(resp) {
+      return resp.text().then(function(text) {
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        var body = null;
+        try { body = text ? JSON.parse(text) : null; } catch (e) { body = null; }
+        if (!body || body.ok !== true) throw new Error('invalid_response');
+        return body;
+      });
+    }).then(function(info) {
+      if (userEditedUrl) return;
+      var suggested = String(info.suggestedControllerUrl || '').trim();
+      if (!suggested) return;
+
+      var current = normalizePhoneControllerUrl(dom.phoneConnectUrlInputEl.value);
+      if (current && current !== defaultUrl) {
+        // Respect existing values that don't look like localhost defaults.
+        try {
+          var parsed = new URL(current);
+          var h = String(parsed.hostname || '').toLowerCase();
+          if (h && h !== 'localhost' && h.indexOf('127.') !== 0) return;
+        } catch (e) { }
+      }
+
+      dom.phoneConnectUrlInputEl.value = suggested;
+      updateQrFromInput();
+    }).catch(function() {
+      // Ignore; fallback is window.location.href based default.
+    });
   }
 
   // Global shortcut: press H to recapture the surface from AprilTags 1-4 in any stage.
@@ -3743,24 +3781,48 @@ export function initApp() {
 
     state.lastApriltagDetections = payload.detections;
     var remoteToolByTriggerTagId = {};
+    var remoteNoteStateByTriggerTagId = {};
     if (payload.controller && payload.controller.activeToolByTriggerTagId && typeof payload.controller.activeToolByTriggerTagId === 'object') {
       for (var rawTriggerTagId in payload.controller.activeToolByTriggerTagId) {
         var parsedTriggerTagId = parseInt(rawTriggerTagId, 10);
         if (!isFinite(parsedTriggerTagId)) continue;
         if (parsedTriggerTagId < 1 || parsedTriggerTagId > 9999) continue;
         var toolType = String(payload.controller.activeToolByTriggerTagId[rawTriggerTagId] || '').trim().toLowerCase();
-        if (!(toolType === 'draw' || toolType === 'dot' || toolType === 'eraser' || toolType === 'selection')) continue;
+        if (!(toolType === 'draw' || toolType === 'dot' || toolType === 'eraser' || toolType === 'selection' || toolType === 'note')) continue;
         remoteToolByTriggerTagId[String(parsedTriggerTagId)] = toolType;
       }
-    } else if (payload.controller && Array.isArray(payload.controller.activeDrawTriggerTagIds)) {
+    }
+    if (payload.controller && payload.controller.remoteNoteStateByTriggerTagId && typeof payload.controller.remoteNoteStateByTriggerTagId === 'object') {
+      for (var rawNoteTriggerTagId in payload.controller.remoteNoteStateByTriggerTagId) {
+        var parsedNoteTriggerTagId = parseInt(rawNoteTriggerTagId, 10);
+        if (!isFinite(parsedNoteTriggerTagId)) continue;
+        if (parsedNoteTriggerTagId < 1 || parsedNoteTriggerTagId > 9999) continue;
+        var notePayload = payload.controller.remoteNoteStateByTriggerTagId[rawNoteTriggerTagId];
+        if (!notePayload || typeof notePayload !== 'object') continue;
+        var noteText = String(notePayload.text || '');
+        if (noteText.length > 500) noteText = noteText.slice(0, 500);
+        var noteSessionActive = !!notePayload.sessionActive;
+        var noteFinalizeTick = parseInt(notePayload.finalizeTick, 10);
+        if (!isFinite(noteFinalizeTick) || noteFinalizeTick < 0) noteFinalizeTick = 0;
+        remoteNoteStateByTriggerTagId[String(parsedNoteTriggerTagId)] = {
+          text: noteText,
+          sessionActive: noteSessionActive,
+          finalizeTick: noteFinalizeTick
+        };
+      }
+    }
+    if (payload.controller && Array.isArray(payload.controller.activeDrawTriggerTagIds)) {
       for (var ci = 0; ci < payload.controller.activeDrawTriggerTagIds.length; ci++) {
         var fallbackTriggerTagId = parseInt(payload.controller.activeDrawTriggerTagIds[ci], 10);
         if (!isFinite(fallbackTriggerTagId)) continue;
         if (fallbackTriggerTagId < 1 || fallbackTriggerTagId > 9999) continue;
-        remoteToolByTriggerTagId[String(fallbackTriggerTagId)] = 'draw';
+        if (!remoteToolByTriggerTagId[String(fallbackTriggerTagId)]) {
+          remoteToolByTriggerTagId[String(fallbackTriggerTagId)] = 'draw';
+        }
       }
     }
     state.remoteControllerToolByTriggerTagId = remoteToolByTriggerTagId;
+    state.remoteControllerNoteStateByTriggerTagId = remoteNoteStateByTriggerTagId;
     var remoteDrawTriggerTagIds = [];
     for (var remoteTriggerTagId in remoteToolByTriggerTagId) {
       if (remoteToolByTriggerTagId[remoteTriggerTagId] !== 'draw') continue;
@@ -4315,6 +4377,7 @@ export function initApp() {
       processLayerPanVotes(layerNavVoteState, apriltagPoints);
       processLayerZoomVotes(layerNavVoteState, apriltagPoints);
       applyRemoteApriltagToolOverrides(state.remoteControllerToolByTriggerTagId);
+      applyRemoteApriltagNoteStateOverrides(state.remoteControllerNoteStateByTriggerTagId);
       handleStage3Gestures(apriltagPoints);
     } else {
       updateBlackoutPulse(false, nowMs);

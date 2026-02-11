@@ -1,6 +1,7 @@
 var CONTROLLER_STORAGE_KEY = 'phoneControllerClientId';
 var CONTROLLER_HEARTBEAT_INTERVAL_MS = 150;
 var CONTROLLER_HEARTBEAT_ENDPOINT = '/api/controller/heartbeat';
+var CONTROLLER_NOTE_TEXT_MAX_LEN = 500;
 
 function getOrCreateClientId() {
   var existing = '';
@@ -36,7 +37,11 @@ function createStyles() {
     '.controller-tool-btn.is-active { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.85), 0 14px 30px rgba(0, 0, 0, 0.35); transform: scale(1.08); background: rgba(43, 184, 255, 0.28); }',
     '.controller-tool-btn.is-active::before { opacity: 1; }',
     '.controller-tool-icon { width: 44px; height: 44px; pointer-events: none; position: relative; z-index: 1; }',
-    '.controller-tool-label { position: relative; z-index: 1; }'
+    '.controller-tool-label { position: relative; z-index: 1; }',
+    '.controller-note-wrap { width: 204px; }',
+    '.controller-note-wrap.hidden { display: none; }',
+    '.controller-note-input { width: 100%; min-height: 46px; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.22); background: rgba(17,24,39,0.85); color: #f9fafb; font-size: 16px; box-sizing: border-box; }',
+    '.controller-note-input::placeholder { color: rgba(249,250,251,0.65); }'
   ].join('');
   document.head.appendChild(style);
 }
@@ -252,14 +257,26 @@ function bindHoldEvents(buttonEl, onStart, onStop, getActivePointerId) {
   });
 }
 
+function clampNoteText(raw) {
+  var text = String(raw || '');
+  if (text.length > CONTROLLER_NOTE_TEXT_MAX_LEN) {
+    text = text.slice(0, CONTROLLER_NOTE_TEXT_MAX_LEN);
+  }
+  return text;
+}
+
 export function initControllerMode() {
   var clientId = getOrCreateClientId();
   var activePointerId = null;
   var holding = false;
   var heartbeatTimerId = 0;
+  var noteSyncTimerId = 0;
   var activeTool = 'draw';
   var activeButtonEl = null;
   var toolButtons = [];
+  var noteSessionActive = false;
+  var noteDraftText = '';
+  var noteFinalizeTick = 0;
 
   document.body.className = '';
   document.body.classList.add('controller-mode');
@@ -304,6 +321,19 @@ export function initControllerMode() {
   editRowEl.appendChild(editBtn);
   root.appendChild(editRowEl);
 
+  var noteWrapEl = document.createElement('div');
+  noteWrapEl.className = 'controller-note-wrap hidden';
+  var noteInputEl = document.createElement('input');
+  noteInputEl.className = 'controller-note-input';
+  noteInputEl.type = 'text';
+  noteInputEl.setAttribute('autocomplete', 'off');
+  noteInputEl.setAttribute('autocapitalize', 'sentences');
+  noteInputEl.setAttribute('spellcheck', 'false');
+  noteInputEl.setAttribute('aria-label', 'Annotation text');
+  noteInputEl.placeholder = 'Type annotation...';
+  noteWrapEl.appendChild(noteInputEl);
+  root.appendChild(noteWrapEl);
+
   document.body.appendChild(root);
 
   function buildPayload(isActive) {
@@ -311,7 +341,10 @@ export function initControllerMode() {
       clientId: clientId,
       tool: activeTool,
       triggerTagId: parseInt(triggerSelectEl.value, 10),
-      active: !!isActive,
+      active: !!(holding || noteSessionActive),
+      noteText: noteDraftText,
+      noteSessionActive: !!noteSessionActive,
+      noteFinalizeTick: noteFinalizeTick
     };
   }
 
@@ -319,11 +352,15 @@ export function initControllerMode() {
     for (var i = 0; i < toolButtons.length; i++) {
       toolButtons[i].classList.remove('is-active');
     }
-    if (isActive && activeButtonEl) activeButtonEl.classList.add('is-active');
+    if ((holding || noteSessionActive) && activeButtonEl) activeButtonEl.classList.add('is-active');
   }
 
   function pushHeartbeat(isActive, useBeacon) {
     return sendHeartbeat(buildPayload(isActive), !!useBeacon).catch(function() {});
+  }
+
+  function shouldRunHeartbeatLoop() {
+    return !!holding || !!noteSessionActive;
   }
 
   function clearHeartbeatLoop() {
@@ -332,40 +369,139 @@ export function initControllerMode() {
     heartbeatTimerId = 0;
   }
 
+  function syncHeartbeatLoop() {
+    if (!shouldRunHeartbeatLoop()) {
+      clearHeartbeatLoop();
+      return;
+    }
+    if (heartbeatTimerId) return;
+    heartbeatTimerId = setInterval(function() {
+      pushHeartbeat(holding, false);
+    }, CONTROLLER_HEARTBEAT_INTERVAL_MS);
+  }
+
+  function setNoteInputVisible(visible, focusInput) {
+    noteWrapEl.classList.toggle('hidden', !visible);
+    if (!visible) {
+      noteInputEl.blur();
+      return;
+    }
+    if (!focusInput) return;
+    setTimeout(function() {
+      try {
+        noteInputEl.focus();
+        var end = noteInputEl.value.length;
+        noteInputEl.setSelectionRange(end, end);
+      } catch (e) { }
+    }, 0);
+  }
+
+  function clearPendingNoteSync() {
+    if (!noteSyncTimerId) return;
+    clearTimeout(noteSyncTimerId);
+    noteSyncTimerId = 0;
+  }
+
+  function scheduleNoteSync() {
+    clearPendingNoteSync();
+    noteSyncTimerId = setTimeout(function() {
+      noteSyncTimerId = 0;
+      pushHeartbeat(holding, false);
+    }, 70);
+  }
+
+  function resetNoteSession() {
+    noteSessionActive = false;
+    noteDraftText = '';
+    noteInputEl.value = '';
+    setNoteInputVisible(false, false);
+    clearPendingNoteSync();
+  }
+
   function startHolding(pointerId, toolId, buttonEl) {
     if (holding) return;
+    var nextTool = String(toolId || 'draw');
+
+    if (noteSessionActive) {
+      resetNoteSession();
+    }
+
     holding = true;
     activePointerId = pointerId;
-    activeTool = toolId || 'draw';
+    activeTool = nextTool;
     activeButtonEl = buttonEl || null;
     setUiActive(true);
     pushHeartbeat(true, false);
-    heartbeatTimerId = setInterval(function() {
-      pushHeartbeat(true, false);
-    }, CONTROLLER_HEARTBEAT_INTERVAL_MS);
+    syncHeartbeatLoop();
   }
 
   function stopHolding(useBeacon) {
     if (!holding) return;
     holding = false;
     activePointerId = null;
-    clearHeartbeatLoop();
     setUiActive(false);
     activeButtonEl = null;
+
     pushHeartbeat(false, !!useBeacon);
+    syncHeartbeatLoop();
   }
 
   function getActivePointerId() {
     return activePointerId;
   }
 
+  var noteBtnEl = null;
   for (var bi = 0; bi < toolButtons.length; bi++) {
+    if (String(toolButtons[bi].dataset.tool || '') === 'note') {
+      noteBtnEl = toolButtons[bi];
+      continue;
+    }
     bindHoldEvents(toolButtons[bi], startHolding, stopHolding, getActivePointerId);
   }
 
+  if (noteBtnEl) {
+    noteBtnEl.addEventListener('pointerdown', function(e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();
+
+      if (!noteSessionActive) {
+        if (holding) stopHolding(false);
+        noteSessionActive = true;
+        activeTool = 'note';
+        activeButtonEl = noteBtnEl;
+        setNoteInputVisible(true, true);
+        setUiActive(true);
+        pushHeartbeat(true, false);
+        syncHeartbeatLoop();
+        return;
+      }
+
+      // Second press: finalize placement
+      noteFinalizeTick += 1;
+      noteSessionActive = false;
+      setNoteInputVisible(false, false);
+      setUiActive(false);
+      activeButtonEl = null;
+      pushHeartbeat(false, false);
+      noteDraftText = '';
+      noteInputEl.value = '';
+      clearPendingNoteSync();
+      syncHeartbeatLoop();
+    });
+  }
+
+  noteInputEl.addEventListener('input', function() {
+    var nextText = clampNoteText(noteInputEl.value);
+    if (noteInputEl.value !== nextText) noteInputEl.value = nextText;
+    noteDraftText = nextText;
+    if (!noteSessionActive) return;
+    syncHeartbeatLoop();
+    scheduleNoteSync();
+  });
+
   triggerSelectEl.addEventListener('change', function() {
-    if (!holding) return;
-    pushHeartbeat(true, false);
+    if (!holding && !noteSessionActive) return;
+    pushHeartbeat(holding, false);
   });
 
   window.addEventListener('blur', function() { stopHolding(false); });
@@ -374,5 +510,6 @@ export function initControllerMode() {
   });
   window.addEventListener('beforeunload', function() {
     stopHolding(true);
+    clearPendingNoteSync();
   });
 }

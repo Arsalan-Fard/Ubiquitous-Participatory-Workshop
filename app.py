@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import threading
 import time
 
@@ -22,6 +23,7 @@ WORKSHOP_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 CONTROLLER_CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 CONTROLLER_HEARTBEAT_TTL_SEC = 0.8
 CONTROLLER_SUPPORTED_TOOLS = {"draw", "dot", "note", "eraser", "selection"}
+CONTROLLER_NOTE_TEXT_MAX_LEN = 500
 
 app = Flask(__name__, static_folder=str(ROOT_DIR), static_url_path="")
 
@@ -126,6 +128,27 @@ def sanitize_controller_trigger_tag_id(raw):
   return trigger_tag_id
 
 
+def sanitize_controller_note_text(raw):
+  if raw is None:
+    return ""
+  text = str(raw)
+  if len(text) > CONTROLLER_NOTE_TEXT_MAX_LEN:
+    text = text[:CONTROLLER_NOTE_TEXT_MAX_LEN]
+  return text
+
+
+def sanitize_controller_note_finalize_tick(raw):
+  try:
+    tick = int(raw)
+  except (TypeError, ValueError):
+    return 0
+  if tick < 0:
+    return 0
+  if tick > 1000000000:
+    return 1000000000
+  return tick
+
+
 def get_controller_state_snapshot(now_ts=None):
   global controller_state_seq
   now = float(now_ts if now_ts is not None else time.time())
@@ -134,6 +157,7 @@ def get_controller_state_snapshot(now_ts=None):
     expired_ids = []
     active_draw_triggers = set()
     active_tool_by_trigger = {}
+    remote_note_state_by_trigger = {}
     active_clients = 0
     last_updated_at = 0.0
 
@@ -147,11 +171,24 @@ def get_controller_state_snapshot(now_ts=None):
       if updated_at > last_updated_at:
         last_updated_at = updated_at
 
-      if not client_state.get("active"):
-        continue
-
       trigger_tag_id = sanitize_controller_trigger_tag_id(client_state.get("triggerTagId"))
       if trigger_tag_id is None:
+        continue
+
+      note_text = sanitize_controller_note_text(client_state.get("noteText"))
+      note_session_active = bool(client_state.get("noteSessionActive"))
+      note_finalize_tick = sanitize_controller_note_finalize_tick(client_state.get("noteFinalizeTick"))
+      if note_session_active or note_text or note_finalize_tick > 0:
+        prev_note = remote_note_state_by_trigger.get(trigger_tag_id)
+        if prev_note is None or updated_at >= float(prev_note.get("updatedAt", 0.0) or 0.0):
+          remote_note_state_by_trigger[trigger_tag_id] = {
+            "text": note_text,
+            "sessionActive": bool(note_session_active),
+            "finalizeTick": int(note_finalize_tick),
+            "updatedAt": float(updated_at),
+          }
+
+      if not client_state.get("active"):
         continue
 
       tool = str(client_state.get("tool") or "draw").strip().lower()
@@ -180,11 +217,22 @@ def get_controller_state_snapshot(now_ts=None):
       if tool == "draw":
         active_draw_triggers.add(int(trigger_tag_id))
 
+    remote_note_state_by_trigger_tag_id = {}
+    for trigger_tag_id in sorted(remote_note_state_by_trigger.keys()):
+      trigger_key = str(int(trigger_tag_id))
+      note_state = remote_note_state_by_trigger[trigger_tag_id]
+      remote_note_state_by_trigger_tag_id[trigger_key] = {
+        "text": str(note_state.get("text") or ""),
+        "sessionActive": bool(note_state.get("sessionActive")),
+        "finalizeTick": int(note_state.get("finalizeTick") or 0),
+      }
+
     return {
       "seq": int(controller_state_seq),
       "updatedAt": float(last_updated_at),
       "activeClients": int(active_clients),
       "activeToolByTriggerTagId": active_tool_by_trigger_tag_id,
+      "remoteNoteStateByTriggerTagId": remote_note_state_by_trigger_tag_id,
       "activeDrawTriggerTagIds": sorted(active_draw_triggers),
     }
 
@@ -404,6 +452,9 @@ def api_controller_heartbeat():
   trigger_tag_id = sanitize_controller_trigger_tag_id(payload.get("triggerTagId"))
   if active and trigger_tag_id is None:
     return jsonify({"ok": False, "error": "invalid_trigger_tag_id"}), 400
+  note_text = sanitize_controller_note_text(payload.get("noteText"))
+  note_session_active = bool(payload.get("noteSessionActive"))
+  note_finalize_tick = sanitize_controller_note_finalize_tick(payload.get("noteFinalizeTick"))
 
   now = time.time()
   changed = False
@@ -414,12 +465,18 @@ def api_controller_heartbeat():
       "active": bool(active),
       "tool": tool,
       "triggerTagId": int(trigger_tag_id) if trigger_tag_id is not None else None,
+      "noteText": note_text,
+      "noteSessionActive": bool(note_session_active),
+      "noteFinalizeTick": int(note_finalize_tick),
       "updatedAt": float(now),
     }
     if (
       bool(previous.get("active")) != next_state["active"]
       or str(previous.get("tool") or "") != next_state["tool"]
       or sanitize_controller_trigger_tag_id(previous.get("triggerTagId")) != next_state["triggerTagId"]
+      or sanitize_controller_note_text(previous.get("noteText")) != next_state["noteText"]
+      or bool(previous.get("noteSessionActive")) != next_state["noteSessionActive"]
+      or sanitize_controller_note_finalize_tick(previous.get("noteFinalizeTick")) != next_state["noteFinalizeTick"]
     ):
       changed = True
     controller_clients[client_id] = next_state
@@ -429,6 +486,102 @@ def api_controller_heartbeat():
   return jsonify({
     "ok": True,
     "controller": get_controller_state_snapshot(now),
+  })
+
+
+def _server_info_port_from_request():
+  try:
+    port = int(request.environ.get("SERVER_PORT") or 0)
+  except Exception:
+    port = 0
+  if port > 0:
+    return port
+
+  host = str(request.host or "")
+  if host.startswith("[") and "]" in host:
+    host = host.split("]", 1)[1]
+  if ":" in host:
+    parts = host.rsplit(":", 1)
+    if len(parts) == 2:
+      try:
+        return int(parts[1])
+      except Exception:
+        return 0
+  return 0
+
+
+def _is_valid_ipv4_candidate(ip):
+  if not ip:
+    return False
+  if ip == "0.0.0.0":
+    return False
+  if ip.startswith("127."):
+    return False
+  if ip.startswith("169.254."):
+    return False
+  return True
+
+
+def _get_ipv4_candidates():
+  interface_ip = ""
+  candidates = set()
+
+  try:
+    from werkzeug.serving import get_interface_ip  # type: ignore
+    interface_ip = str(get_interface_ip(socket.AF_INET) or "")
+    candidates.add(interface_ip)
+  except Exception:
+    pass
+
+  try:
+    hostname = socket.gethostname()
+    for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+      candidates.add(str(info[4][0]))
+    for ip in socket.gethostbyname_ex(hostname)[2]:
+      candidates.add(str(ip))
+  except Exception:
+    pass
+
+  out = []
+  seen = set()
+  if _is_valid_ipv4_candidate(interface_ip):
+    out.append(interface_ip)
+    seen.add(interface_ip)
+  for ip in sorted(candidates):
+    if not _is_valid_ipv4_candidate(ip):
+      continue
+    if ip in seen:
+      continue
+    out.append(ip)
+    seen.add(ip)
+  return out
+
+
+@app.route("/api/server_info")
+def api_server_info():
+  scheme = str(request.scheme or "http")
+  port = _server_info_port_from_request()
+  if not port:
+    port = 443 if scheme == "https" else 80
+
+  candidates = _get_ipv4_candidates()
+  preferred_ip = candidates[0] if candidates else ""
+
+  base_urls = []
+  for ip in candidates:
+    base_urls.append(f"{scheme}://{ip}:{port}")
+
+  suggested_base_url = f"{scheme}://{preferred_ip}:{port}" if preferred_ip else str(request.host_url or "").rstrip("/")
+  suggested_controller_url = suggested_base_url + "/?mode=controller"
+
+  return jsonify({
+    "ok": True,
+    "scheme": scheme,
+    "port": int(port),
+    "ipv4Candidates": candidates,
+    "baseUrls": base_urls,
+    "suggestedBaseUrl": suggested_base_url,
+    "suggestedControllerUrl": suggested_controller_url,
   })
 
 

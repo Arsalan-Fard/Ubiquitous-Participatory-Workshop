@@ -101,6 +101,7 @@ export var state = {
   lastApriltagDetections2: null,
   apriltagTouchById: null,
   remoteControllerToolByTriggerTagId: {},
+  remoteControllerNoteStateByTriggerTagId: {},
   remoteControllerDrawTriggerTagIds: [],
 
   // MapLibre / Maptastic

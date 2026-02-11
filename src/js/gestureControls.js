@@ -41,9 +41,11 @@ var REMOTE_APRILTAG_TOOL_TYPES = {
   draw: true,
   dot: true,
   eraser: true,
-  selection: true
+  selection: true,
+  note: true
 };
 var apriltagActiveToolByHandId = {};
+var remoteNoteRuntimeByTriggerTagId = {};
 
 // Get all visible finger dot positions in viewport coordinates
 export function getAllMapPointerViewportPoints() {
@@ -113,7 +115,8 @@ function getPointerState(handIndex) {
       eraserActive: false,
       eraserButtonEl: null,
       activeToolType: 'selection',
-      activeToolElement: null
+      activeToolElement: null,
+      remoteNoteSessionActive: false
     };
   }
   return pointerStates[handIndex];
@@ -387,6 +390,7 @@ function findToolElementForTriggerTag(triggerTagId, toolType) {
   else if (wantedToolType === 'dot') selector = '.ui-dot';
   else if (wantedToolType === 'eraser') selector = '.ui-eraser';
   else if (wantedToolType === 'selection') selector = '.ui-selection';
+  else if (wantedToolType === 'note') selector = '.ui-note';
   if (!selector) return null;
 
   var toolEls = overlayEl.querySelectorAll(selector);
@@ -457,6 +461,90 @@ export function applyRemoteApriltagToolOverrides(remoteToolByTriggerTagId) {
     if (!hadPhysicalContact) {
       setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
     }
+  }
+}
+
+function getRemoteNoteStateForTriggerTagId(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  var text = String(raw.text || '');
+  if (text.length > 500) text = text.slice(0, 500);
+  var sessionActive = !!raw.sessionActive;
+  var finalizeTick = parseInt(raw.finalizeTick, 10);
+  if (!isFinite(finalizeTick) || finalizeTick < 0) finalizeTick = 0;
+  return {
+    text: text,
+    sessionActive: sessionActive,
+    finalizeTick: finalizeTick
+  };
+}
+
+function setRemoteNoteDraftTextOnElement(noteEl, text) {
+  if (!noteEl || !noteEl.classList || !noteEl.classList.contains('ui-note')) return;
+  var safeText = String(text || '');
+  if (noteEl.dataset) noteEl.dataset.noteText = safeText;
+  if (!noteEl.querySelector) return;
+  var textareaEl = noteEl.querySelector('.ui-note__textarea');
+  if (!textareaEl) return;
+  if (textareaEl.value !== safeText) {
+    textareaEl.value = safeText;
+  }
+}
+
+export function applyRemoteApriltagNoteStateOverrides(remoteNoteStateByTriggerTagId) {
+  syncApriltagActiveToolsWithParticipants();
+
+  var normalizedByTriggerId = {};
+  var source = (remoteNoteStateByTriggerTagId && typeof remoteNoteStateByTriggerTagId === 'object')
+    ? remoteNoteStateByTriggerTagId
+    : {};
+
+  for (var rawTriggerId in source) {
+    var normalizedTriggerId = normalizeTagId(rawTriggerId);
+    if (!normalizedTriggerId) continue;
+    var noteState = getRemoteNoteStateForTriggerTagId(source[rawTriggerId]);
+    if (!noteState) continue;
+    normalizedByTriggerId[normalizedTriggerId] = noteState;
+  }
+
+  for (var handId in apriltagActiveToolByHandId) {
+    var entry = apriltagActiveToolByHandId[handId];
+    if (!entry) continue;
+    var triggerId = normalizeTagId(entry.triggerTagId);
+    var noteState = triggerId ? normalizedByTriggerId[triggerId] : null;
+    var runtime = triggerId ? (remoteNoteRuntimeByTriggerTagId[triggerId] || { finalizeTick: 0 }) : { finalizeTick: 0 };
+
+    var ps = pointerStates[handId] || null;
+    if (!noteState) {
+      if (ps) ps.remoteNoteSessionActive = false;
+      continue;
+    }
+
+    if (ps) {
+      ps.remoteNoteSessionActive = !!noteState.sessionActive;
+      if (ps.activeFollowStickerEl && ps.activeFollowStickerEl.classList && ps.activeFollowStickerEl.classList.contains('ui-note')) {
+        setRemoteNoteDraftTextOnElement(ps.activeFollowStickerEl, noteState.text);
+      }
+    }
+
+    var prevFinalizeTick = parseInt(runtime.finalizeTick, 10);
+    if (!isFinite(prevFinalizeTick) || prevFinalizeTick < 0) prevFinalizeTick = 0;
+    if (noteState.finalizeTick > prevFinalizeTick) {
+      requestFollowStickerFinalizeForHand(handId);
+      if (ps) ps.remoteNoteSessionActive = false;
+      entry.remoteOverrideTool = '';
+      setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
+    }
+
+    if (triggerId) {
+      remoteNoteRuntimeByTriggerTagId[triggerId] = {
+        finalizeTick: noteState.finalizeTick
+      };
+    }
+  }
+
+  for (var triggerKey in remoteNoteRuntimeByTriggerTagId) {
+    if (normalizedByTriggerId[triggerKey]) continue;
+    delete remoteNoteRuntimeByTriggerTagId[triggerKey];
   }
 }
 
@@ -702,6 +790,14 @@ function resolveToolElementForTriggerPoint(pointer, triggerTagId) {
   return null;
 }
 
+function shouldKeepRemoteNoteDraftOnToolSwitch(ps, prevToolType, nextToolType) {
+  if (!ps || !ps.remoteNoteSessionActive) return false;
+  if (!ps.activeFollowStickerEl) return false;
+  if (!ps.activeFollowStickerEl.classList || !ps.activeFollowStickerEl.classList.contains('ui-note')) return false;
+  if (prevToolType !== 'note') return false;
+  return nextToolType === APRILTAG_TOOL_NONE;
+}
+
 function syncPointerToolWithApriltagSelection(ps, handId) {
   var entry = getApriltagActiveToolForHand(handId);
   var toolType = entry.toolType || 'selection';
@@ -734,7 +830,7 @@ function syncPointerToolWithApriltagSelection(ps, handId) {
     return { toolType: toolType, toolEl: toolEl };
   }
 
-  if (ps.activeFollowStickerEl && prevToolType !== toolType) {
+  if (ps.activeFollowStickerEl && prevToolType !== toolType && !shouldKeepRemoteNoteDraftOnToolSwitch(ps, prevToolType, toolType)) {
     finalizeFollowStickerForPointer(ps);
   }
 
