@@ -19,6 +19,8 @@ except Exception:
 ROOT_DIR = Path(__file__).resolve().parent
 WORKSHOPS_DIR = ROOT_DIR / "workshops"
 WORKSHOP_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+CONTROLLER_CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+CONTROLLER_HEARTBEAT_TTL_SEC = 0.8
 
 app = Flask(__name__, static_folder=str(ROOT_DIR), static_url_path="")
 
@@ -26,6 +28,7 @@ camera_lock = threading.Lock()
 frame_lock = threading.Lock()
 apriltag_lock = threading.Lock()
 stream_clients_lock = threading.Lock()
+controller_lock = threading.Lock()
 shutdown_event = threading.Event()
 
 camera = None
@@ -46,6 +49,8 @@ latest_apriltag_updated_at = 0.0
 latest_apriltag_seq = 0
 apriltag_error = None
 stream_clients = 0
+controller_clients = {}
+controller_state_seq = 0
 
 
 def parse_source(value: str):
@@ -97,6 +102,69 @@ def normalize_map_view_id(raw):
   if text == "":
     return None
   return text
+
+
+def sanitize_controller_client_id(raw):
+  if not isinstance(raw, str):
+    return None
+  candidate = raw.strip()
+  if not candidate:
+    return None
+  if not CONTROLLER_CLIENT_ID_RE.fullmatch(candidate):
+    return None
+  return candidate
+
+
+def sanitize_controller_trigger_tag_id(raw):
+  try:
+    trigger_tag_id = int(raw)
+  except (TypeError, ValueError):
+    return None
+  if trigger_tag_id < 1 or trigger_tag_id > 9999:
+    return None
+  return trigger_tag_id
+
+
+def get_controller_state_snapshot(now_ts=None):
+  global controller_state_seq
+  now = float(now_ts if now_ts is not None else time.time())
+
+  with controller_lock:
+    expired_ids = []
+    active_draw_triggers = set()
+    active_clients = 0
+    last_updated_at = 0.0
+
+    for client_id, client_state in list(controller_clients.items()):
+      updated_at = float(client_state.get("updatedAt", 0.0) or 0.0)
+      if (now - updated_at) > CONTROLLER_HEARTBEAT_TTL_SEC:
+        expired_ids.append(client_id)
+        continue
+
+      active_clients += 1
+      if updated_at > last_updated_at:
+        last_updated_at = updated_at
+
+      if not client_state.get("active"):
+        continue
+      if client_state.get("tool") != "draw":
+        continue
+
+      trigger_tag_id = sanitize_controller_trigger_tag_id(client_state.get("triggerTagId"))
+      if trigger_tag_id is not None:
+        active_draw_triggers.add(trigger_tag_id)
+
+    if expired_ids:
+      for client_id in expired_ids:
+        controller_clients.pop(client_id, None)
+      controller_state_seq += 1
+
+    return {
+      "seq": int(controller_state_seq),
+      "updatedAt": float(last_updated_at),
+      "activeClients": int(active_clients),
+      "activeDrawTriggerTagIds": sorted(active_draw_triggers),
+    }
 
 
 def init_camera(source) -> None:
@@ -295,19 +363,70 @@ def api_apriltags():
   return jsonify(build_apriltag_payload())
 
 
+@app.route("/api/controller/heartbeat", methods=["POST"])
+def api_controller_heartbeat():
+  global controller_state_seq
+  payload = request.get_json(silent=True)
+  if not isinstance(payload, dict):
+    return jsonify({"ok": False, "error": "invalid_json"}), 400
+
+  client_id = sanitize_controller_client_id(payload.get("clientId"))
+  if not client_id:
+    return jsonify({"ok": False, "error": "invalid_client_id"}), 400
+
+  tool = str(payload.get("tool") or "draw").strip().lower()
+  if tool != "draw":
+    return jsonify({"ok": False, "error": "invalid_tool"}), 400
+
+  active = bool(payload.get("active"))
+  trigger_tag_id = sanitize_controller_trigger_tag_id(payload.get("triggerTagId"))
+  if active and trigger_tag_id is None:
+    return jsonify({"ok": False, "error": "invalid_trigger_tag_id"}), 400
+
+  now = time.time()
+  changed = False
+
+  with controller_lock:
+    previous = controller_clients.get(client_id) or {}
+    next_state = {
+      "active": bool(active),
+      "tool": tool,
+      "triggerTagId": int(trigger_tag_id) if trigger_tag_id is not None else None,
+      "updatedAt": float(now),
+    }
+    if (
+      bool(previous.get("active")) != next_state["active"]
+      or str(previous.get("tool") or "") != next_state["tool"]
+      or sanitize_controller_trigger_tag_id(previous.get("triggerTagId")) != next_state["triggerTagId"]
+    ):
+      changed = True
+    controller_clients[client_id] = next_state
+    if changed:
+      controller_state_seq += 1
+
+  return jsonify({
+    "ok": True,
+    "controller": get_controller_state_snapshot(now),
+  })
+
+
 @app.route("/api/apriltags/stream")
 def api_apriltags_stream():
   def event_stream():
     last_sent_seq = -1
+    last_sent_controller_seq = -1
     last_keepalive_at = time.time()
     yield "retry: 1000\n\n"
 
     while not shutdown_event.is_set():
       payload = build_apriltag_payload()
       seq = int(payload.get("seq", 0))
+      controller = payload.get("controller") or {}
+      controller_seq = int(controller.get("seq", 0))
 
-      if seq != last_sent_seq:
+      if seq != last_sent_seq or controller_seq != last_sent_controller_seq:
         last_sent_seq = seq
+        last_sent_controller_seq = controller_seq
         yield "data: " + json.dumps(payload, separators=(",", ":")) + "\n\n"
         last_keepalive_at = time.time()
       else:
@@ -341,6 +460,7 @@ def build_apriltag_payload():
     frame_updated_at = float(latest_frame_updated_at or 0.0)
   with stream_clients_lock:
     active_stream_clients = int(stream_clients)
+  controller = get_controller_state_snapshot()
 
   payload = {
     "ok": error is None,
@@ -356,6 +476,7 @@ def build_apriltag_payload():
     "updatedAt": updated_at,
     "source": str(camera_source),
     "streamClients": active_stream_clients,
+    "controller": controller,
   }
   return payload
 

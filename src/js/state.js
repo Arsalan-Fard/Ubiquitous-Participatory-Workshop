@@ -100,6 +100,7 @@ export var state = {
   lastApriltagDetections: null,
   lastApriltagDetections2: null,
   apriltagTouchById: null,
+  remoteControllerDrawTriggerTagIds: [],
 
   // MapLibre / Maptastic
   map: null,

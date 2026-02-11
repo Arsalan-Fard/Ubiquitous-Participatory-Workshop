@@ -213,6 +213,7 @@ function syncApriltagActiveToolsWithParticipants() {
         triggerTagId: triggerTagId,
         lastTriggerContactKey: '',
         activeLayerNavAction: '',
+        remoteDrawActive: false,
         hoverContactKey: '',
         hoverToolEl: null,
         hoverStartedMs: 0
@@ -222,6 +223,7 @@ function syncApriltagActiveToolsWithParticipants() {
     entry.triggerTagId = triggerTagId;
     if (typeof entry.lastTriggerContactKey !== 'string') entry.lastTriggerContactKey = '';
     if (typeof entry.activeLayerNavAction !== 'string') entry.activeLayerNavAction = '';
+    if (typeof entry.remoteDrawActive !== 'boolean') entry.remoteDrawActive = false;
     if (typeof entry.hoverContactKey !== 'string') entry.hoverContactKey = '';
     if (!isFinite(entry.hoverStartedMs)) entry.hoverStartedMs = 0;
     if (entry.toolEl && !entry.toolEl.isConnected) entry.toolEl = null;
@@ -255,6 +257,7 @@ function getApriltagActiveToolForHand(handId) {
       triggerTagId: triggerTagId,
       lastTriggerContactKey: '',
       activeLayerNavAction: '',
+      remoteDrawActive: false,
       hoverContactKey: '',
       hoverToolEl: null,
       hoverStartedMs: 0
@@ -364,6 +367,63 @@ function getToolContactKey(toolMatch) {
     if (toolMatch.toolEl.dataset) toolMatch.toolEl.dataset.activationKey = keyId;
   }
   return String(toolMatch.toolType) + ':' + keyId;
+}
+
+function findDrawToolElementForTriggerTag(triggerTagId) {
+  var triggerId = normalizeTagId(triggerTagId);
+  var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
+  if (!overlayEl || !triggerId) return null;
+  var drawEls = overlayEl.querySelectorAll('.ui-draw');
+  for (var i = 0; i < drawEls.length; i++) {
+    var el = drawEls[i];
+    if (!el || !isTemplateInteractionElement(el)) continue;
+    if (normalizeTagId(el.dataset && el.dataset.triggerTagId) !== triggerId) continue;
+    return el;
+  }
+  return null;
+}
+
+export function applyRemoteApriltagDrawOverrides(remoteDrawTriggerTagIds) {
+  syncApriltagActiveToolsWithParticipants();
+
+  var remoteByTriggerId = {};
+  var drawIds = Array.isArray(remoteDrawTriggerTagIds) ? remoteDrawTriggerTagIds : [];
+  for (var i = 0; i < drawIds.length; i++) {
+    var normalized = normalizeTagId(drawIds[i]);
+    if (!normalized) continue;
+    remoteByTriggerId[normalized] = true;
+  }
+
+  for (var handId in apriltagActiveToolByHandId) {
+    var entry = apriltagActiveToolByHandId[handId];
+    if (!entry) continue;
+
+    var triggerId = normalizeTagId(entry.triggerTagId);
+    var shouldRemoteDraw = !!(triggerId && remoteByTriggerId[triggerId]);
+    if (shouldRemoteDraw) {
+      var drawToolEl = findDrawToolElementForTriggerTag(triggerId);
+      if (!drawToolEl) {
+        entry.remoteDrawActive = false;
+        continue;
+      }
+
+      entry.lastTriggerContactKey = '';
+      entry.activeLayerNavAction = '';
+      clearTriggerHoverVisual(entry);
+      setApriltagActiveToolForHand(handId, 'draw', drawToolEl);
+      entry.remoteDrawActive = true;
+      continue;
+    }
+
+    if (!entry.remoteDrawActive) continue;
+    entry.remoteDrawActive = false;
+    entry.lastTriggerContactKey = '';
+    entry.activeLayerNavAction = '';
+    clearTriggerHoverVisual(entry);
+    if (entry.toolType === 'draw') {
+      setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
+    }
+  }
 }
 
 function requestFollowStickerFinalizeForHand(handId) {

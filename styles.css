@@ -462,6 +462,92 @@ h1 {
     flex-wrap: wrap;
 }
 
+.phone-connect-panel {
+    margin: 14px auto 0;
+    width: min(900px, calc(100vw - 48px));
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.94);
+    border: 1px solid rgba(0, 0, 0, 0.14);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+    text-align: left;
+}
+
+.phone-connect-panel__title {
+    font-size: 14px;
+    font-weight: 800;
+    color: #202020;
+}
+
+.phone-connect-panel__row {
+    margin-top: 8px;
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.phone-connect-panel__input {
+    width: 100%;
+    height: 40px;
+    padding: 0 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    background: #fff;
+    color: #111;
+    outline: none;
+    font-size: 14px;
+}
+
+.phone-connect-panel__input:focus-visible {
+    border-color: rgba(43, 184, 255, 0.9);
+    box-shadow: 0 0 0 3px rgba(43, 184, 255, 0.18);
+}
+
+.phone-connect-panel__qr-wrap {
+    margin-top: 10px;
+    width: 180px;
+    height: 180px;
+    border-radius: 12px;
+    border: 1px solid rgba(0, 0, 0, 0.16);
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.phone-connect-panel__qr {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.phone-connect-panel__link {
+    margin-top: 8px;
+    display: block;
+    font-size: 12px;
+    color: #1769bb;
+    text-decoration: none;
+    word-break: break-all;
+}
+
+.phone-connect-panel__link:hover {
+    text-decoration: underline;
+}
+
+.phone-connect-panel__status {
+    margin-top: 6px;
+    min-height: 16px;
+    font-size: 12px;
+    color: #3a3a3a;
+}
+
+.phone-connect-panel__status--error {
+    color: #c62828;
+}
+
 .camera-select-row {
     margin-top: 12px;
     display: flex;
@@ -1689,6 +1775,20 @@ body.vga-mode-active #leafletMap {
         flex: 1 1 0;
         min-width: 0;
         justify-content: space-between;
+    }
+    .phone-connect-panel {
+        width: calc(100vw - 24px);
+    }
+    .phone-connect-panel__row {
+        grid-template-columns: 1fr;
+    }
+    .phone-connect-panel__row .btn {
+        width: 100%;
+        margin: 0;
+    }
+    .phone-connect-panel__qr-wrap {
+        width: 160px;
+        height: 160px;
     }
 }
 

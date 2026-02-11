@@ -31,7 +31,8 @@ import {
 import {
   handleStage3Gestures,
   resetStage3Gestures,
-  updateApriltagTriggerSelections
+  updateApriltagTriggerSelections,
+  applyRemoteApriltagDrawOverrides
 } from './gestureControls.js';
 
 // Stage 4 drawing
@@ -73,6 +74,8 @@ var BLACKOUT_PULSE_INTERVAL_MS = 1000;
 var BLACKOUT_PULSE_DURATION_MS = 100;
 var BLACKOUT_PULSE_STORAGE_KEY = 'apriltagBlackoutPulseEnabled';
 var MAP_MONO_STYLE_STORAGE_KEY = 'mapMonochromeStyleEnabled';
+var PHONE_CONNECT_DEFAULT_PATH = '/?mode=controller';
+var PHONE_CONNECT_QR_ENDPOINT = 'https://api.qrserver.com/v1/create-qr-code/';
 var apriltagPollInFlight = false;
 var apriltagLastPollMs = 0;
 var apriltagPollBackoffMs = 0;
@@ -137,6 +140,7 @@ export function initApp() {
   mountVgaButtonToActionBar();
   initBlackoutPulseToggle();
   initMapStyleToggle();
+  initPhoneConnectPanel();
 
   // Event listeners
   dom.startBtn.addEventListener('click', startCamera);
@@ -204,6 +208,116 @@ export function initApp() {
     dom.viewToggleEl.checked = true;
     setStage(3);
   });
+
+  function buildDefaultPhoneControllerUrl() {
+    try {
+      return new URL(PHONE_CONNECT_DEFAULT_PATH, window.location.href).toString();
+    } catch (e) {
+      return PHONE_CONNECT_DEFAULT_PATH;
+    }
+  }
+
+  function normalizePhoneControllerUrl(rawValue) {
+    var text = String(rawValue || '').trim();
+    if (!text) return '';
+    try {
+      var parsed = new URL(text, window.location.href);
+      var protocol = String(parsed.protocol || '').toLowerCase();
+      if (protocol !== 'http:' && protocol !== 'https:') return '';
+      return parsed.toString();
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function setPhoneConnectStatus(message, isError) {
+    if (!dom.phoneConnectStatusEl) return;
+    dom.phoneConnectStatusEl.textContent = message || '';
+    dom.phoneConnectStatusEl.classList.toggle('phone-connect-panel__status--error', !!isError);
+  }
+
+  function copyPhoneControllerUrl(url) {
+    if (!url) return Promise.reject(new Error('Invalid URL'));
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      return navigator.clipboard.writeText(url);
+    }
+    return new Promise(function(resolve, reject) {
+      var inputEl = document.createElement('input');
+      inputEl.type = 'text';
+      inputEl.value = url;
+      inputEl.style.position = 'fixed';
+      inputEl.style.left = '-9999px';
+      inputEl.style.top = '-9999px';
+      document.body.appendChild(inputEl);
+      inputEl.focus();
+      inputEl.select();
+      var ok = false;
+      try {
+        ok = document.execCommand('copy');
+      } catch (e) {
+        ok = false;
+      }
+      if (inputEl.parentNode) inputEl.parentNode.removeChild(inputEl);
+      if (ok) resolve();
+      else reject(new Error('Copy failed'));
+    });
+  }
+
+  function initPhoneConnectPanel() {
+    if (!dom.phoneConnectPanelEl) return;
+    if (!dom.phoneConnectUrlInputEl || !dom.phoneConnectGenerateBtnEl || !dom.phoneConnectQrImgEl || !dom.phoneConnectOpenLinkEl || !dom.phoneConnectCopyBtnEl) return;
+
+    function updateQrFromInput() {
+      var normalizedUrl = normalizePhoneControllerUrl(dom.phoneConnectUrlInputEl.value);
+      if (!normalizedUrl) {
+        dom.phoneConnectOpenLinkEl.href = '#';
+        dom.phoneConnectOpenLinkEl.textContent = '';
+        dom.phoneConnectQrImgEl.removeAttribute('src');
+        setPhoneConnectStatus('Enter a valid http/https URL.', true);
+        return;
+      }
+
+      dom.phoneConnectUrlInputEl.value = normalizedUrl;
+      dom.phoneConnectOpenLinkEl.href = normalizedUrl;
+      dom.phoneConnectOpenLinkEl.textContent = normalizedUrl;
+      setPhoneConnectStatus('Generating QR...', false);
+      dom.phoneConnectQrImgEl.src = PHONE_CONNECT_QR_ENDPOINT + '?size=260x260&margin=10&data=' + encodeURIComponent(normalizedUrl) + '&t=' + Date.now();
+    }
+
+    dom.phoneConnectQrImgEl.addEventListener('load', function() {
+      setPhoneConnectStatus('QR ready. Phones can scan this link.', false);
+    });
+
+    dom.phoneConnectQrImgEl.addEventListener('error', function() {
+      setPhoneConnectStatus('QR image failed to load. Use the link text directly.', true);
+    });
+
+    dom.phoneConnectGenerateBtnEl.addEventListener('click', function() {
+      updateQrFromInput();
+    });
+
+    dom.phoneConnectCopyBtnEl.addEventListener('click', function() {
+      var normalizedUrl = normalizePhoneControllerUrl(dom.phoneConnectUrlInputEl.value);
+      if (!normalizedUrl) {
+        setPhoneConnectStatus('Enter a valid URL before copying.', true);
+        return;
+      }
+      copyPhoneControllerUrl(normalizedUrl).then(function() {
+        setPhoneConnectStatus('Copied link to clipboard.', false);
+      }).catch(function() {
+        setPhoneConnectStatus('Could not copy link automatically.', true);
+      });
+    });
+
+    dom.phoneConnectUrlInputEl.addEventListener('keydown', function(e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      updateQrFromInput();
+    });
+
+    dom.phoneConnectUrlInputEl.value = buildDefaultPhoneControllerUrl();
+    updateQrFromInput();
+  }
 
   // Global shortcut: press H to recapture the surface from AprilTags 1-4 in any stage.
   document.addEventListener('keydown', function(e) {
@@ -3628,6 +3742,16 @@ export function initApp() {
     }
 
     state.lastApriltagDetections = payload.detections;
+    var remoteDrawTriggerTagIds = [];
+    if (payload.controller && Array.isArray(payload.controller.activeDrawTriggerTagIds)) {
+      for (var ci = 0; ci < payload.controller.activeDrawTriggerTagIds.length; ci++) {
+        var triggerTagId = parseInt(payload.controller.activeDrawTriggerTagIds[ci], 10);
+        if (!isFinite(triggerTagId)) continue;
+        if (triggerTagId < 1 || triggerTagId > 9999) continue;
+        remoteDrawTriggerTagIds.push(triggerTagId);
+      }
+    }
+    state.remoteControllerDrawTriggerTagIds = remoteDrawTriggerTagIds;
     apriltagPollBackoffMs = 0;
     apriltagPollBlockedUntilMs = 0;
     apriltagBackoffNotified = false;
@@ -4175,6 +4299,7 @@ export function initApp() {
       processLayerNavigationVotes(layerNavVoteState);
       processLayerPanVotes(layerNavVoteState, apriltagPoints);
       processLayerZoomVotes(layerNavVoteState, apriltagPoints);
+      applyRemoteApriltagDrawOverrides(state.remoteControllerDrawTriggerTagIds);
       handleStage3Gestures(apriltagPoints);
     } else {
       updateBlackoutPulse(false, nowMs);

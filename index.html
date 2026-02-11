@@ -80,6 +80,19 @@
             <button id="nextBtn" class="btn btn-secondary" disabled>Next</button>
             <button id="stopBtn" class="btn">Close Camera</button>
         </div>
+        <section id="phoneConnectPanel" class="phone-connect-panel" aria-label="Phone connection QR">
+            <div class="phone-connect-panel__title">Phone Controller Link</div>
+            <div class="phone-connect-panel__row">
+                <input id="phoneConnectUrlInput" class="phone-connect-panel__input" type="text" autocomplete="off" spellcheck="false" aria-label="Phone controller URL" />
+                <button id="phoneConnectGenerateBtn" class="btn btn-secondary" type="button">Generate QR</button>
+                <button id="phoneConnectCopyBtn" class="btn btn-secondary" type="button">Copy</button>
+            </div>
+            <div class="phone-connect-panel__qr-wrap">
+                <img id="phoneConnectQrImg" class="phone-connect-panel__qr" alt="Phone controller QR code" />
+            </div>
+            <a id="phoneConnectOpenLink" class="phone-connect-panel__link" href="#" target="_blank" rel="noopener noreferrer"></a>
+            <div id="phoneConnectStatus" class="phone-connect-panel__status" aria-live="polite"></div>
+        </section>
         <label id="viewToggleContainer" class="toggle-inline hidden" aria-label="Camera or map view">
             <span class="toggle-inline-label">Camera</span>
             <span class="switch">
