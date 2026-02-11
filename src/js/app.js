@@ -165,11 +165,6 @@ export function initApp() {
 
   // AprilTag calibration button - captures all 4 corners at once from visible AprilTags
   dom.apriltagCalibBtn.addEventListener('click', function() {
-    if (state.stage !== 2) return;
-    if (state.viewMode !== 'camera') {
-      dom.viewToggleEl.checked = false;
-      setViewMode('camera');
-    }
     triggerApriltagCalibration();
   });
 
@@ -208,6 +203,24 @@ export function initApp() {
     e.preventDefault();
     dom.viewToggleEl.checked = true;
     setStage(3);
+  });
+
+  // Global shortcut: press H to recapture the surface from AprilTags 1-4 in any stage.
+  document.addEventListener('keydown', function(e) {
+    if (resultsModeActive) return;
+    if (e.repeat) return;
+    var key = String(e.key || '').toLowerCase();
+    if (key !== 'h') return;
+
+    var target = e.target;
+    if (target) {
+      var tag = String(target.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return;
+      if (target.closest && target.closest('.ui-note__form')) return;
+    }
+
+    e.preventDefault();
+    triggerApriltagCalibration();
   });
 
   // Track mouse position globally for manual corner placement
