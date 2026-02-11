@@ -1835,7 +1835,7 @@ function expandNoteSticker(noteEl) {
   }
 }
 
-function collapseNoteSticker(noteEl, savedText) {
+export function collapseNoteSticker(noteEl, savedText) {
   noteEl.dataset.expanded = 'false';
   noteEl.classList.remove('ui-note--expanded');
   setExpandedNoteContainerVisual(noteEl, false);

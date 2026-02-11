@@ -19,6 +19,7 @@ import {
   startStickerDrag,
   eraseAtPoint,
   setNoteFormRotation,
+  collapseNoteSticker,
   bindStickerLatLngFromCurrentPosition,
   updateStickerMappingForCurrentView
 } from './stage4Drawing.js';
@@ -546,11 +547,9 @@ function finalizeFollowStickerForPointer(ps, anchorPointer) {
 
     if (el.dataset) {
       el.dataset.noteText = typedText;
-      el.dataset.expanded = 'false';
     }
     setNoteFormRotation(el, ps.noteFormRotationDeg);
-    el.classList.remove('ui-note--expanded');
-    el.classList.add('ui-note--sticker');
+    collapseNoteSticker(el, typedText);
   }
 
   // Snap the finalized element to the primary-tag cursor center.
@@ -736,8 +735,8 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
       // Keep the full glow state while trigger tag is not detected.
       continue;
     }
+    var handEntry = apriltagActiveToolByHandId[handKey];
     if (!contactByHandId[handKey]) {
-      var handEntry = apriltagActiveToolByHandId[handKey];
       // Losing tracking should not rearm; only clear hover visuals.
       clearTriggerHoverVisual(handEntry);
     }
