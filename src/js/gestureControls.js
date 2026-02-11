@@ -1151,6 +1151,14 @@ export function handleStage3Gestures(usableIndexTipPoints) {
           stopDrawingForPointer(ps.dragPointerId);
         }
 
+        // If the AprilTag disappears briefly while drawing, break the stroke so
+        // reappearance starts from the new point (prevents long connecting lines).
+        var apriltagStrokeGapBreakMs = 200;
+        if (ps.isDrawing && activeToolType === 'draw' && missingDuration >= apriltagStrokeGapBreakMs) {
+          ps.isDrawing = false;
+          stopDrawingForPointer(ps.dragPointerId);
+        }
+
         // Keep drawing active indefinitely while draw button is active.
         if (activeToolType === 'draw') {
           ps.triggerFillStartMs = 0;
