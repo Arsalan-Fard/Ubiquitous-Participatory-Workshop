@@ -1,0 +1,273 @@
+{
+  "version": 3,
+  "exportedAt": "2026-02-11T04:47:58.366Z",
+  "items": [
+    {
+      "type": "dot",
+      "color": "#2bb8ff",
+      "triggerTagId": "12",
+      "x": 739.484,
+      "y": 956.5,
+      "sessionId": ""
+    },
+    {
+      "type": "draw",
+      "color": "#2bb8ff",
+      "triggerTagId": "12",
+      "x": 873.5,
+      "y": 955.484,
+      "sessionId": ""
+    },
+    {
+      "type": "note",
+      "text": "",
+      "color": "#2bb8ff",
+      "triggerTagId": "12",
+      "x": 992.5,
+      "y": 954.969,
+      "sessionId": ""
+    },
+    {
+      "type": "selection",
+      "triggerTagId": "12",
+      "x": 1240,
+      "y": 952.5,
+      "sessionId": ""
+    },
+    {
+      "type": "layer-square",
+      "layerName": "Next",
+      "color": "#4caf50",
+      "triggerTagId": "",
+      "x": 1775,
+      "y": 956.5,
+      "sessionId": ""
+    },
+    {
+      "type": "layer-square",
+      "layerName": "Back",
+      "color": "#f6c945",
+      "triggerTagId": "",
+      "x": 1676,
+      "y": 954.5,
+      "sessionId": ""
+    },
+    {
+      "type": "note",
+      "text": "",
+      "color": "#ff2929",
+      "triggerTagId": "14",
+      "x": 970.484,
+      "y": 44.3906,
+      "sessionId": ""
+    },
+    {
+      "type": "draw",
+      "color": "#ff2929",
+      "triggerTagId": "14",
+      "x": 1101.5,
+      "y": 43.4844,
+      "sessionId": ""
+    },
+    {
+      "type": "dot",
+      "color": "#ff2934",
+      "triggerTagId": "14",
+      "x": 1231.5,
+      "y": 48.5,
+      "sessionId": ""
+    },
+    {
+      "type": "layer-square",
+      "layerName": "Pan",
+      "color": "#2ec27e",
+      "triggerTagId": "",
+      "x": 1774.98,
+      "y": 856.984,
+      "sessionId": "1"
+    },
+    {
+      "type": "layer-square",
+      "layerName": "Zoom",
+      "color": "#9c6dff",
+      "triggerTagId": "",
+      "x": 1676,
+      "y": 857,
+      "sessionId": "1"
+    },
+    {
+      "type": "eraser",
+      "triggerTagId": "12",
+      "x": 1120,
+      "y": 953.406,
+      "sessionId": "1"
+    },
+    {
+      "type": "eraser",
+      "triggerTagId": "14",
+      "x": 847,
+      "y": 42.1875,
+      "sessionId": "1"
+    },
+    {
+      "type": "selection",
+      "triggerTagId": "14",
+      "x": 730.984,
+      "y": 40.9844,
+      "sessionId": "1"
+    },
+    {
+      "type": "note",
+      "text": "",
+      "color": "#29ffad",
+      "triggerTagId": "",
+      "x": 12,
+      "y": 495.812,
+      "sessionId": "1"
+    },
+    {
+      "type": "draw",
+      "color": "#29ffbf",
+      "triggerTagId": "",
+      "x": 13.9844,
+      "y": 376,
+      "sessionId": "1"
+    },
+    {
+      "type": "dot",
+      "color": "#29ff9b",
+      "triggerTagId": "",
+      "x": 16,
+      "y": 260.984,
+      "sessionId": "1"
+    },
+    {
+      "type": "eraser",
+      "triggerTagId": "",
+      "x": 13,
+      "y": 600.875,
+      "sessionId": "1"
+    },
+    {
+      "type": "selection",
+      "triggerTagId": "",
+      "x": 14,
+      "y": 711,
+      "sessionId": "1"
+    },
+    {
+      "type": "draw",
+      "color": "#ffb029",
+      "triggerTagId": "",
+      "x": 1799,
+      "y": 310,
+      "sessionId": "1"
+    },
+    {
+      "type": "note",
+      "text": "",
+      "color": "#ffbb29",
+      "triggerTagId": "",
+      "x": 1795,
+      "y": 429.734,
+      "sessionId": "1"
+    },
+    {
+      "type": "dot",
+      "color": "#ffa629",
+      "triggerTagId": "",
+      "x": 1798,
+      "y": 185,
+      "sessionId": "1"
+    },
+    {
+      "type": "eraser",
+      "triggerTagId": "",
+      "x": 1801,
+      "y": 568.859,
+      "sessionId": "1"
+    },
+    {
+      "type": "selection",
+      "triggerTagId": "",
+      "x": 1802,
+      "y": 692,
+      "sessionId": "1"
+    },
+    {
+      "type": "label",
+      "text": "Question 1: Where do you visit the most?",
+      "x": 892.641,
+      "y": 867,
+      "rotationDeg": 0,
+      "sessionId": "1"
+    },
+    {
+      "type": "label",
+      "text": "Question 1: Where do you visit the most?",
+      "x": 874.641,
+      "y": 156,
+      "rotationDeg": 180,
+      "sessionId": "1"
+    },
+    {
+      "type": "label",
+      "text": "Question 1: Where do you visit the most?",
+      "x": -8.28906,
+      "y": 509.93,
+      "rotationDeg": 90,
+      "sessionId": "1"
+    },
+    {
+      "type": "label",
+      "text": "Question 1: Where do you visit the most?",
+      "x": 1611.71,
+      "y": 506.93,
+      "rotationDeg": 270,
+      "sessionId": "1"
+    }
+  ],
+  "participants": {
+    "count": 4,
+    "primaryTagIds": [
+      11,
+      10,
+      26,
+      15
+    ],
+    "triggerTagIds": [
+      12,
+      14,
+      27,
+      16
+    ]
+  },
+  "mapSetup": {
+    "version": 1,
+    "trackingOffset": {
+      "x": 23,
+      "y": 179,
+      "triggerX": 0,
+      "triggerY": 0,
+      "compressionPct": 0
+    },
+    "mapViews": [
+      {
+        "id": 1,
+        "name": "View 1",
+        "lat": 48.71330723587517,
+        "lng": 2.2117924690246586,
+        "zoom": 15
+      },
+      {
+        "id": 2,
+        "name": "View 2",
+        "lat": 48.71330723587517,
+        "lng": 2.2117924690246586,
+        "zoom": 15
+      }
+    ],
+    "activeMapViewId": 1,
+    "roads": []
+  }
+}

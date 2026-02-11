@@ -684,10 +684,8 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
       if (entry.lastTriggerContactKey) entry.lastTriggerContactKey = '';
       entry.activeLayerNavAction = '';
       clearTriggerHoverVisual(entry);
-      // Drawing should stop as soon as the trigger tag leaves the draw button.
-      if (entry.toolType === 'draw') {
-        setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
-      } else if (entry.toolType === 'dot' || entry.toolType === 'note' || entry.toolType === 'selection') {
+      // Keep draw mode active; only switch tools on explicit new trigger contact.
+      if (entry.toolType === 'dot' || entry.toolType === 'note' || entry.toolType === 'selection') {
         requestFollowStickerFinalizeForHand(handId);
         setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
       }

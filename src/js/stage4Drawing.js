@@ -144,9 +144,21 @@ function getHandDrawState(pointerId) {
   return handDrawStates[pointerId];
 }
 
+function isDrawButtonActiveForOtherPointer(buttonEl, exceptPointerId) {
+  if (!buttonEl) return false;
+  var exceptKey = String(exceptPointerId);
+  for (var pid in handDrawStates) {
+    if (String(pid) === exceptKey) continue;
+    var hs = handDrawStates[pid];
+    if (!hs || !hs.color || !hs.buttonEl) continue;
+    if (hs.buttonEl === buttonEl) return true;
+  }
+  return false;
+}
+
 export function activateDrawingForPointer(pointerId, color, buttonEl) {
   var hs = getHandDrawState(pointerId);
-  if (hs.buttonEl && hs.buttonEl !== buttonEl) {
+  if (hs.buttonEl && hs.buttonEl !== buttonEl && !isDrawButtonActiveForOtherPointer(hs.buttonEl, pointerId)) {
     hs.buttonEl.classList.remove('ui-draw--active');
   }
   hs.color = color;
@@ -168,7 +180,7 @@ export function deactivateDrawingForPointer(pointerId) {
       hs.isDrawing = false;
     }
     hs.activeStroke = null;
-    if (hs.buttonEl) {
+    if (hs.buttonEl && !isDrawButtonActiveForOtherPointer(hs.buttonEl, pointerId)) {
       hs.buttonEl.classList.remove('ui-draw--active');
     }
     delete handDrawStates[pointerId];
