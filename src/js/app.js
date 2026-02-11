@@ -384,11 +384,21 @@ export function initApp() {
     lastMouseY = e.clientY;
   });
 
-  // Keyboard shortcuts 1-4 to set surface corners at mouse position
+  // Keyboard shortcuts 1-4 to set surface corners.
+  // In Stage 2 camera view, prefer capturing from a visible AprilTag (place a tag at a corner and press 1-4).
+  // Fallback: set corner at the current mouse position within the video.
   document.addEventListener('keydown', function(e) {
     // Only in stage 2, camera view
     if (state.stage !== 2) return;
     if (state.viewMode !== 'camera') return;
+    if (e.repeat) return;
+
+    var target = e.target;
+    if (target) {
+      var tag = String(target.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return;
+      if (target.closest && target.closest('.ui-note__form')) return;
+    }
 
     var cornerIndex = null;
     if (e.key === '1') cornerIndex = 0;
@@ -398,7 +408,49 @@ export function initApp() {
 
     if (cornerIndex === null) return;
 
-    // Get video element bounds
+    // Prefer a visible calibration tag (by id, falling back to the largest visible tag).
+    var calibDet = null;
+    var detections = Array.isArray(state.lastApriltagDetections) ? state.lastApriltagDetections : [];
+    var preferredId = (typeof state.apriltagTouchCalibTagId === 'number') ? state.apriltagTouchCalibTagId : parseInt(state.apriltagTouchCalibTagId, 10);
+    if (isFinite(preferredId)) {
+      for (var ci = 0; ci < detections.length; ci++) {
+        var d = detections[ci];
+        if (!d) continue;
+        var id = typeof d.id === 'number' ? d.id : parseInt(d.id, 10);
+        if (id === preferredId) { calibDet = d; break; }
+      }
+    }
+    if (!calibDet) {
+      var bestArea = 0;
+      for (var bi = 0; bi < detections.length; bi++) {
+        var bd = detections[bi];
+        if (!bd || !Array.isArray(bd.corners) || bd.corners.length < 4) continue;
+        var area = computeApriltagQuadAreaPx(bd.corners);
+        if (isFinite(area) && area > bestArea) { bestArea = area; calibDet = bd; }
+      }
+    }
+
+    if (calibDet && Array.isArray(calibDet.corners) && calibDet.corners.length >= 4) {
+      var pickedCorner = pickApriltagCornerForSurfaceCorner(calibDet.corners, cornerIndex);
+      var pickedArea = computeApriltagQuadAreaPx(calibDet.corners);
+      if (pickedCorner && isFinite(pickedArea) && pickedArea > 0) {
+        e.preventDefault();
+        state.surfaceCorners[cornerIndex] = { x: pickedCorner.x, y: pickedCorner.y };
+        state.apriltagTouchCalibCornerAreaPx[cornerIndex] = pickedArea;
+        if (state.apriltagTouchCalibCornerSampleCornersPx && state.apriltagTouchCalibCornerSampleCornersPx.length === 4) {
+          state.apriltagTouchCalibCornerSampleCornersPx[cornerIndex] = cloneApriltagCornersPx(calibDet.corners);
+          if (state.apriltagTouchCalibCornerUvSideLen && state.apriltagTouchCalibCornerUvSideLen.length === 4) {
+            state.apriltagTouchCalibCornerUvSideLen[cornerIndex] = null;
+          }
+        }
+        flashCornerButton(cornerIndex);
+        updateSurfaceButtonsUI();
+        recomputeSurfaceHomographyIfReady();
+        return;
+      }
+    }
+
+    // Get video element bounds (fallback: mouse position)
     var videoEl = state.usingIpCamera && state.ipCameraImg ? state.ipCameraImg : dom.video;
     var rect = videoEl.getBoundingClientRect();
 
@@ -4168,6 +4220,306 @@ export function initApp() {
     return { x: cx, y: cy };
   }
 
+  function computeApriltagQuadAreaPx(corners) {
+    if (!Array.isArray(corners) || corners.length < 4) return NaN;
+    var area2 = 0;
+    for (var i = 0; i < 4; i++) {
+      var p1 = corners[i];
+      var p2 = corners[(i + 1) % 4];
+      if (!p1 || !p2) return NaN;
+      area2 += (p1.x * p2.y) - (p2.x * p1.y);
+    }
+    return Math.abs(area2) * 0.5;
+  }
+
+  function cloneApriltagCornersPx(corners) {
+    if (!Array.isArray(corners) || corners.length < 4) return null;
+    var out = [];
+    for (var i = 0; i < 4; i++) {
+      var c = corners[i];
+      if (!c || !isFinite(c.x) || !isFinite(c.y)) return null;
+      out.push({ x: c.x, y: c.y });
+    }
+    return out;
+  }
+
+  function pickApriltagCornerForSurfaceCorner(corners, surfaceCornerIndex) {
+    if (!Array.isArray(corners) || corners.length < 4) return null;
+    if (typeof surfaceCornerIndex !== 'number' || surfaceCornerIndex < 0 || surfaceCornerIndex > 3) return null;
+
+    // Surface corners are ordered as:
+    // 0: top-left, 1: top-right, 2: bottom-right, 3: bottom-left
+    var dirs = [
+      { x: -1, y: -1 },
+      { x: 1, y: -1 },
+      { x: 1, y: 1 },
+      { x: -1, y: 1 }
+    ];
+    var dir = dirs[surfaceCornerIndex];
+
+    var best = null;
+    var bestScore = -Infinity;
+    for (var i = 0; i < 4; i++) {
+      var c = corners[i];
+      if (!c) continue;
+      var score = c.x * dir.x + c.y * dir.y;
+      if (score > bestScore) { bestScore = score; best = c; }
+    }
+    return best ? { x: best.x, y: best.y } : null;
+  }
+
+  function areApriltagTouchCalibAreasReady() {
+    var a = state.apriltagTouchCalibCornerAreaPx;
+    if (!a || a.length !== 4) return false;
+    for (var i = 0; i < 4; i++) {
+      if (!isFinite(a[i]) || a[i] <= 0) return false;
+    }
+    return true;
+  }
+
+  function computeMeanQuadSideLen(points) {
+    if (!Array.isArray(points) || points.length < 4) return NaN;
+    var sum = 0;
+    for (var i = 0; i < 4; i++) {
+      var p1 = points[i];
+      var p2 = points[(i + 1) % 4];
+      if (!p1 || !p2 || !isFinite(p1.x) || !isFinite(p1.y) || !isFinite(p2.x) || !isFinite(p2.y)) return NaN;
+      var dx = p1.x - p2.x;
+      var dy = p1.y - p2.y;
+      sum += Math.sqrt(dx * dx + dy * dy);
+    }
+    return sum / 4;
+  }
+
+  function areApriltagTouchCalibUvSizesReady() {
+    var a = state.apriltagTouchCalibCornerUvSideLen;
+    if (!a || a.length !== 4) return false;
+    for (var i = 0; i < 4; i++) {
+      if (!isFinite(a[i]) || a[i] <= 0) return false;
+    }
+    return true;
+  }
+
+  function maybeUpdateApriltagTouchCalibUvSizes() {
+    if (!state.surfaceHomography) return;
+    if (areApriltagTouchCalibUvSizesReady()) return;
+    var samples = state.apriltagTouchCalibCornerSampleCornersPx;
+    if (!samples || samples.length !== 4) return;
+
+    if (!state.apriltagTouchCalibCornerUvSideLen || state.apriltagTouchCalibCornerUvSideLen.length !== 4) {
+      state.apriltagTouchCalibCornerUvSideLen = [null, null, null, null];
+    }
+
+    for (var i = 0; i < 4; i++) {
+      if (isFinite(state.apriltagTouchCalibCornerUvSideLen[i]) && state.apriltagTouchCalibCornerUvSideLen[i] > 0) continue;
+      var cornersPx = samples[i];
+      if (!Array.isArray(cornersPx) || cornersPx.length < 4) continue;
+      var uvCorners = [];
+      for (var k = 0; k < 4; k++) {
+        var c = cornersPx[k];
+        var mapped = c ? applyHomography(state.surfaceHomography, c.x, c.y) : null;
+        uvCorners.push(mapped);
+      }
+      var sideLen = computeMeanQuadSideLen(uvCorners);
+      if (isFinite(sideLen) && sideLen > 0) state.apriltagTouchCalibCornerUvSideLen[i] = sideLen;
+    }
+  }
+
+  function getExpectedApriltagUvSideLenAtUv(uv) {
+    if (!uv || !isFinite(uv.x) || !isFinite(uv.y)) return null;
+    maybeUpdateApriltagTouchCalibUvSizes();
+    if (!areApriltagTouchCalibUvSizesReady()) return null;
+
+    var a = state.apriltagTouchCalibCornerUvSideLen;
+    var u = uv.x; var v = uv.y;
+    if (u < 0) u = 0; else if (u > 1) u = 1;
+    if (v < 0) v = 0; else if (v > 1) v = 1;
+
+    // Bilinear interpolation over the surface:
+    // a[0]=TL, a[1]=TR, a[2]=BR, a[3]=BL
+    var top = a[0] + (a[1] - a[0]) * u;
+    var bottom = a[3] + (a[2] - a[3]) * u;
+    var expected = top + (bottom - top) * v;
+    return (isFinite(expected) && expected > 0) ? expected : null;
+  }
+
+  function getExpectedApriltagAreaPxAtUv(uv) {
+    if (!uv || !isFinite(uv.x) || !isFinite(uv.y)) return null;
+    if (!areApriltagTouchCalibAreasReady()) return null;
+
+    var a = state.apriltagTouchCalibCornerAreaPx;
+    var u = uv.x; var v = uv.y;
+    if (u < 0) u = 0; else if (u > 1) u = 1;
+    if (v < 0) v = 0; else if (v > 1) v = 1;
+
+    // Bilinear interpolation over the surface:
+    // a[0]=TL, a[1]=TR, a[2]=BR, a[3]=BL
+    var top = a[0] + (a[1] - a[0]) * u;
+    var bottom = a[3] + (a[2] - a[3]) * u;
+    var expected = top + (bottom - top) * v;
+    return (isFinite(expected) && expected > 0) ? expected : null;
+  }
+
+  function computeUvQuadSquareError(uvCorners) {
+    if (!Array.isArray(uvCorners) || uvCorners.length < 4) return NaN;
+    for (var i = 0; i < 4; i++) {
+      var p = uvCorners[i];
+      if (!p || !isFinite(p.x) || !isFinite(p.y)) return NaN;
+    }
+
+    function dist(a, b) {
+      var dx = a.x - b.x;
+      var dy = a.y - b.y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    var p0 = uvCorners[0], p1 = uvCorners[1], p2 = uvCorners[2], p3 = uvCorners[3];
+    var s0 = dist(p0, p1);
+    var s1 = dist(p1, p2);
+    var s2 = dist(p2, p3);
+    var s3 = dist(p3, p0);
+    var minS = Math.min(s0, s1, s2, s3);
+    var maxS = Math.max(s0, s1, s2, s3);
+    if (!minS || !isFinite(minS) || !isFinite(maxS)) return NaN;
+    var sideRatio = (maxS / minS) - 1;
+
+    var d0 = dist(p0, p2);
+    var d1 = dist(p1, p3);
+    var minD = Math.min(d0, d1);
+    var maxD = Math.max(d0, d1);
+    if (!minD || !isFinite(minD) || !isFinite(maxD)) return NaN;
+    var diagRatio = (maxD / minD) - 1;
+
+    var maxAbsCos = 0;
+    for (var vi = 0; vi < 4; vi++) {
+      var prev = uvCorners[(vi + 3) % 4];
+      var cur = uvCorners[vi];
+      var next = uvCorners[(vi + 1) % 4];
+      var v1x = prev.x - cur.x;
+      var v1y = prev.y - cur.y;
+      var v2x = next.x - cur.x;
+      var v2y = next.y - cur.y;
+      var n1 = Math.sqrt(v1x * v1x + v1y * v1y);
+      var n2 = Math.sqrt(v2x * v2x + v2y * v2y);
+      if (!n1 || !n2) return NaN;
+      var cos = (v1x * v2x + v1y * v2y) / (n1 * n2);
+      if (!isFinite(cos)) return NaN;
+      var absCos = Math.abs(cos);
+      if (absCos > maxAbsCos) maxAbsCos = absCos;
+    }
+
+    return Math.max(sideRatio, diagRatio, maxAbsCos);
+  }
+
+  function updateApriltagTouchByIdFromSize(nowMs, detections, detectionById) {
+    if (!state.surfaceHomography) return;
+    maybeUpdateApriltagTouchCalibUvSizes();
+    if (!areApriltagTouchCalibUvSizesReady()) {
+      // Don't block interactions until calibration is complete.
+      state.apriltagTouchById = null;
+      return;
+    }
+
+    var hoverSideRatio = parseFloat(state.apriltagTouchHoverUvSideRatio);
+    var touchSideRatio = parseFloat(state.apriltagTouchTouchUvSideRatio);
+    var maxUvSquareError = parseFloat(state.apriltagTouchMaxUvSquareError);
+
+    if (!isFinite(hoverSideRatio) || hoverSideRatio <= 1) hoverSideRatio = 1.12;
+    if (!isFinite(touchSideRatio) || touchSideRatio <= 1 || touchSideRatio > hoverSideRatio) touchSideRatio = Math.min(hoverSideRatio, 1.06);
+    if (!isFinite(maxUvSquareError) || maxUvSquareError < 0) maxUvSquareError = 0.1;
+
+    if (!state.apriltagTouchById || typeof state.apriltagTouchById !== 'object') {
+      state.apriltagTouchById = {};
+    }
+
+    for (var idStr in detectionById) {
+      if (!Object.prototype.hasOwnProperty.call(detectionById, idStr)) continue;
+      var tagId = parseInt(idStr, 10);
+      if (!isFinite(tagId)) continue;
+      var det = detectionById[idStr];
+      if (!det || !Array.isArray(det.corners) || det.corners.length < 4) continue;
+
+      var center = det.center && isFinite(det.center.x) && isFinite(det.center.y) ? det.center : getApriltagCenter(det);
+      if (!center) continue;
+
+      var uv = applyHomography(state.surfaceHomography, center.x, center.y);
+      var expectedUvSideLen = getExpectedApriltagUvSideLenAtUv(uv);
+      if (!expectedUvSideLen) continue;
+
+      var uvCorners = [];
+      for (var k = 0; k < 4; k++) {
+        var c = det.corners[k];
+        uvCorners.push(c ? applyHomography(state.surfaceHomography, c.x, c.y) : null);
+      }
+      var observedUvSideLen = computeMeanQuadSideLen(uvCorners);
+      if (!isFinite(observedUvSideLen) || observedUvSideLen <= 0) continue;
+
+      var uvSideRatio = observedUvSideLen / expectedUvSideLen;
+      if (!isFinite(uvSideRatio)) continue;
+
+      var observedAreaPx = computeApriltagQuadAreaPx(det.corners);
+
+      // Distortion in surface UV space; high values indicate tilt/off-plane.
+      var uvSquareError = computeUvQuadSquareError(uvCorners);
+
+      var info = state.apriltagTouchById[tagId];
+      if (!info || typeof info !== 'object') info = state.apriltagTouchById[tagId] = {};
+
+      if (typeof info.isTouch !== 'boolean') info.isTouch = true;
+      if (!isFinite(info.baselineUvSquareError)) info.baselineUvSquareError = NaN;
+
+      // Instant touch/hover with hysteresis:
+      // - Strong UV skew => hovering (tilt/off-plane)
+      // - Larger-than-expected UV size => hovering (closer to camera)
+      // - Smaller => touching
+      // - Between => keep previous value to avoid flicker
+      if (maxUvSquareError > 0 && isFinite(uvSquareError) && uvSquareError > maxUvSquareError) {
+        info.isTouch = false;
+      }
+      else if (uvSideRatio > hoverSideRatio) {
+        info.isTouch = false;
+      }
+      else if (uvSideRatio < touchSideRatio) {
+        info.isTouch = true;
+      }
+
+      // Learn a baseline UV "squareness" when the tag is touching, then treat
+      // increased distortion as tilt/off-plane. This avoids overly strict
+      // absolute thresholds that can disable drawing entirely.
+      if (info.isTouch && isFinite(uvSquareError)) {
+        if (!isFinite(info.baselineUvSquareError)) {
+          info.baselineUvSquareError = uvSquareError;
+        } else {
+          info.baselineUvSquareError = info.baselineUvSquareError * 0.9 + uvSquareError * 0.1;
+        }
+      }
+      if (maxUvSquareError > 0 && info.isTouch && isFinite(uvSquareError) && isFinite(info.baselineUvSquareError)) {
+        if ((uvSquareError - info.baselineUvSquareError) > maxUvSquareError) {
+          info.isTouch = false;
+        }
+      }
+
+      // Touch diagnostics
+      info.lastSeenMs = nowMs;
+      info.observedAreaPx = observedAreaPx;
+      info.uv = uv;
+      info.uvSquareError = uvSquareError;
+      info.expectedUvSideLen = expectedUvSideLen;
+      info.observedUvSideLen = observedUvSideLen;
+      info.uvSideRatio = uvSideRatio;
+    }
+
+    // Cleanup stale entries to avoid unbounded growth
+    var ttlMs = 5000;
+    for (var key in state.apriltagTouchById) {
+      if (!Object.prototype.hasOwnProperty.call(state.apriltagTouchById, key)) continue;
+      var entry = state.apriltagTouchById[key];
+      if (!entry || !isFinite(entry.lastSeenMs) || (nowMs - entry.lastSeenMs) > ttlMs) {
+        delete state.apriltagTouchById[key];
+      }
+    }
+  }
+
   function getSurfaceCornerFromApriltags(detections, cornerIndex, width, height) {
     if (typeof cornerIndex !== 'number' || cornerIndex < 0 || cornerIndex > 3) return null;
     if (!width || !height) return null;
@@ -4301,6 +4653,8 @@ export function initApp() {
       detectionById[detId] = det;
     }
 
+    updateApriltagTouchByIdFromSize(nowMs, detections, detectionById);
+
     // Gesture handling (dwell-to-click and pinch-to-drag for Stage 3 and 4)
     if ((state.stage === 3 || state.stage === 4) && state.viewMode === 'map' && !vgaModeActive) {
       var apriltagPoints = [];
@@ -4432,7 +4786,6 @@ export function initApp() {
     } else {
       updateApriltagHud(dom.apriltagHudEl, null, width, height);
     }
-    state.apriltagTouchById = null;
 
     // Map AprilTag debug dots for configured participant IDs
     if (isMapViewWithHomography) {
