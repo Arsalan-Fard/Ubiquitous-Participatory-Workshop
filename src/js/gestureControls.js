@@ -37,6 +37,12 @@ var APRILTAG_TOOL_SELECTOR = '.ui-dot, .ui-note, .ui-draw, .ui-eraser, .ui-selec
 var APRILTAG_TOOL_ACTIVE_CLASS = 'ui-trigger-active';
 var APRILTAG_TOOL_HOVER_CLASS = 'ui-trigger-hovering';
 var APRILTAG_TOOL_NONE = 'none';
+var REMOTE_APRILTAG_TOOL_TYPES = {
+  draw: true,
+  dot: true,
+  eraser: true,
+  selection: true
+};
 var apriltagActiveToolByHandId = {};
 
 // Get all visible finger dot positions in viewport coordinates
@@ -213,7 +219,7 @@ function syncApriltagActiveToolsWithParticipants() {
         triggerTagId: triggerTagId,
         lastTriggerContactKey: '',
         activeLayerNavAction: '',
-        remoteDrawActive: false,
+        remoteOverrideTool: '',
         hoverContactKey: '',
         hoverToolEl: null,
         hoverStartedMs: 0
@@ -223,7 +229,7 @@ function syncApriltagActiveToolsWithParticipants() {
     entry.triggerTagId = triggerTagId;
     if (typeof entry.lastTriggerContactKey !== 'string') entry.lastTriggerContactKey = '';
     if (typeof entry.activeLayerNavAction !== 'string') entry.activeLayerNavAction = '';
-    if (typeof entry.remoteDrawActive !== 'boolean') entry.remoteDrawActive = false;
+    if (typeof entry.remoteOverrideTool !== 'string') entry.remoteOverrideTool = '';
     if (typeof entry.hoverContactKey !== 'string') entry.hoverContactKey = '';
     if (!isFinite(entry.hoverStartedMs)) entry.hoverStartedMs = 0;
     if (entry.toolEl && !entry.toolEl.isConnected) entry.toolEl = null;
@@ -257,7 +263,7 @@ function getApriltagActiveToolForHand(handId) {
       triggerTagId: triggerTagId,
       lastTriggerContactKey: '',
       activeLayerNavAction: '',
-      remoteDrawActive: false,
+      remoteOverrideTool: '',
       hoverContactKey: '',
       hoverToolEl: null,
       hoverStartedMs: 0
@@ -369,29 +375,48 @@ function getToolContactKey(toolMatch) {
   return String(toolMatch.toolType) + ':' + keyId;
 }
 
-function findDrawToolElementForTriggerTag(triggerTagId) {
+function findToolElementForTriggerTag(triggerTagId, toolType) {
   var triggerId = normalizeTagId(triggerTagId);
+  var wantedToolType = String(toolType || '').trim().toLowerCase();
   var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
-  if (!overlayEl || !triggerId) return null;
-  var drawEls = overlayEl.querySelectorAll('.ui-draw');
-  for (var i = 0; i < drawEls.length; i++) {
-    var el = drawEls[i];
+  if (!overlayEl || !triggerId || !wantedToolType) return null;
+  if (!REMOTE_APRILTAG_TOOL_TYPES[wantedToolType]) return null;
+
+  var selector = '';
+  if (wantedToolType === 'draw') selector = '.ui-draw';
+  else if (wantedToolType === 'dot') selector = '.ui-dot';
+  else if (wantedToolType === 'eraser') selector = '.ui-eraser';
+  else if (wantedToolType === 'selection') selector = '.ui-selection';
+  if (!selector) return null;
+
+  var toolEls = overlayEl.querySelectorAll(selector);
+  for (var i = 0; i < toolEls.length; i++) {
+    var el = toolEls[i];
     if (!el || !isTemplateInteractionElement(el)) continue;
     if (normalizeTagId(el.dataset && el.dataset.triggerTagId) !== triggerId) continue;
+    if (getToolTypeFromElement(el) !== wantedToolType) continue;
     return el;
   }
   return null;
 }
 
-export function applyRemoteApriltagDrawOverrides(remoteDrawTriggerTagIds) {
+function shouldFinalizeFollowStickerForTool(toolType) {
+  return toolType === 'dot' || toolType === 'selection';
+}
+
+export function applyRemoteApriltagToolOverrides(remoteToolByTriggerTagId) {
   syncApriltagActiveToolsWithParticipants();
 
   var remoteByTriggerId = {};
-  var drawIds = Array.isArray(remoteDrawTriggerTagIds) ? remoteDrawTriggerTagIds : [];
-  for (var i = 0; i < drawIds.length; i++) {
-    var normalized = normalizeTagId(drawIds[i]);
-    if (!normalized) continue;
-    remoteByTriggerId[normalized] = true;
+  var source = (remoteToolByTriggerTagId && typeof remoteToolByTriggerTagId === 'object')
+    ? remoteToolByTriggerTagId
+    : {};
+  for (var rawTriggerId in source) {
+    var normalizedTriggerId = normalizeTagId(rawTriggerId);
+    if (!normalizedTriggerId) continue;
+    var remoteToolType = String(source[rawTriggerId] || '').trim().toLowerCase();
+    if (!REMOTE_APRILTAG_TOOL_TYPES[remoteToolType]) continue;
+    remoteByTriggerId[normalizedTriggerId] = remoteToolType;
   }
 
   for (var handId in apriltagActiveToolByHandId) {
@@ -399,31 +424,51 @@ export function applyRemoteApriltagDrawOverrides(remoteDrawTriggerTagIds) {
     if (!entry) continue;
 
     var triggerId = normalizeTagId(entry.triggerTagId);
-    var shouldRemoteDraw = !!(triggerId && remoteByTriggerId[triggerId]);
-    if (shouldRemoteDraw) {
-      var drawToolEl = findDrawToolElementForTriggerTag(triggerId);
-      if (!drawToolEl) {
-        entry.remoteDrawActive = false;
+    var wantedRemoteToolType = triggerId ? (remoteByTriggerId[triggerId] || '') : '';
+    if (wantedRemoteToolType) {
+      var remoteToolEl = findToolElementForTriggerTag(triggerId, wantedRemoteToolType);
+      if (!remoteToolEl) {
+        if (entry.remoteOverrideTool === wantedRemoteToolType) {
+          entry.remoteOverrideTool = '';
+        }
         continue;
       }
 
       entry.lastTriggerContactKey = '';
       entry.activeLayerNavAction = '';
       clearTriggerHoverVisual(entry);
-      setApriltagActiveToolForHand(handId, 'draw', drawToolEl);
-      entry.remoteDrawActive = true;
+      setApriltagActiveToolForHand(handId, wantedRemoteToolType, remoteToolEl);
+      entry.remoteOverrideTool = wantedRemoteToolType;
       continue;
     }
 
-    if (!entry.remoteDrawActive) continue;
-    entry.remoteDrawActive = false;
+    if (!entry.remoteOverrideTool) continue;
+    var previousRemoteTool = String(entry.remoteOverrideTool || '');
+    entry.remoteOverrideTool = '';
+
+    var hadPhysicalContact = !!entry.lastTriggerContactKey;
     entry.lastTriggerContactKey = '';
     entry.activeLayerNavAction = '';
     clearTriggerHoverVisual(entry);
-    if (entry.toolType === 'draw') {
+
+    if (shouldFinalizeFollowStickerForTool(previousRemoteTool)) {
+      requestFollowStickerFinalizeForHand(handId);
+    }
+    if (!hadPhysicalContact) {
       setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
     }
   }
+}
+
+export function applyRemoteApriltagDrawOverrides(remoteDrawTriggerTagIds) {
+  var mapByTriggerId = {};
+  var drawIds = Array.isArray(remoteDrawTriggerTagIds) ? remoteDrawTriggerTagIds : [];
+  for (var i = 0; i < drawIds.length; i++) {
+    var normalized = normalizeTagId(drawIds[i]);
+    if (!normalized) continue;
+    mapByTriggerId[normalized] = 'draw';
+  }
+  applyRemoteApriltagToolOverrides(mapByTriggerId);
 }
 
 function requestFollowStickerFinalizeForHand(handId) {

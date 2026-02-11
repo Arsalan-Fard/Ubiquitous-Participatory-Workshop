@@ -32,7 +32,7 @@ import {
   handleStage3Gestures,
   resetStage3Gestures,
   updateApriltagTriggerSelections,
-  applyRemoteApriltagDrawOverrides
+  applyRemoteApriltagToolOverrides
 } from './gestureControls.js';
 
 // Stage 4 drawing
@@ -3742,14 +3742,29 @@ export function initApp() {
     }
 
     state.lastApriltagDetections = payload.detections;
-    var remoteDrawTriggerTagIds = [];
-    if (payload.controller && Array.isArray(payload.controller.activeDrawTriggerTagIds)) {
-      for (var ci = 0; ci < payload.controller.activeDrawTriggerTagIds.length; ci++) {
-        var triggerTagId = parseInt(payload.controller.activeDrawTriggerTagIds[ci], 10);
-        if (!isFinite(triggerTagId)) continue;
-        if (triggerTagId < 1 || triggerTagId > 9999) continue;
-        remoteDrawTriggerTagIds.push(triggerTagId);
+    var remoteToolByTriggerTagId = {};
+    if (payload.controller && payload.controller.activeToolByTriggerTagId && typeof payload.controller.activeToolByTriggerTagId === 'object') {
+      for (var rawTriggerTagId in payload.controller.activeToolByTriggerTagId) {
+        var parsedTriggerTagId = parseInt(rawTriggerTagId, 10);
+        if (!isFinite(parsedTriggerTagId)) continue;
+        if (parsedTriggerTagId < 1 || parsedTriggerTagId > 9999) continue;
+        var toolType = String(payload.controller.activeToolByTriggerTagId[rawTriggerTagId] || '').trim().toLowerCase();
+        if (!(toolType === 'draw' || toolType === 'dot' || toolType === 'eraser' || toolType === 'selection')) continue;
+        remoteToolByTriggerTagId[String(parsedTriggerTagId)] = toolType;
       }
+    } else if (payload.controller && Array.isArray(payload.controller.activeDrawTriggerTagIds)) {
+      for (var ci = 0; ci < payload.controller.activeDrawTriggerTagIds.length; ci++) {
+        var fallbackTriggerTagId = parseInt(payload.controller.activeDrawTriggerTagIds[ci], 10);
+        if (!isFinite(fallbackTriggerTagId)) continue;
+        if (fallbackTriggerTagId < 1 || fallbackTriggerTagId > 9999) continue;
+        remoteToolByTriggerTagId[String(fallbackTriggerTagId)] = 'draw';
+      }
+    }
+    state.remoteControllerToolByTriggerTagId = remoteToolByTriggerTagId;
+    var remoteDrawTriggerTagIds = [];
+    for (var remoteTriggerTagId in remoteToolByTriggerTagId) {
+      if (remoteToolByTriggerTagId[remoteTriggerTagId] !== 'draw') continue;
+      remoteDrawTriggerTagIds.push(parseInt(remoteTriggerTagId, 10));
     }
     state.remoteControllerDrawTriggerTagIds = remoteDrawTriggerTagIds;
     apriltagPollBackoffMs = 0;
@@ -4299,7 +4314,7 @@ export function initApp() {
       processLayerNavigationVotes(layerNavVoteState);
       processLayerPanVotes(layerNavVoteState, apriltagPoints);
       processLayerZoomVotes(layerNavVoteState, apriltagPoints);
-      applyRemoteApriltagDrawOverrides(state.remoteControllerDrawTriggerTagIds);
+      applyRemoteApriltagToolOverrides(state.remoteControllerToolByTriggerTagId);
       handleStage3Gestures(apriltagPoints);
     } else {
       updateBlackoutPulse(false, nowMs);

@@ -21,6 +21,7 @@ WORKSHOPS_DIR = ROOT_DIR / "workshops"
 WORKSHOP_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 CONTROLLER_CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 CONTROLLER_HEARTBEAT_TTL_SEC = 0.8
+CONTROLLER_SUPPORTED_TOOLS = {"draw", "dot", "note", "eraser", "selection"}
 
 app = Flask(__name__, static_folder=str(ROOT_DIR), static_url_path="")
 
@@ -132,6 +133,7 @@ def get_controller_state_snapshot(now_ts=None):
   with controller_lock:
     expired_ids = []
     active_draw_triggers = set()
+    active_tool_by_trigger = {}
     active_clients = 0
     last_updated_at = 0.0
 
@@ -147,22 +149,42 @@ def get_controller_state_snapshot(now_ts=None):
 
       if not client_state.get("active"):
         continue
-      if client_state.get("tool") != "draw":
-        continue
 
       trigger_tag_id = sanitize_controller_trigger_tag_id(client_state.get("triggerTagId"))
-      if trigger_tag_id is not None:
-        active_draw_triggers.add(trigger_tag_id)
+      if trigger_tag_id is None:
+        continue
+
+      tool = str(client_state.get("tool") or "draw").strip().lower()
+      if tool not in CONTROLLER_SUPPORTED_TOOLS:
+        continue
+
+      previous = active_tool_by_trigger.get(trigger_tag_id)
+      if previous is None or updated_at >= float(previous.get("updatedAt", 0.0) or 0.0):
+        active_tool_by_trigger[trigger_tag_id] = {
+          "tool": tool,
+          "updatedAt": float(updated_at),
+        }
 
     if expired_ids:
       for client_id in expired_ids:
         controller_clients.pop(client_id, None)
       controller_state_seq += 1
 
+    active_tool_by_trigger_tag_id = {}
+    for trigger_tag_id in sorted(active_tool_by_trigger.keys()):
+      trigger_key = str(int(trigger_tag_id))
+      tool = str(active_tool_by_trigger[trigger_tag_id].get("tool") or "").strip().lower()
+      if tool not in CONTROLLER_SUPPORTED_TOOLS:
+        continue
+      active_tool_by_trigger_tag_id[trigger_key] = tool
+      if tool == "draw":
+        active_draw_triggers.add(int(trigger_tag_id))
+
     return {
       "seq": int(controller_state_seq),
       "updatedAt": float(last_updated_at),
       "activeClients": int(active_clients),
+      "activeToolByTriggerTagId": active_tool_by_trigger_tag_id,
       "activeDrawTriggerTagIds": sorted(active_draw_triggers),
     }
 
@@ -375,7 +397,7 @@ def api_controller_heartbeat():
     return jsonify({"ok": False, "error": "invalid_client_id"}), 400
 
   tool = str(payload.get("tool") or "draw").strip().lower()
-  if tool != "draw":
+  if tool not in CONTROLLER_SUPPORTED_TOOLS:
     return jsonify({"ok": False, "error": "invalid_tool"}), 400
 
   active = bool(payload.get("active"))
