@@ -173,6 +173,11 @@ export function initApp() {
     triggerApriltagCalibration();
   });
 
+  // Surface plane calibration button - toggles collection of tag 3D poses for touch detection
+  dom.surfacePlaneBtn.addEventListener('click', function() {
+    toggleSurfacePlaneCollection();
+  });
+
   // Hamburger menu
   state.viewToggleDockParent = dom.viewToggleContainerEl.parentNode;
   state.viewToggleDockNextSibling = dom.viewToggleContainerEl.nextSibling;
@@ -3832,6 +3837,18 @@ export function initApp() {
     }
 
     state.lastApriltagDetections = payload.detections;
+
+    // Populate touch info from backend 6DoF pose estimation
+    var touchById = null;
+    for (var di = 0; di < payload.detections.length; di++) {
+      var det = payload.detections[di];
+      if (typeof det.isTouch === 'boolean') {
+        if (!touchById) touchById = {};
+        touchById[det.id] = { isTouch: det.isTouch, surfaceDistance: det.surfaceDistance || 0 };
+      }
+    }
+    state.apriltagTouchById = touchById;
+
     var remoteToolByTriggerTagId = {};
     var remoteNoteStateByTriggerTagId = {};
     if (payload.controller && payload.controller.activeToolByTriggerTagId && typeof payload.controller.activeToolByTriggerTagId === 'object') {
@@ -4594,6 +4611,70 @@ export function initApp() {
     setError('');
   }
 
+  // --- Surface plane calibration (6DoF touch detection) ---
+  var surfacePlaneCollecting = false;
+  var surfacePlanePoints = [];
+  var surfacePlaneCollectInterval = null;
+  var SURFACE_PLANE_COLLECT_MS = 500; // sample every 500ms
+  var SURFACE_PLANE_MIN_POINTS = 3;
+
+  function toggleSurfacePlaneCollection() {
+    if (surfacePlaneCollecting) {
+      stopSurfacePlaneCollection();
+    } else {
+      startSurfacePlaneCollection();
+    }
+  }
+
+  function startSurfacePlaneCollection() {
+    surfacePlaneCollecting = true;
+    surfacePlanePoints = [];
+    dom.surfacePlaneBtn.classList.add('collecting');
+    dom.surfacePlaneBtn.textContent = '0 pts';
+    setError('Move tag slowly across the surface. Click "Plane" again when done.');
+
+    surfacePlaneCollectInterval = setInterval(function() {
+      if (!state.lastApriltagDetections) return;
+      for (var i = 0; i < state.lastApriltagDetections.length; i++) {
+        var det = state.lastApriltagDetections[i];
+        if (det.pose && typeof det.pose.x === 'number') {
+          surfacePlanePoints.push({ x: det.pose.x, y: det.pose.y, z: det.pose.z });
+        }
+      }
+      dom.surfacePlaneBtn.textContent = surfacePlanePoints.length + ' pts';
+    }, SURFACE_PLANE_COLLECT_MS);
+  }
+
+  function stopSurfacePlaneCollection() {
+    surfacePlaneCollecting = false;
+    clearInterval(surfacePlaneCollectInterval);
+    surfacePlaneCollectInterval = null;
+    dom.surfacePlaneBtn.classList.remove('collecting');
+    dom.surfacePlaneBtn.textContent = 'Plane';
+
+    if (surfacePlanePoints.length < SURFACE_PLANE_MIN_POINTS) {
+      setError('Need at least ' + SURFACE_PLANE_MIN_POINTS + ' points. Got ' + surfacePlanePoints.length + '. Make sure pose data is available (camera calibration required).');
+      return;
+    }
+
+    fetch('/api/surface_plane', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ points: surfacePlanePoints })
+    }).then(function(resp) { return resp.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          setError('');
+          console.log('Surface plane calibrated with ' + surfacePlanePoints.length + ' points:', data.plane);
+          dom.surfacePlaneBtn.textContent = 'Plane ✓';
+        } else {
+          setError('Surface plane calibration failed: ' + (data.error || 'unknown'));
+        }
+      }).catch(function(err) {
+        setError('Surface plane calibration request failed: ' + err);
+      });
+  }
+
   function processFrame() {
     if (!state.isProcessing) return;
 
@@ -4786,6 +4867,7 @@ export function initApp() {
     } else {
       updateApriltagHud(dom.apriltagHudEl, null, width, height);
     }
+    // Note: apriltagTouchById is now populated from backend 6DoF pose data in applyApriltagPayload
 
     // Map AprilTag debug dots for configured participant IDs
     if (isMapViewWithHomography) {

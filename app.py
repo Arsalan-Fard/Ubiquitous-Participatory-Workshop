@@ -9,6 +9,7 @@ import threading
 import time
 
 import cv2
+import numpy as np
 from flask import Flask, Response, abort, jsonify, request, send_from_directory, stream_with_context
 
 try:
@@ -54,6 +55,15 @@ apriltag_error = None
 stream_clients = 0
 controller_clients = {}
 controller_state_seq = 0
+
+# Camera calibration for 6DoF pose estimation
+camera_params = None       # (fx, fy, cx, cy) tuple
+tag_size = 0.04            # tag size in meters (default 4cm)
+
+# Surface plane for touch detection (ax + by + cz + d = 0)
+surface_plane_lock = threading.Lock()
+surface_plane = None       # dict: {"normal": [a,b,c], "d": float, "points": [...]}
+TOUCH_DISTANCE_THRESHOLD = 0.01  # 1cm - tag is "touching" if within this distance to plane
 
 
 def parse_source(value: str):
@@ -255,12 +265,34 @@ def _map_detection(det):
 
   center = {"x": float(det.center[0]), "y": float(det.center[1])}
 
-  return {
+  result = {
     "id": int(det.tag_id),
     "center": center,
     "corners": corners,
     "decision_margin": float(det.decision_margin),
   }
+
+  # Add 6DoF pose data if available
+  if hasattr(det, 'pose_t') and det.pose_t is not None:
+    t = det.pose_t.flatten()
+    result["pose"] = {
+      "x": float(t[0]),
+      "y": float(t[1]),
+      "z": float(t[2]),
+    }
+
+    # Compute touch if surface plane is calibrated
+    with surface_plane_lock:
+      plane = surface_plane
+    if plane is not None:
+      n = np.array(plane["normal"])
+      d = plane["d"]
+      pos = np.array([t[0], t[1], t[2]])
+      distance = abs(float(np.dot(n, pos) + d))
+      result["surfaceDistance"] = round(distance, 4)
+      result["isTouch"] = distance <= TOUCH_DISTANCE_THRESHOLD
+
+  return result
 
 
 def camera_loop(jpeg_quality: int) -> None:
@@ -334,7 +366,12 @@ def apriltag_loop(max_fps: float) -> None:
 
     try:
       gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-      detections = apriltag_detector.detect(gray, estimate_tag_pose=False)
+      if camera_params is not None:
+        detections = apriltag_detector.detect(
+          gray, estimate_tag_pose=True,
+          camera_params=camera_params, tag_size=tag_size)
+      else:
+        detections = apriltag_detector.detect(gray, estimate_tag_pose=False)
       mapped = [_map_detection(det) for det in detections]
 
       with apriltag_lock:
@@ -431,6 +468,75 @@ def video_feed():
 @app.route("/api/apriltags")
 def api_apriltags():
   return jsonify(build_apriltag_payload())
+
+
+@app.route("/api/surface_plane", methods=["POST"])
+def api_surface_plane():
+  """Calibrate the surface plane from 3+ tag 3D positions collected while touching the surface."""
+  global surface_plane
+  payload = request.get_json(silent=True)
+  if not isinstance(payload, dict):
+    return jsonify({"ok": False, "error": "invalid_json"}), 400
+
+  points = payload.get("points")
+  if not isinstance(points, list) or len(points) < 3:
+    return jsonify({"ok": False, "error": "need_at_least_3_points"}), 400
+
+  try:
+    pts = np.array([[p["x"], p["y"], p["z"]] for p in points], dtype=np.float64)
+  except (KeyError, TypeError, ValueError):
+    return jsonify({"ok": False, "error": "invalid_point_format"}), 400
+
+  # Fit plane using SVD (least-squares best-fit plane)
+  centroid = pts.mean(axis=0)
+  centered = pts - centroid
+  _, _, vh = np.linalg.svd(centered)
+  normal = vh[-1]  # last row of V^T = smallest singular value = plane normal
+  # Normalize
+  normal = normal / np.linalg.norm(normal)
+  d = -float(np.dot(normal, centroid))
+
+  with surface_plane_lock:
+    surface_plane = {
+      "normal": normal.tolist(),
+      "d": d,
+      "numPoints": len(points),
+    }
+
+  return jsonify({"ok": True, "plane": {"normal": normal.tolist(), "d": d, "numPoints": len(points)}})
+
+
+@app.route("/api/surface_plane", methods=["DELETE"])
+def api_surface_plane_delete():
+  """Clear the calibrated surface plane."""
+  global surface_plane
+  with surface_plane_lock:
+    surface_plane = None
+  return jsonify({"ok": True})
+
+
+@app.route("/api/surface_plane", methods=["GET"])
+def api_surface_plane_get():
+  """Get current surface plane calibration status."""
+  with surface_plane_lock:
+    plane = surface_plane
+  if plane is None:
+    return jsonify({"ok": True, "calibrated": False})
+  return jsonify({"ok": True, "calibrated": True, "plane": plane})
+
+
+@app.route("/api/touch_threshold", methods=["POST"])
+def api_touch_threshold():
+  """Update the touch distance threshold (in meters)."""
+  global TOUCH_DISTANCE_THRESHOLD
+  payload = request.get_json(silent=True)
+  if not isinstance(payload, dict):
+    return jsonify({"ok": False, "error": "invalid_json"}), 400
+  threshold = payload.get("threshold")
+  if not isinstance(threshold, (int, float)) or threshold <= 0:
+    return jsonify({"ok": False, "error": "invalid_threshold"}), 400
+  TOUCH_DISTANCE_THRESHOLD = float(threshold)
+  return jsonify({"ok": True, "threshold": TOUCH_DISTANCE_THRESHOLD})
 
 
 @app.route("/api/controller/heartbeat", methods=["POST"])
@@ -879,7 +985,25 @@ if __name__ == "__main__":
   parser.add_argument("--apriltag-refine-edges", dest="apriltag_refine_edges", action="store_true", help="Enable AprilTag edge refinement")
   parser.add_argument("--no-apriltag-refine-edges", dest="apriltag_refine_edges", action="store_false", help="Disable AprilTag edge refinement")
   parser.set_defaults(apriltag_refine_edges=True)
+  parser.add_argument("--camera-calibration", default=None, help="Path to camera_calibration.json (from ChArUco/checkerboard calibration)")
+  parser.add_argument("--tag-size", type=float, default=0.04, help="AprilTag physical size in meters (default 0.04 = 4cm)")
   args = parser.parse_args()
+
+  # Load camera calibration for 6DoF pose estimation
+  tag_size = float(args.tag_size)
+  if args.camera_calibration:
+    calib_path = Path(args.camera_calibration)
+    if calib_path.is_file():
+      with open(calib_path) as f:
+        calib = json.load(f)
+      mtx = calib["camera_matrix"]
+      fx, fy = float(mtx[0][0]), float(mtx[1][1])
+      cx, cy = float(mtx[0][2]), float(mtx[1][2])
+      camera_params = (fx, fy, cx, cy)
+      print(f"[6DoF] Camera calibration loaded: fx={fx:.1f} fy={fy:.1f} cx={cx:.1f} cy={cy:.1f}")
+      print(f"[6DoF] Tag size: {tag_size*100:.1f}cm")
+    else:
+      print(f"[6DoF] WARNING: calibration file not found: {calib_path}")
 
   source = parse_source(args.source)
   init_camera(source)

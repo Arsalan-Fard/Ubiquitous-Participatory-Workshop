@@ -672,161 +672,29 @@ h1 {
     border-color: rgba(0, 166, 62, 0.9);
 }
 
-/* ============== Stereo Calibration Buttons ============== */
-
-.stereo-calib-buttons {
-    margin-top: 16px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-}
-
-.stereo-calib-group {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-.stereo-calib-group-label {
-    color: #aaa;
-    font-size: 13px;
-    font-weight: 600;
-    margin-right: 4px;
-}
-
-.stereo-calib-btn {
-    width: 38px;
-    height: 38px;
-    border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    background: rgba(255, 255, 255, 0.06);
-    color: #ddd;
+.surface-btn--plane {
+    background: rgba(180, 100, 255, 0.20);
+    border-color: rgba(140, 60, 220, 0.76);
+    color: #6a1fb0;
+    font-size: 10px;
     font-weight: 700;
-    font-size: 13px;
-    cursor: pointer;
-    transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
 }
 
-.stereo-calib-btn:hover {
-    background: rgba(255, 255, 255, 0.10);
+.surface-btn--plane:hover {
+    background: rgba(180, 100, 255, 0.28);
+    border-color: rgba(140, 60, 220, 0.9);
 }
 
-.stereo-calib-btn--elevated {
-    border-color: rgba(255, 184, 43, 0.35);
-    background: rgba(255, 184, 43, 0.08);
+.surface-btn--plane.collecting {
+    background: rgba(255, 160, 0, 0.30);
+    border-color: rgba(220, 120, 0, 0.9);
+    color: #b06a00;
+    animation: pulse-plane 1s infinite;
 }
 
-.stereo-calib-btn--set {
-    background: rgba(49, 214, 123, 0.12);
-    border-color: rgba(49, 214, 123, 0.55);
-    color: #fff;
-}
-
-.stereo-calib-btn--armed {
-    background: rgba(43, 184, 255, 0.16);
-    border-color: rgba(43, 184, 255, 0.75);
-    color: #fff;
-    transform: translateY(-1px);
-}
-
-@keyframes stereoCalibBtnFlash {
-    0% { transform: scale(1); }
-    50% { transform: scale(1.1); }
-    100% { transform: scale(1); }
-}
-
-.stereo-calib-btn--flash {
-    animation: stereoCalibBtnFlash 220ms ease-out;
-}
-
-.stereo-calib-actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 4px;
-}
-
-.stereo-calib-tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-}
-
-.stereo-calib-tag__label {
-    font-size: 12px;
-    color: #aaa;
-    font-weight: 600;
-}
-
-.stereo-calib-tag__input {
-    width: 72px;
-    padding: 6px 8px;
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    background: rgba(0, 0, 0, 0.25);
-    color: #fff;
-}
-
-.stereo-calib-status {
-    font-size: 13px;
-    color: #aaa;
-}
-
-.stereo-calib-status--armed {
-    color: #2bb8ff;
-}
-
-.stereo-calib-status--success {
-    color: #31d67b;
-    font-weight: 600;
-}
-
-/* ============== Touch/Hover Indicator ============== */
-
-.touch-indicator {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    z-index: 100;
-    padding: 14px 18px;
-    border-radius: 14px;
-    background: rgba(0, 0, 0, 0.75);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    color: #fff;
-    font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
-    font-size: 15px;
-    backdrop-filter: blur(10px);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    min-width: 100px;
-}
-
-.touch-status {
-    font-weight: 800;
-    font-size: 18px;
-    letter-spacing: 1px;
-}
-
-.touch-status--touch {
-    color: #4CAF50;
-}
-
-.touch-status--hover {
-    color: #ff9800;
-}
-
-.touch-z {
-    font-size: 13px;
-    color: #888;
+@keyframes pulse-plane {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.06); }
 }
 
 .btn-secondary {

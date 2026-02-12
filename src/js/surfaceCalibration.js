@@ -5,7 +5,7 @@
  */
 
 import { state } from './state.js';
-import { solveLinearSystem } from './stereo.js';
+import { solveLinearSystem } from './linearAlgebra.js';
 
 // Reset all surface corners
 export function resetSurfaceCorners() {
@@ -37,32 +37,6 @@ export function recomputeSurfaceHomographyIfReady() {
 
   if (!state.surfaceHomography) {
     console.warn('Surface homography could not be computed (degenerate corners).');
-  }
-}
-
-// Compute homography from stereo calibration points (first 4 corners)
-export function recomputeSurfaceHomographyFromStereoIfReady() {
-  if (!state.stereoMode) return;
-
-  var corners1 = [];
-  for (var i = 0; i < 4; i++) {
-    var pt = state.stereoCalibrationPoints[i];
-    if (!pt || !pt.camera1Pixel) {
-      state.surfaceHomography = null;
-      return;
-    }
-    corners1.push({ x: pt.camera1Pixel.x, y: pt.camera1Pixel.y });
-  }
-
-  state.surfaceHomography = computeHomography(corners1, [
-    { x: 0, y: 0 },
-    { x: 1, y: 0 },
-    { x: 1, y: 1 },
-    { x: 0, y: 1 }
-  ]);
-
-  if (!state.surfaceHomography) {
-    console.warn('Stereo surface homography could not be computed (degenerate corners).');
   }
 }
 

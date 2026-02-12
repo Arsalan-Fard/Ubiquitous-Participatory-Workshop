@@ -19,7 +19,6 @@ export var state = {
 
   // Camera state
   currentStream: null,
-  currentStream2: null,
   cameraReady: false,
   cameraStarting: false,
   usingIpCamera: false,
@@ -29,8 +28,6 @@ export var state = {
   overlayCtx: null,
   captureCanvas: null,
   captureCtx: null,
-  captureCanvas2: null,
-  captureCtx2: null,
 
   // Surface calibration (single camera)
   surfaceCorners: [null, null, null, null],
@@ -38,19 +35,6 @@ export var state = {
   armedCornerTimeoutId: null,
   armedCornerCaptureRequested: false,
   surfaceHomography: null,
-
-  // Stereo calibration
-  stereoMode: false,
-  stereoCalibTagId: loadNumberSetting('stereoCalibTagId', 5, 0, 9999),
-  stereoCalibrationPoints: [],
-  stereoProjectionMatrix1: null,
-  stereoProjectionMatrix2: null,
-  stereoCalibrationReady: false,
-  stereoArmedPointIndex: null,
-  stereoArmedTimeoutId: null,
-  touchZThreshold: 0.05,
-  ELEVATED_Z: 0.1,
-  STEREO_WORLD_POSITIONS: null, // Set during init
 
   // Gesture controls (stage 3)
   holdStillThresholdPx: loadNumberSetting('holdStillThresholdPx', 14, 2, 80),
@@ -109,7 +93,6 @@ export var state = {
 
   // AprilTag detections (latest frame)
   lastApriltagDetections: null,
-  lastApriltagDetections2: null,
   apriltagTouchById: null,
   remoteControllerToolByTriggerTagId: {},
   remoteControllerNoteStateByTriggerTagId: {},
@@ -128,21 +111,3 @@ export var state = {
   viewToggleDockParent: null,
   viewToggleDockNextSibling: null
 };
-
-// Initialize stereo world positions (depends on ELEVATED_Z)
-state.STEREO_WORLD_POSITIONS = [
-  // Surface level (Z=0): 8 points
-  { x: 0, y: 0, z: 0 },
-  { x: 1, y: 0, z: 0 },
-  { x: 1, y: 1, z: 0 },
-  { x: 0, y: 1, z: 0 },
-  { x: 0.5, y: 0, z: 0 },
-  { x: 1, y: 0.5, z: 0 },
-  { x: 0.5, y: 1, z: 0 },
-  { x: 0, y: 0.5, z: 0 },
-  // Elevated level: 4 points
-  { x: 0, y: 0, z: state.ELEVATED_Z },
-  { x: 1, y: 0, z: state.ELEVATED_Z },
-  { x: 1, y: 1, z: state.ELEVATED_Z },
-  { x: 0, y: 1, z: state.ELEVATED_Z }
-];

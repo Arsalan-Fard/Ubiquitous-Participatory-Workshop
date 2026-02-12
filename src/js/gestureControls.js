@@ -1390,7 +1390,7 @@ function processPointerGesture(handIndex, pointer, handData) {
     }
   }
 
-  // In AprilTag mode with stereo touch sensing, hovering should not trigger interactions.
+  // In AprilTag mode, hovering should not trigger interactions.
   // Still show cursor but cancel any active drawing and prevent trigger-on-disappearance.
   if (isApriltag && isTouch === false) {
     if (ps.isDrawing) {
