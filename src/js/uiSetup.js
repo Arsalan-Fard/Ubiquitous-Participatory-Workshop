@@ -1,148 +1,5 @@
 import { state } from './state.js';
 
-var PARTICIPANT_TAG_ID_MIN = 10;
-var PARTICIPANT_TAG_ID_MAX = 30;
-
-function normalizeTriggerTagId(value) {
-  var n = parseInt(value, 10);
-  if (!isFinite(n)) return '';
-  return String(n);
-}
-
-export function getAvailableTriggerTagIds() {
-  var out = [];
-  var seen = {};
-  function pushIfValid(value) {
-    var n = parseInt(value, 10);
-    if (!isFinite(n)) return;
-    if (n < PARTICIPANT_TAG_ID_MIN || n > PARTICIPANT_TAG_ID_MAX) return;
-    if (seen[n]) return;
-    seen[n] = true;
-    out.push(n);
-  }
-
-  var src = Array.isArray(state.stage3ParticipantTriggerTagIds) ? state.stage3ParticipantTriggerTagIds : [];
-  for (var i = 0; i < src.length; i++) {
-    pushIfValid(src[i]);
-  }
-
-  // Defensive fallback: if trigger IDs are not initialized yet, derive defaults from participant count.
-  if (out.length === 0) {
-    var count = parseInt(state.stage3ParticipantCount, 10);
-    if (!isFinite(count) || count < 1) count = 0;
-    if (count > 10) count = 10;
-
-    if (!Array.isArray(state.stage3ParticipantTriggerTagIds)) state.stage3ParticipantTriggerTagIds = [];
-    state.stage3ParticipantTriggerTagIds.length = count;
-
-    for (var ti = 0; ti < count; ti++) {
-      var existing = parseInt(state.stage3ParticipantTriggerTagIds[ti], 10);
-      var fallback = isFinite(existing) ? existing : (PARTICIPANT_TAG_ID_MIN + ti + 1);
-      if (fallback > PARTICIPANT_TAG_ID_MAX) fallback = PARTICIPANT_TAG_ID_MIN;
-      if (fallback < PARTICIPANT_TAG_ID_MIN) fallback = PARTICIPANT_TAG_ID_MIN;
-      state.stage3ParticipantTriggerTagIds[ti] = fallback;
-      pushIfValid(fallback);
-    }
-  }
-  out.sort(function(a, b) { return a - b; });
-  return out;
-}
-
-function populateTriggerSelectOptions(selectEl, selectedTagId) {
-  if (!selectEl) return;
-  var availableIds = getAvailableTriggerTagIds();
-  var normalizedSelected = normalizeTriggerTagId(selectedTagId);
-
-  selectEl.textContent = '';
-
-  var noneOpt = document.createElement('option');
-  noneOpt.value = '';
-  noneOpt.textContent = 'None';
-  selectEl.appendChild(noneOpt);
-
-  for (var i = 0; i < availableIds.length; i++) {
-    var id = availableIds[i];
-    var opt = document.createElement('option');
-    opt.value = String(id);
-    opt.textContent = String(id);
-    selectEl.appendChild(opt);
-  }
-
-  if (normalizedSelected) {
-    var selectedExists = false;
-    for (var si = 0; si < selectEl.options.length; si++) {
-      if (selectEl.options[si].value === normalizedSelected) {
-        selectedExists = true;
-        break;
-      }
-    }
-    if (!selectedExists) normalizedSelected = '';
-  }
-
-  selectEl.value = normalizedSelected || '';
-  selectEl.dataset.selectedTriggerTagId = selectEl.value || '';
-  if (selectEl.parentNode && selectEl.parentNode.dataset) {
-    if (selectEl.value) selectEl.parentNode.dataset.triggerTagId = selectEl.value;
-    else delete selectEl.parentNode.dataset.triggerTagId;
-  }
-}
-
-export function attachInteractionTriggerSelect(el, initialTriggerTagId) {
-  if (!el || !el.dataset) return null;
-  if (String(el.dataset.uiType || '') === 'layer-square' || (el.classList && el.classList.contains('ui-layer-square'))) {
-    var existingLayerSelect = el.querySelector('.ui-trigger-select');
-    if (existingLayerSelect && existingLayerSelect.parentNode) {
-      existingLayerSelect.parentNode.removeChild(existingLayerSelect);
-    }
-    delete el.dataset.triggerTagId;
-    return null;
-  }
-  var selectEl = el.querySelector('.ui-trigger-select');
-  if (!selectEl) {
-    selectEl = document.createElement('select');
-    selectEl.className = 'ui-trigger-select';
-    selectEl.setAttribute('aria-label', 'Select trigger tag ID');
-    selectEl.addEventListener('pointerdown', function(e) { e.stopPropagation(); });
-    selectEl.addEventListener('mousedown', function(e) { e.stopPropagation(); });
-    selectEl.addEventListener('click', function(e) { e.stopPropagation(); });
-    selectEl.addEventListener('change', function() {
-      var normalized = normalizeTriggerTagId(selectEl.value);
-      selectEl.dataset.selectedTriggerTagId = normalized;
-      if (normalized) el.dataset.triggerTagId = normalized;
-      else delete el.dataset.triggerTagId;
-    });
-    el.appendChild(selectEl);
-  }
-
-  var wanted = initialTriggerTagId;
-  if (wanted === undefined || wanted === null || wanted === '') {
-    wanted = el.dataset.triggerTagId || selectEl.dataset.selectedTriggerTagId || '';
-  }
-  populateTriggerSelectOptions(selectEl, wanted);
-  return selectEl;
-}
-
-export function refreshInteractionTriggerSelects(rootEl) {
-  var root = rootEl || document;
-  if (!root || !root.querySelectorAll) return;
-  var interactiveEls = root.querySelectorAll('.ui-dot, .ui-draw, .ui-note, .ui-eraser, .ui-selection, .ui-layer-square');
-  for (var i = 0; i < interactiveEls.length; i++) {
-    var el = interactiveEls[i];
-    if (!el || !el.dataset) continue;
-    var uiType = String(el.dataset.uiType || '');
-    if (uiType === 'layer-square') {
-      var existingLayerSelect = el.querySelector('.ui-trigger-select');
-      if (existingLayerSelect && existingLayerSelect.parentNode) {
-        existingLayerSelect.parentNode.removeChild(existingLayerSelect);
-      }
-      delete el.dataset.triggerTagId;
-      continue;
-    }
-    if (uiType !== 'dot' && uiType !== 'draw' && uiType !== 'note' && uiType !== 'eraser' && uiType !== 'selection') continue;
-    attachInteractionTriggerSelect(el, el.dataset.triggerTagId || '');
-  }
-}
-
 export function initUiSetup(options) {
   options = options || {};
   var panelEl = options.panelEl;
@@ -294,13 +151,11 @@ export function initUiSetup(options) {
           var v = parseInt(primarySel.value, 10);
           if (!isFinite(v)) return;
           state.stage3ParticipantTagIds[index] = v;
-          refreshInteractionTriggerSelects(overlayEl);
         });
         triggerSel.addEventListener('change', function () {
           var v = parseInt(triggerSel.value, 10);
           if (!isFinite(v)) return;
           state.stage3ParticipantTriggerTagIds[index] = v;
-          refreshInteractionTriggerSelects(overlayEl);
         });
       })(i, primarySelectEl, triggerSelectEl);
 
@@ -319,7 +174,6 @@ export function initUiSetup(options) {
     var count = sanitizeParticipantCount(participantsInputEl.value);
     state.stage3ParticipantCount = count;
     renderParticipantSelects(count);
-    refreshInteractionTriggerSelects(overlayEl);
 
     var showSelects = count > 0;
     participantSelectsRowEl.classList.toggle('hidden', !showSelects);
@@ -655,7 +509,7 @@ export function initUiSetup(options) {
     dotEl.dataset.color = currentColor;
     assignCurrentSessionId(dotEl);
     overlayEl.appendChild(dotEl);
-    attachInteractionTriggerSelect(dotEl);
+
 
     positionDotAboveSwatch(dotEl);
     makeDraggable(dotEl, { draggingClass: 'ui-dot--dragging' });
@@ -701,7 +555,7 @@ export function initUiSetup(options) {
     drawEl.appendChild(drawCanvasEl);
 
     overlayEl.appendChild(drawEl);
-    attachInteractionTriggerSelect(drawEl);
+
 
     positionDrawAboveSwatch(drawEl);
     renderDrawIcon(drawCanvasEl, currentDrawColor);
@@ -742,7 +596,7 @@ export function initUiSetup(options) {
     noteEl.appendChild(iconEl);
 
     overlayEl.appendChild(noteEl);
-    attachInteractionTriggerSelect(noteEl);
+
 
     positionNoteAboveButton(noteEl);
     makeDraggable(noteEl, { draggingClass: 'ui-note--dragging' });
@@ -761,7 +615,7 @@ export function initUiSetup(options) {
     eraserEl.appendChild(iconEl);
 
     overlayEl.appendChild(eraserEl);
-    attachInteractionTriggerSelect(eraserEl);
+
     positionEraserAboveButton(eraserEl);
     makeDraggable(eraserEl, { draggingClass: 'ui-eraser--dragging' });
   }
@@ -779,7 +633,7 @@ export function initUiSetup(options) {
     selectionEl.appendChild(iconEl);
 
     overlayEl.appendChild(selectionEl);
-    attachInteractionTriggerSelect(selectionEl);
+
     var startSelectionDrag = makeDraggable(selectionEl, { draggingClass: 'ui-selection--dragging' });
 
     var dragEvent = options.startDragEvent || null;
@@ -1162,7 +1016,7 @@ export function initUiSetup(options) {
         dotEl.style.top = String(item.y || 0) + 'px';
         assignImportedSessionId(dotEl, item.sessionId);
         overlayEl.appendChild(dotEl);
-        attachInteractionTriggerSelect(dotEl, item.triggerTagId);
+
         makeDraggable(dotEl, { draggingClass: 'ui-dot--dragging' });
         continue;
       }
@@ -1183,7 +1037,7 @@ export function initUiSetup(options) {
         drawEl.appendChild(drawCanvasEl);
 
         overlayEl.appendChild(drawEl);
-        attachInteractionTriggerSelect(drawEl, item.triggerTagId);
+
         renderDrawIcon(drawCanvasEl, drawEl.dataset.color);
         makeDraggable(drawEl, { draggingClass: 'ui-draw--dragging' });
         continue;
@@ -1207,7 +1061,7 @@ export function initUiSetup(options) {
         noteEl.appendChild(iconEl);
 
         overlayEl.appendChild(noteEl);
-        attachInteractionTriggerSelect(noteEl, item.triggerTagId);
+
         makeDraggable(noteEl, { draggingClass: 'ui-note--dragging' });
         setupNoteInteraction(noteEl);
         continue;
@@ -1227,7 +1081,7 @@ export function initUiSetup(options) {
         eraserEl.appendChild(eraserIcon);
 
         overlayEl.appendChild(eraserEl);
-        attachInteractionTriggerSelect(eraserEl, item.triggerTagId);
+
         makeDraggable(eraserEl, { draggingClass: 'ui-eraser--dragging' });
         continue;
       }
@@ -1246,7 +1100,7 @@ export function initUiSetup(options) {
         selectionEl.appendChild(selectionIcon);
 
         overlayEl.appendChild(selectionEl);
-        attachInteractionTriggerSelect(selectionEl, item.triggerTagId);
+
         makeDraggable(selectionEl, { draggingClass: 'ui-selection--dragging' });
         continue;
       }
@@ -1288,7 +1142,7 @@ function makeDraggable(el, options) {
   function startDrag(e, isProgrammaticStart) {
     if (!e) return;
     if (!isProgrammaticStart && e.button !== 0) return;
-    if (!isProgrammaticStart && e.target && e.target.closest && e.target.closest('.ui-trigger-select')) return;
+
     if (!isProgrammaticStart && state.stage === 3 && el.classList && el.classList.contains('ui-label') && e.ctrlKey) {
       e.preventDefault();
       var currentDeg = parseFloat(el.dataset.rotationDeg || '0');

@@ -47,6 +47,21 @@ var REMOTE_APRILTAG_TOOL_TYPES = {
 var apriltagActiveToolByHandId = {};
 var remoteNoteRuntimeByTriggerTagId = {};
 
+// Radial palette menu state
+var radialMenuByHandId = {};
+var RADIAL_MENU_RADIUS_PX = 58;
+var RADIAL_MENU_ITEM_HALF_SIZE_PX = 22;
+var RADIAL_MENU_MIN_DISTANCE_PX = 20;
+var RADIAL_MENU_ACTIVATION_DELAY_MS = 1000;
+var RADIAL_MENU_TOOLS = [
+  { toolType: 'draw',   label: 'Draw',    icon: '\u270E',       angle: -90  },
+  { toolType: 'dot',    label: 'Sticker', icon: '\u25CF',       angle: -30  },
+  { toolType: 'note',   label: 'Note',    icon: '\uD83D\uDCDD', angle: 30   },
+  { toolType: 'eraser', label: 'Eraser',  icon: '\u232B',       angle: 90   },
+  { toolType: 'zoom',   label: 'Zoom',    icon: '\uD83D\uDD0D', angle: 150  },
+  { toolType: 'pan',    label: 'Pan',     icon: '\u270B',       angle: 210  }
+];
+
 // Get all visible finger dot positions in viewport coordinates
 export function getAllMapPointerViewportPoints() {
   var dom = state.dom;
@@ -166,7 +181,6 @@ function getToolTypeFromElement(el) {
 
 function isTemplateInteractionElement(el) {
   if (!el || !el.classList) return false;
-  if (el.classList.contains('ui-trigger-select')) return false;
   // Layer squares are intentionally stickers and should still be selectable.
   if (el.classList.contains('ui-sticker-instance') && !el.classList.contains('ui-layer-square')) return false;
   return !!getToolTypeFromElement(el);
@@ -191,15 +205,13 @@ function getParticipantTriggerTagIdByPrimaryHandId(handId) {
   return '';
 }
 
-function findSelectionToolElementForTriggerTag(triggerTagId) {
-  var triggerId = normalizeTagId(triggerTagId);
+function findSelectionToolElement() {
   var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
   if (!overlayEl) return null;
   var selectionEls = overlayEl.querySelectorAll('.ui-selection');
   for (var i = 0; i < selectionEls.length; i++) {
     var el = selectionEls[i];
     if (!el || !isTemplateInteractionElement(el)) continue;
-    if (normalizeTagId(el.dataset && el.dataset.triggerTagId) !== triggerId) continue;
     return el;
   }
   return null;
@@ -218,7 +230,7 @@ function syncApriltagActiveToolsWithParticipants() {
     if (!entry) {
       apriltagActiveToolByHandId[handId] = {
         toolType: 'selection',
-        toolEl: findSelectionToolElementForTriggerTag(triggerTagId),
+        toolEl: findSelectionToolElement(),
         triggerTagId: triggerTagId,
         lastTriggerContactKey: '',
         activeLayerNavAction: '',
@@ -238,11 +250,11 @@ function syncApriltagActiveToolsWithParticipants() {
     if (entry.toolEl && !entry.toolEl.isConnected) entry.toolEl = null;
     if (entry.hoverToolEl && !entry.hoverToolEl.isConnected) clearTriggerHoverVisual(entry);
     if (!entry.toolEl && entry.toolType === 'selection') {
-      entry.toolEl = findSelectionToolElementForTriggerTag(triggerTagId);
+      entry.toolEl = findSelectionToolElement();
     }
     if (entry.toolType !== 'selection' && entry.toolType !== APRILTAG_TOOL_NONE && !entry.toolEl) {
       entry.toolType = 'selection';
-      entry.toolEl = findSelectionToolElementForTriggerTag(triggerTagId);
+      entry.toolEl = findSelectionToolElement();
     }
   }
 
@@ -262,7 +274,7 @@ function getApriltagActiveToolForHand(handId) {
     var triggerTagId = getParticipantTriggerTagIdByPrimaryHandId(key);
     apriltagActiveToolByHandId[key] = {
       toolType: 'selection',
-      toolEl: findSelectionToolElementForTriggerTag(triggerTagId),
+      toolEl: findSelectionToolElement(),
       triggerTagId: triggerTagId,
       lastTriggerContactKey: '',
       activeLayerNavAction: '',
@@ -329,7 +341,7 @@ function updateApriltagActiveToolVisuals() {
     if (!entry) continue;
     if (!entry.toolEl || !entry.toolEl.isConnected) {
       if (entry.toolType === 'selection') {
-        entry.toolEl = findSelectionToolElementForTriggerTag(entry.triggerTagId);
+        entry.toolEl = findSelectionToolElement();
       }
     }
     if (entry.toolEl && entry.toolEl.isConnected) {
@@ -350,7 +362,7 @@ function setApriltagActiveToolForHand(handId, toolType, toolEl) {
   if (resolvedType !== 'selection' && resolvedType !== APRILTAG_TOOL_NONE && !resolvedEl) resolvedType = 'selection';
 
   if (resolvedType === 'selection' && !resolvedEl) {
-    resolvedEl = findSelectionToolElementForTriggerTag(entry.triggerTagId);
+    resolvedEl = findSelectionToolElement();
   }
   if (resolvedType === APRILTAG_TOOL_NONE) {
     resolvedEl = null;
@@ -379,10 +391,9 @@ function getToolContactKey(toolMatch) {
 }
 
 function findToolElementForTriggerTag(triggerTagId, toolType) {
-  var triggerId = normalizeTagId(triggerTagId);
   var wantedToolType = String(toolType || '').trim().toLowerCase();
   var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
-  if (!overlayEl || !triggerId || !wantedToolType) return null;
+  if (!overlayEl || !wantedToolType) return null;
   if (!REMOTE_APRILTAG_TOOL_TYPES[wantedToolType]) return null;
 
   var selector = '';
@@ -397,7 +408,6 @@ function findToolElementForTriggerTag(triggerTagId, toolType) {
   for (var i = 0; i < toolEls.length; i++) {
     var el = toolEls[i];
     if (!el || !isTemplateInteractionElement(el)) continue;
-    if (normalizeTagId(el.dataset && el.dataset.triggerTagId) !== triggerId) continue;
     if (getToolTypeFromElement(el) !== wantedToolType) continue;
     return el;
   }
@@ -765,8 +775,7 @@ function finalizeFollowStickerForPointer(ps, anchorPointer) {
 }
 
 function resolveToolElementForTriggerPoint(pointer, triggerTagId) {
-  var triggerId = normalizeTagId(triggerTagId);
-  if (!triggerId || !pointer || !isFinite(pointer.x) || !isFinite(pointer.y)) return null;
+  if (!pointer || !isFinite(pointer.x) || !isFinite(pointer.y)) return null;
 
   var candidates = [];
   var hit = getEventTargetAt(pointer);
@@ -782,9 +791,6 @@ function resolveToolElementForTriggerPoint(pointer, triggerTagId) {
     if (!toolEl || !isTemplateInteractionElement(toolEl)) continue;
     var toolType = getToolTypeFromElement(toolEl);
     if (!toolType) continue;
-    var layerName = toolEl && toolEl.dataset ? String(toolEl.dataset.layerName || '').trim().toLowerCase() : '';
-    var isAnyTriggerLayerAction = toolType === 'layer-square' && (layerName === 'next' || layerName === 'back' || layerName === 'pan' || layerName === 'zoom');
-    if (!isAnyTriggerLayerAction && normalizeTagId(toolEl.dataset && toolEl.dataset.triggerTagId) !== triggerId) continue;
     return { toolEl: toolEl, toolType: toolType };
   }
   return null;
@@ -803,27 +809,12 @@ function syncPointerToolWithApriltagSelection(ps, handId) {
   var toolType = entry.toolType || 'selection';
   var toolEl = entry.toolEl && entry.toolEl.isConnected ? entry.toolEl : null;
   var prevToolType = ps.activeToolType;
-  var participantTriggerTagId = normalizeTagId(entry && entry.triggerTagId);
 
   if (toolType !== 'selection' && toolType !== APRILTAG_TOOL_NONE && !toolEl) {
     toolType = 'selection';
-    toolEl = findSelectionToolElementForTriggerTag(entry.triggerTagId);
+    toolEl = findSelectionToolElement();
     entry.toolType = 'selection';
     entry.toolEl = toolEl;
-  }
-
-  // If a note tool loses its trigger assignment (e.g., user selects "None"),
-  // finalize the active annotation at the current primary-tag cursor position.
-  if (toolType === 'note' && toolEl && participantTriggerTagId) {
-    var toolTriggerTagId = normalizeTagId(toolEl.dataset && toolEl.dataset.triggerTagId);
-    if (toolTriggerTagId !== participantTriggerTagId) {
-      if (ps.activeFollowStickerEl) ps.followFinalizeRequested = true;
-      toolType = APRILTAG_TOOL_NONE;
-      toolEl = null;
-      entry.lastTriggerContactKey = '';
-      entry.activeLayerNavAction = '';
-      clearTriggerHoverVisual(entry);
-    }
   }
 
   if (ps.activeToolType === toolType && ps.activeToolElement === toolEl) {
@@ -859,6 +850,170 @@ function syncPointerToolWithApriltagSelection(ps, handId) {
   return { toolType: toolType, toolEl: toolEl };
 }
 
+// ---- Radial Palette Menu ----
+
+function getRadialMenuContainer() {
+  if (state.dom.mapRadialMenusEl) return state.dom.mapRadialMenusEl;
+  var container = document.getElementById('mapRadialMenus');
+  if (container) state.dom.mapRadialMenusEl = container;
+  return container || null;
+}
+
+function createRadialMenu(handId, localX, localY) {
+  var container = getRadialMenuContainer();
+  if (!container) return null;
+
+  container.classList.remove('hidden');
+  container.setAttribute('aria-hidden', 'false');
+
+  var menuEl = document.createElement('div');
+  menuEl.className = 'radial-menu radial-menu--entering';
+  menuEl.dataset.handId = String(handId);
+  menuEl.style.transform = 'translate(' + localX + 'px, ' + localY + 'px)';
+
+  var bgEl = document.createElement('div');
+  bgEl.className = 'radial-menu__bg';
+  menuEl.appendChild(bgEl);
+
+  var items = [];
+  for (var i = 0; i < RADIAL_MENU_TOOLS.length; i++) {
+    var tool = RADIAL_MENU_TOOLS[i];
+    var rad = tool.angle * Math.PI / 180;
+    var dx = Math.cos(rad) * RADIAL_MENU_RADIUS_PX;
+    var dy = Math.sin(rad) * RADIAL_MENU_RADIUS_PX;
+
+    var itemEl = document.createElement('div');
+    itemEl.className = 'radial-menu__item radial-menu__item--' + tool.toolType;
+    itemEl.dataset.radialTool = tool.toolType;
+    itemEl.style.left = (dx - RADIAL_MENU_ITEM_HALF_SIZE_PX) + 'px';
+    itemEl.style.top = (dy - RADIAL_MENU_ITEM_HALF_SIZE_PX) + 'px';
+
+    var iconEl = document.createElement('div');
+    iconEl.className = 'radial-menu__item-icon';
+    iconEl.textContent = tool.icon;
+    itemEl.appendChild(iconEl);
+
+    var labelEl = document.createElement('div');
+    labelEl.className = 'radial-menu__item-label';
+    labelEl.textContent = tool.label;
+    itemEl.appendChild(labelEl);
+
+    var fillEl = document.createElement('div');
+    fillEl.className = 'radial-menu__item-fill';
+    itemEl.appendChild(fillEl);
+
+    menuEl.appendChild(itemEl);
+    items.push({ toolType: tool.toolType, angle: tool.angle, dx: dx, dy: dy, el: itemEl });
+  }
+
+  container.appendChild(menuEl);
+
+  var entry = {
+    menuEl: menuEl,
+    centerX: localX,
+    centerY: localY,
+    handId: String(handId),
+    hoveredTool: '',
+    hoverStartedMs: 0,
+    selected: false,
+    items: items
+  };
+  radialMenuByHandId[String(handId)] = entry;
+  return entry;
+}
+
+function destroyRadialMenu(handId) {
+  var key = String(handId);
+  var entry = radialMenuByHandId[key];
+  if (!entry) return;
+  if (entry.menuEl && entry.menuEl.parentNode) {
+    entry.menuEl.parentNode.removeChild(entry.menuEl);
+  }
+  delete radialMenuByHandId[key];
+
+  var container = getRadialMenuContainer();
+  if (container && container.children.length < 1) {
+    container.classList.add('hidden');
+    container.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function resolveRadialMenuHover(triggerLocalX, triggerLocalY, menuEntry) {
+  var dx = triggerLocalX - menuEntry.centerX;
+  var dy = triggerLocalY - menuEntry.centerY;
+  var dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < RADIAL_MENU_MIN_DISTANCE_PX) return '';
+
+  var angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+  var bestTool = '';
+  var bestDiff = Infinity;
+  for (var i = 0; i < menuEntry.items.length; i++) {
+    var item = menuEntry.items[i];
+    var diff = angleDeg - item.angle;
+    while (diff > 180) diff -= 360;
+    while (diff < -180) diff += 360;
+    var absDiff = Math.abs(diff);
+    if (absDiff < bestDiff) {
+      bestDiff = absDiff;
+      bestTool = item.toolType;
+    }
+  }
+  if (bestDiff > 30) return '';
+  return bestTool;
+}
+
+function updateRadialMenuVisuals(menuEntry, hoveredTool, fillProgress) {
+  for (var i = 0; i < menuEntry.items.length; i++) {
+    var item = menuEntry.items[i];
+    var isHovered = item.toolType === hoveredTool;
+    item.el.classList.toggle('radial-menu__item--hovered', isHovered);
+    var fillEl = item.el.querySelector('.radial-menu__item-fill');
+    if (fillEl) {
+      fillEl.style.setProperty('--radial-fill-progress', isHovered ? String(fillProgress) : '0');
+    }
+  }
+}
+
+function findLayerSquareByNavAction(action) {
+  var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
+  if (!overlayEl) return null;
+  var squareEls = overlayEl.querySelectorAll('.ui-layer-square');
+  for (var i = 0; i < squareEls.length; i++) {
+    var el = squareEls[i];
+    if (!el || !el.dataset) continue;
+    var layerName = String(el.dataset.layerName || '').trim().toLowerCase();
+    if (layerName === action) return el;
+  }
+  return null;
+}
+
+function handleRadialMenuSelection(handId, selectedTool, entry) {
+  if (selectedTool === 'draw' || selectedTool === 'dot' || selectedTool === 'note' || selectedTool === 'eraser') {
+    var toolEl = findToolElementForTriggerTag(entry.triggerTagId, selectedTool);
+    entry.lastTriggerContactKey = 'radial:' + selectedTool;
+    entry.activeLayerNavAction = '';
+    clearTriggerHoverVisual(entry);
+    setApriltagActiveToolForHand(handId, selectedTool, toolEl);
+    return;
+  }
+
+  if (selectedTool === 'zoom' || selectedTool === 'pan') {
+    var layerSquareEl = findLayerSquareByNavAction(selectedTool);
+    if (layerSquareEl) {
+      entry.lastTriggerContactKey = getToolContactKey({ toolEl: layerSquareEl, toolType: 'layer-square' });
+      entry.activeLayerNavAction = selectedTool;
+      clearTriggerHoverVisual(entry);
+      setApriltagActiveToolForHand(handId, 'layer-square', layerSquareEl);
+    } else {
+      entry.lastTriggerContactKey = 'radial:' + selectedTool;
+      entry.activeLayerNavAction = selectedTool;
+      entry.toolType = 'layer-square';
+      entry.toolEl = null;
+    }
+    return;
+  }
+}
+
 export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
   syncApriltagActiveToolsWithParticipants();
   var nowMs = performance.now();
@@ -866,6 +1021,11 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
   var items = Array.isArray(triggerPoints) ? triggerPoints : [];
   var triggerVisibleByHandId = {};
   var contactByHandId = {};
+
+  // Get mapViewEl bounding rect for viewport-to-local coordinate conversion (radial menu)
+  var mapViewEl = state.dom && state.dom.mapViewEl;
+  var mapViewRect = mapViewEl ? mapViewEl.getBoundingClientRect() : null;
+
   for (var i = 0; i < items.length; i++) {
     var point = items[i];
     if (!point) continue;
@@ -878,6 +1038,53 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
     if (normalizeTagId(point.triggerTagId) !== participantTriggerTagId) continue;
     triggerVisibleByHandId[handId] = true;
 
+    // Stage 4: use radial menu instead of overlay tool-button hit-testing
+    if (state.stage === 4 && mapViewRect) {
+      var localX = point.x - mapViewRect.left;
+      var localY = point.y - mapViewRect.top;
+
+      var rmEntry = radialMenuByHandId[String(handId)];
+      if (!rmEntry) {
+        // Create a new radial menu at the trigger's current position
+        rmEntry = createRadialMenu(handId, localX, localY);
+      }
+
+      if (rmEntry && !rmEntry.selected) {
+        var hoveredTool = resolveRadialMenuHover(localX, localY, rmEntry);
+
+        if (hoveredTool && hoveredTool === rmEntry.hoveredTool) {
+          // Same tool still hovered — advance fill
+          var elapsedMs = Math.max(0, nowMs - (rmEntry.hoverStartedMs || nowMs));
+          var fillProgress = Math.min(1, elapsedMs / RADIAL_MENU_ACTIVATION_DELAY_MS);
+          updateRadialMenuVisuals(rmEntry, hoveredTool, fillProgress);
+
+          if (fillProgress >= 1) {
+            // Selection complete — apply the tool
+            rmEntry.selected = true;
+            updateRadialMenuVisuals(rmEntry, hoveredTool, 1);
+            handleRadialMenuSelection(handId, hoveredTool, entry);
+            contactByHandId[handId] = entry.lastTriggerContactKey || ('radial:' + hoveredTool);
+
+            // Animate out and schedule destruction
+            if (rmEntry.menuEl) rmEntry.menuEl.classList.add('radial-menu--exiting');
+            (function(hid) {
+              setTimeout(function() { destroyRadialMenu(hid); }, 200);
+            })(handId);
+          }
+        } else {
+          // Hover changed — reset dwell timer
+          rmEntry.hoveredTool = hoveredTool || '';
+          rmEntry.hoverStartedMs = hoveredTool ? nowMs : 0;
+          updateRadialMenuVisuals(rmEntry, hoveredTool || '', 0);
+        }
+      } else if (rmEntry && rmEntry.selected) {
+        // Already selected, keep the contact key alive
+        contactByHandId[handId] = entry.lastTriggerContactKey || '';
+      }
+      continue;
+    }
+
+    // Stage 3 (or non-Stage-4): use overlay tool-button hit-testing
     var toolMatch = resolveToolElementForTriggerPoint({ x: point.x, y: point.y }, participantTriggerTagId);
     if (!toolMatch) {
       // Rearm only when the trigger tag is explicitly seen outside any tool button.
@@ -913,10 +1120,10 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
       continue;
     }
 
-    var elapsedMs = Math.max(0, nowMs - (entry.hoverStartedMs || nowMs));
-    var fillProgress = Math.min(1, elapsedMs / APRILTAG_TRIGGER_ACTIVATION_DELAY_MS);
-    setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, fillProgress, nowMs);
-    if (fillProgress < 1) continue;
+    var elapsedMs2 = Math.max(0, nowMs - (entry.hoverStartedMs || nowMs));
+    var fillProgress2 = Math.min(1, elapsedMs2 / APRILTAG_TRIGGER_ACTIVATION_DELAY_MS);
+    setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, fillProgress2, nowMs);
+    if (fillProgress2 < 1) continue;
 
     setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, 1, nowMs);
     entry.lastTriggerContactKey = contactKey;
@@ -928,6 +1135,13 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
     }
 
     setApriltagActiveToolForHand(handId, toolMatch.toolType, toolMatch.toolEl);
+  }
+
+  // Destroy radial menus for any trigger tags that disappeared
+  for (var rmKey in radialMenuByHandId) {
+    if (!triggerVisibleByHandId[rmKey]) {
+      destroyRadialMenu(rmKey);
+    }
   }
 
   for (var handKey in apriltagActiveToolByHandId) {
@@ -1732,6 +1946,10 @@ export function resetStage3Gestures() {
     }
   }
   apriltagActiveToolByHandId = {};
+
+  // Destroy all radial menus
+  for (var rmKey in radialMenuByHandId) { destroyRadialMenu(rmKey); }
+  radialMenuByHandId = {};
 
   pointerStates = {};
   primaryCursorHandId = null;

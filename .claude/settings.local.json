@@ -4,7 +4,11 @@
       "Bash(ls:*)",
       "Bash(wc:*)",
       "Bash(git add:*)",
-      "Bash(GIT_EDITOR=true git rebase:*)"
+      "Bash(GIT_EDITOR=true git rebase:*)",
+      "WebFetch(domain:www.mathworks.com)",
+      "Bash(findstr:*)",
+      "Bash(python:*)",
+      "Bash(del:*)"
     ]
   }
 }

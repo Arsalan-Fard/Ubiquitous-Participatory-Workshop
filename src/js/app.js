@@ -5,7 +5,7 @@
 
 import { getDom } from './dom.js';
 import { stopCameraStream } from './camera.js';
-import { clearOverlay, drawSurface } from './render.js';
+import { clearOverlay, drawSurface, drawPlaneCalibrationGuide } from './render.js';
 import { initUiSetup } from './uiSetup.js';
 import { clamp, normalizeTagId, saveNumberSetting, waitForImageLoad } from './utils.js';
 import { state } from './state.js';
@@ -123,6 +123,9 @@ export function initApp() {
   }
   if (dom.mapApriltagDotsEl && dom.mapViewEl && dom.mapApriltagDotsEl.parentNode !== dom.mapViewEl) {
     dom.mapViewEl.appendChild(dom.mapApriltagDotsEl);
+  }
+  if (dom.mapRadialMenusEl && dom.mapViewEl && dom.mapRadialMenusEl.parentNode !== dom.mapViewEl) {
+    dom.mapViewEl.appendChild(dom.mapRadialMenusEl);
   }
   if (dom.mapFingerDotsEl && dom.mapViewEl && dom.mapFingerDotsEl.parentNode !== dom.mapViewEl) {
     dom.mapViewEl.appendChild(dom.mapFingerDotsEl);
@@ -1115,8 +1118,6 @@ export function initApp() {
 
   function findActivatingToolAtPoint(pointer, triggerTagId) {
     if (!pointer || !isFinite(pointer.x) || !isFinite(pointer.y)) return null;
-    var triggerId = normalizeTagId(triggerTagId);
-    if (!triggerId) return null;
 
     var offsets = [
       { dx: 0, dy: 0 },
@@ -1135,8 +1136,6 @@ export function initApp() {
       if (!toolEl) continue;
       var toolType = getBlackoutToolType(toolEl);
       if (!toolType) continue;
-      var isLayerAction = isBlackoutLayerActionTool(toolEl, toolType);
-      if (!isLayerAction && normalizeTagId(toolEl.dataset && toolEl.dataset.triggerTagId) !== triggerId) continue;
       return toolEl;
     }
     return null;
@@ -4613,7 +4612,9 @@ export function initApp() {
 
   // --- Surface plane calibration (6DoF touch detection) ---
   var surfacePlaneCollecting = false;
+  var surfacePlaneDone = false;
   var surfacePlanePoints = [];
+  var surfacePlaneCollectedPixels = [];  // 2D pixel positions for overlay visualization
   var surfacePlaneCollectInterval = null;
   var SURFACE_PLANE_COLLECT_MS = 500; // sample every 500ms
   var SURFACE_PLANE_MIN_POINTS = 3;
@@ -4628,10 +4629,12 @@ export function initApp() {
 
   function startSurfacePlaneCollection() {
     surfacePlaneCollecting = true;
+    surfacePlaneDone = false;
     surfacePlanePoints = [];
+    surfacePlaneCollectedPixels = [];
     dom.surfacePlaneBtn.classList.add('collecting');
     dom.surfacePlaneBtn.textContent = '0 pts';
-    setError('Move tag slowly across the surface. Click "Plane" again when done.');
+    setError('Move tag slowly along the dashed path. Click "Plane" again when done.');
 
     surfacePlaneCollectInterval = setInterval(function() {
       if (!state.lastApriltagDetections) return;
@@ -4639,6 +4642,10 @@ export function initApp() {
         var det = state.lastApriltagDetections[i];
         if (det.pose && typeof det.pose.x === 'number') {
           surfacePlanePoints.push({ x: det.pose.x, y: det.pose.y, z: det.pose.z });
+          // Also store the 2D pixel center for overlay dots
+          if (det.center) {
+            surfacePlaneCollectedPixels.push({ x: det.center.x, y: det.center.y });
+          }
         }
       }
       dom.surfacePlaneBtn.textContent = surfacePlanePoints.length + ' pts';
@@ -4665,6 +4672,7 @@ export function initApp() {
       .then(function(data) {
         if (data.ok) {
           setError('');
+          surfacePlaneDone = true;
           console.log('Surface plane calibrated with ' + surfacePlanePoints.length + ' points:', data.plane);
           dom.surfacePlaneBtn.textContent = 'Plane ✓';
         } else {
@@ -4720,6 +4728,16 @@ export function initApp() {
         previewIndex: state.armedCornerIndex,
         previewPoint: state.armedCornerIndex !== null ? surfacePreviewPoint : null
       });
+
+      // Draw plane calibration guide path when all 4 corners are set
+      var allCornersSet = state.surfaceCorners && state.surfaceCorners.length === 4 &&
+        state.surfaceCorners[0] && state.surfaceCorners[1] && state.surfaceCorners[2] && state.surfaceCorners[3];
+      if (allCornersSet && (surfacePlaneCollecting || !surfacePlaneDone)) {
+        drawPlaneCalibrationGuide(state.overlayCtx, state.surfaceCorners, {
+          collecting: surfacePlaneCollecting,
+          collectedPoints: surfacePlaneCollectedPixels
+        });
+      }
     }
 
     // Map view (Stage 2, 3, and 4)
