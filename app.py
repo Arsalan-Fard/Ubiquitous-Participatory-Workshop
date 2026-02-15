@@ -58,12 +58,12 @@ controller_state_seq = 0
 
 # Camera calibration for 6DoF pose estimation
 camera_params = None       # (fx, fy, cx, cy) tuple
-tag_size = 0.04            # tag size in meters (default 4cm)
+tag_size = 0.026            # tag size in meters (default 4cm)
 
 # Surface plane for touch detection (ax + by + cz + d = 0)
 surface_plane_lock = threading.Lock()
 surface_plane = None       # dict: {"normal": [a,b,c], "d": float, "points": [...]}
-TOUCH_DISTANCE_THRESHOLD = 0.02  # 1cm - tag is "touching" if within this distance to plane
+TOUCH_DISTANCE_THRESHOLD = 0.015  # 1cm - tag is "touching" if within this distance to plane
 
 
 def parse_source(value: str):

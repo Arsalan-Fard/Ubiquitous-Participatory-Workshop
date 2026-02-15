@@ -1177,7 +1177,7 @@ body.vga-mode-active #leafletMap {
     border-radius: 50%;
     background: #ff3b30;
     box-shadow: 0 10px 26px rgba(255, 59, 48, 0.35);
-    border: 2px solid rgba(255, 255, 255, 0.85);
+    border: 0;
     pointer-events: none;
     will-change: transform;
 }
@@ -1190,6 +1190,7 @@ body.vga-mode-active #leafletMap {
 .map-finger-dot--trigger {
     background: #2bb8ff;
     box-shadow: 0 10px 26px rgba(43, 184, 255, 0.4);
+    border-color: transparent;
 }
 
 .map-zoom-guides {
@@ -1270,8 +1271,9 @@ body.vga-mode-active #leafletMap {
     width: 100%;
     height: 100%;
     transform: rotate(-90deg);
+    display: none;
     opacity: 0;
-    transition: opacity 120ms ease;
+    transition: none;
 }
 
 .map-finger-cursor--dwell .map-finger-cursor__ring,
@@ -2196,19 +2198,19 @@ body.vga-mode-active #leafletMap {
 
 /* Slice icon */
 .radial-menu__slice-icon {
-    font-size: 16px;
+    font-size: 22px;
     fill: rgba(255, 255, 255, 0.92);
     pointer-events: none;
 }
 
 /* Slice label */
 .radial-menu__slice-label {
-    font-size: 7px;
+    font-size: 9px;
     font-weight: 700;
     fill: rgba(255, 255, 255, 0.6);
     pointer-events: none;
     text-transform: uppercase;
-    letter-spacing: 0.4px;
+    letter-spacing: 0.5px;
 }
 
 /* Hovered state */
@@ -2218,28 +2220,25 @@ body.vga-mode-active #leafletMap {
 }
 
 /* Tool-specific slice colors (default) */
-.radial-menu__slice--draw .radial-menu__slice-bg   { stroke: rgba(43, 184, 255, 0.4); }
-.radial-menu__slice--dot .radial-menu__slice-bg     { stroke: rgba(255, 107, 107, 0.4); }
-.radial-menu__slice--note .radial-menu__slice-bg    { stroke: rgba(255, 200, 87, 0.4); }
-.radial-menu__slice--eraser .radial-menu__slice-bg  { stroke: rgba(180, 180, 180, 0.4); }
-.radial-menu__slice--zoom .radial-menu__slice-bg    { stroke: rgba(100, 220, 100, 0.4); }
-.radial-menu__slice--pan .radial-menu__slice-bg     { stroke: rgba(200, 150, 255, 0.4); }
+.radial-menu__slice--draw .radial-menu__slice-bg      { stroke: rgba(43, 184, 255, 0.4); }
+.radial-menu__slice--dot .radial-menu__slice-bg        { stroke: rgba(255, 107, 107, 0.4); }
+.radial-menu__slice--note .radial-menu__slice-bg       { stroke: rgba(255, 200, 87, 0.4); }
+.radial-menu__slice--eraser .radial-menu__slice-bg     { stroke: rgba(180, 180, 180, 0.4); }
+.radial-menu__slice--selection .radial-menu__slice-bg  { stroke: rgba(100, 200, 255, 0.4); }
 
 /* Tool-specific slice colors (hovered — brighter stroke + subtle tinted fill) */
-.radial-menu__slice--hovered.radial-menu__slice--draw .radial-menu__slice-bg   { stroke: rgba(43, 184, 255, 0.95);  fill: rgba(43, 184, 255, 0.14); }
-.radial-menu__slice--hovered.radial-menu__slice--dot .radial-menu__slice-bg     { stroke: rgba(255, 107, 107, 0.95); fill: rgba(255, 107, 107, 0.14); }
-.radial-menu__slice--hovered.radial-menu__slice--note .radial-menu__slice-bg    { stroke: rgba(255, 200, 87, 0.95);  fill: rgba(255, 200, 87, 0.14); }
-.radial-menu__slice--hovered.radial-menu__slice--eraser .radial-menu__slice-bg  { stroke: rgba(180, 180, 180, 0.95); fill: rgba(180, 180, 180, 0.14); }
-.radial-menu__slice--hovered.radial-menu__slice--zoom .radial-menu__slice-bg    { stroke: rgba(100, 220, 100, 0.95); fill: rgba(100, 220, 100, 0.14); }
-.radial-menu__slice--hovered.radial-menu__slice--pan .radial-menu__slice-bg     { stroke: rgba(200, 150, 255, 0.95); fill: rgba(200, 150, 255, 0.14); }
+.radial-menu__slice--hovered.radial-menu__slice--draw .radial-menu__slice-bg      { stroke: rgba(43, 184, 255, 0.95);  fill: rgba(43, 184, 255, 0.14); }
+.radial-menu__slice--hovered.radial-menu__slice--dot .radial-menu__slice-bg        { stroke: rgba(255, 107, 107, 0.95); fill: rgba(255, 107, 107, 0.14); }
+.radial-menu__slice--hovered.radial-menu__slice--note .radial-menu__slice-bg       { stroke: rgba(255, 200, 87, 0.95);  fill: rgba(255, 200, 87, 0.14); }
+.radial-menu__slice--hovered.radial-menu__slice--eraser .radial-menu__slice-bg     { stroke: rgba(180, 180, 180, 0.95); fill: rgba(180, 180, 180, 0.14); }
+.radial-menu__slice--hovered.radial-menu__slice--selection .radial-menu__slice-bg  { stroke: rgba(100, 200, 255, 0.95); fill: rgba(100, 200, 255, 0.14); }
 
 /* Tool-specific fill overlay color when hovered */
-.radial-menu__slice--hovered.radial-menu__slice--draw .radial-menu__slice-fill   { fill: rgba(43, 184, 255, 0.45); }
-.radial-menu__slice--hovered.radial-menu__slice--dot .radial-menu__slice-fill     { fill: rgba(255, 107, 107, 0.45); }
-.radial-menu__slice--hovered.radial-menu__slice--note .radial-menu__slice-fill    { fill: rgba(255, 200, 87, 0.45); }
-.radial-menu__slice--hovered.radial-menu__slice--eraser .radial-menu__slice-fill  { fill: rgba(180, 180, 180, 0.45); }
-.radial-menu__slice--hovered.radial-menu__slice--zoom .radial-menu__slice-fill    { fill: rgba(100, 220, 100, 0.45); }
-.radial-menu__slice--hovered.radial-menu__slice--pan .radial-menu__slice-fill     { fill: rgba(200, 150, 255, 0.45); }
+.radial-menu__slice--hovered.radial-menu__slice--draw .radial-menu__slice-fill      { fill: rgba(43, 184, 255, 0.45); }
+.radial-menu__slice--hovered.radial-menu__slice--dot .radial-menu__slice-fill        { fill: rgba(255, 107, 107, 0.45); }
+.radial-menu__slice--hovered.radial-menu__slice--note .radial-menu__slice-fill       { fill: rgba(255, 200, 87, 0.45); }
+.radial-menu__slice--hovered.radial-menu__slice--eraser .radial-menu__slice-fill     { fill: rgba(180, 180, 180, 0.45); }
+.radial-menu__slice--hovered.radial-menu__slice--selection .radial-menu__slice-fill  { fill: rgba(100, 200, 255, 0.45); }
 
 /* Entrance animation — whole SVG ring pops in */
 .radial-menu--entering .radial-menu__svg {

@@ -49,18 +49,17 @@ var remoteNoteRuntimeByTriggerTagId = {};
 
 // Radial palette menu state
 var radialMenuByHandId = {};
-var RADIAL_MENU_INNER_R = 30;
-var RADIAL_MENU_OUTER_R = 85;
+var RADIAL_MENU_INNER_R = 40;
+var RADIAL_MENU_OUTER_R = 110;
 var RADIAL_MENU_GAP_DEG = 4;
-var RADIAL_MENU_MIN_DISTANCE_PX = 30; // same as inner radius
+var RADIAL_MENU_MIN_DISTANCE_PX = 40; // same as inner radius
 var RADIAL_MENU_ACTIVATION_DELAY_MS = 1000;
 var RADIAL_MENU_TOOLS = [
-  { toolType: 'draw',   label: 'Draw',    icon: '\u270E',       angle: -90  },
-  { toolType: 'dot',    label: 'Sticker', icon: '\u25CF',       angle: -30  },
-  { toolType: 'note',   label: 'Note',    icon: '\uD83D\uDCDD', angle: 30   },
-  { toolType: 'eraser', label: 'Eraser',  icon: '\u232B',       angle: 90   },
-  { toolType: 'zoom',   label: 'Zoom',    icon: '\uD83D\uDD0D', angle: 150  },
-  { toolType: 'pan',    label: 'Pan',     icon: '\u270B',       angle: 210  }
+  { toolType: 'draw',      label: 'Draw',      icon: '\u270E',       angle: -90  },
+  { toolType: 'dot',       label: 'Sticker',   icon: '\u25CF',       angle: -18  },
+  { toolType: 'note',      label: 'Note',      icon: '\uD83D\uDCDD', angle: 54   },
+  { toolType: 'eraser',    label: 'Eraser',    icon: '\u232B',       angle: 126  },
+  { toolType: 'selection', label: 'Select',    icon: '\u2734',       angle: 198  }
 ];
 
 // Get all visible finger dot positions in viewport coordinates
@@ -204,6 +203,29 @@ function getParticipantTriggerTagIdByPrimaryHandId(handId) {
     return normalizeTagId(triggerIds[i]);
   }
   return '';
+}
+
+/**
+ * Returns BOTH tag IDs (primary + trigger) for a participant given their current handId.
+ * After tag swaps, items may have been created under either tag.
+ * Returns an array of normalized tag ID strings (may be 1 or 2 entries).
+ */
+function getParticipantBothTagIds(handId) {
+  var primaryIds = Array.isArray(state.stage3ParticipantTagIds) ? state.stage3ParticipantTagIds : [];
+  var triggerIds = Array.isArray(state.stage3ParticipantTriggerTagIds) ? state.stage3ParticipantTriggerTagIds : [];
+  var wanted = normalizePrimaryHandId(handId);
+  if (!wanted) return [];
+
+  for (var i = 0; i < primaryIds.length; i++) {
+    if (normalizePrimaryHandId(primaryIds[i]) !== wanted) continue;
+    var pId = normalizeTagId(primaryIds[i]);
+    var tId = normalizeTagId(triggerIds[i]);
+    var result = [];
+    if (pId) result.push(pId);
+    if (tId && tId !== pId) result.push(tId);
+    return result;
+  }
+  return [];
 }
 
 function findSelectionToolElement() {
@@ -618,21 +640,37 @@ function startFollowStickerForPointer(ps, templateEl, pointer, contactKey) {
   return clonedEl;
 }
 
-function getSelectableStickerRoot(target, ownerTriggerTagId) {
+/**
+ * ownerTagIds can be a single tag ID string or an array of tag ID strings.
+ * Matches stickers owned by ANY of the provided tag IDs.
+ */
+function getSelectableStickerRoot(target, ownerTagIds) {
   if (!target || !target.closest) return null;
   var stickerEl = target.closest('.ui-sticker-instance.ui-dot, .ui-sticker-instance.ui-note');
   if (!stickerEl || !stickerEl.classList) return null;
   if (stickerEl.classList.contains('ui-layer-square')) return null;
-  var ownerId = normalizeTagId(ownerTriggerTagId);
   var stickerOwnerId = normalizeTagId(stickerEl.dataset && stickerEl.dataset.triggerTagId);
-  if (!ownerId || !stickerOwnerId || stickerOwnerId !== ownerId) return null;
-  return stickerEl;
+  if (!stickerOwnerId) return null;
+  var ids = Array.isArray(ownerTagIds) ? ownerTagIds : [ownerTagIds];
+  for (var i = 0; i < ids.length; i++) {
+    var oid = normalizeTagId(ids[i]);
+    if (oid && oid === stickerOwnerId) return stickerEl;
+  }
+  return null;
 }
 
-function findSelectableStickerNearPointer(pointer, radiusPx, ownerTriggerTagId) {
+/**
+ * ownerTagIds can be a single tag ID string or an array of tag ID strings.
+ * Finds selectable stickers owned by ANY of the provided tag IDs near the pointer.
+ */
+function findSelectableStickerNearPointer(pointer, radiusPx, ownerTagIds) {
   if (!pointer || !isFinite(pointer.x) || !isFinite(pointer.y)) return null;
-  var ownerId = normalizeTagId(ownerTriggerTagId);
-  if (!ownerId) return null;
+  var ids = Array.isArray(ownerTagIds) ? ownerTagIds : [ownerTagIds];
+  var hasValidId = false;
+  for (var k = 0; k < ids.length; k++) {
+    if (normalizeTagId(ids[k])) { hasValidId = true; break; }
+  }
+  if (!hasValidId) return null;
   var r = Math.max(0, radiusPx || 0);
   var offsets = [{ dx: 0, dy: 0 }];
   if (r > 0) {
@@ -656,7 +694,7 @@ function findSelectableStickerNearPointer(pointer, radiusPx, ownerTriggerTagId) 
     var off = offsets[i];
     var p = { x: pointer.x + off.dx, y: pointer.y + off.dy };
     var hit = getEventTargetAt(p);
-    var el = hit && hit.target ? getSelectableStickerRoot(hit.target, ownerId) : null;
+    var el = hit && hit.target ? getSelectableStickerRoot(hit.target, ids) : null;
     if (!el) continue;
     var dist = Math.sqrt(off.dx * off.dx + off.dy * off.dy);
     if (dist < bestDist) {
@@ -933,7 +971,7 @@ function createRadialMenu(handId, localX, localY) {
   svg.classList.add('radial-menu__svg');
 
   var toolCount = RADIAL_MENU_TOOLS.length;
-  var sliceDeg = 360 / toolCount; // 60 degrees per slice
+  var sliceDeg = 360 / toolCount;
   var halfGap = RADIAL_MENU_GAP_DEG / 2;
 
   var items = [];
@@ -968,7 +1006,7 @@ function createRadialMenu(handId, localX, localY) {
 
     var iconText = document.createElementNS(svgNS, 'text');
     iconText.setAttribute('x', String(textX));
-    iconText.setAttribute('y', String(textY - 5));
+    iconText.setAttribute('y', String(textY - 7));
     iconText.setAttribute('class', 'radial-menu__slice-icon');
     iconText.setAttribute('text-anchor', 'middle');
     iconText.setAttribute('dominant-baseline', 'central');
@@ -977,7 +1015,7 @@ function createRadialMenu(handId, localX, localY) {
 
     var labelText = document.createElementNS(svgNS, 'text');
     labelText.setAttribute('x', String(textX));
-    labelText.setAttribute('y', String(textY + 10));
+    labelText.setAttribute('y', String(textY + 13));
     labelText.setAttribute('class', 'radial-menu__slice-label');
     labelText.setAttribute('text-anchor', 'middle');
     labelText.setAttribute('dominant-baseline', 'central');
@@ -1076,9 +1114,116 @@ function findLayerSquareByNavAction(action) {
   return null;
 }
 
+/**
+ * Ensures a hidden template element exists on the overlay for sticker/note cloning.
+ * Used by the radial menu when no explicit overlay button was placed in Stage 3.
+ */
+function ensureStickerTemplate(stickerType, triggerTagId) {
+  var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
+  if (!overlayEl) return null;
+
+  // First, try to find an existing template
+  var existing = findToolElementForTriggerTag(triggerTagId, stickerType);
+  if (existing) return existing;
+
+  // Create a hidden template element
+  var el = document.createElement('div');
+  if (stickerType === 'dot') {
+    el.className = 'ui-dot';
+    el.dataset.uiType = 'dot';
+    el.dataset.color = '#2bb8ff';
+    el.style.background = '#2bb8ff';
+  } else if (stickerType === 'note') {
+    el.className = 'ui-note';
+    el.dataset.uiType = 'note';
+    el.dataset.color = '#ffc857';
+    el.style.background = '#ffc857';
+    var iconEl = document.createElement('div');
+    iconEl.className = 'ui-note__icon';
+    iconEl.textContent = '\uD83D\uDCDD';
+    el.appendChild(iconEl);
+  } else {
+    return null;
+  }
+
+  if (triggerTagId) el.dataset.triggerTagId = String(triggerTagId);
+  el.dataset.radialTemplate = '1';
+  el.style.position = 'absolute';
+  el.style.left = '0px';
+  el.style.top = '0px';
+  el.style.display = 'none';
+  overlayEl.appendChild(el);
+  return el;
+}
+
+/**
+ * Swap primary and trigger tag IDs for a participant after radial menu selection.
+ * The physical object has primary on one side and trigger on the other; after
+ * selecting a tool via trigger, we swap so the user can immediately start using
+ * the tool when they flip the object (the old trigger becomes the new primary).
+ *
+ * Returns the new handId (String of the new primary tag, which was the old trigger).
+ */
+function swapParticipantTags(oldHandId) {
+  var primaryIds = state.stage3ParticipantTagIds;
+  var triggerIds = state.stage3ParticipantTriggerTagIds;
+  if (!Array.isArray(primaryIds) || !Array.isArray(triggerIds)) return oldHandId;
+
+  var key = normalizePrimaryHandId(oldHandId);
+  if (!key) return oldHandId;
+
+  // Find participant index
+  var idx = -1;
+  for (var i = 0; i < primaryIds.length; i++) {
+    if (normalizePrimaryHandId(primaryIds[i]) === key) { idx = i; break; }
+  }
+  if (idx < 0) return oldHandId;
+
+  var oldPrimary = parseInt(primaryIds[idx], 10);
+  var oldTrigger = parseInt(triggerIds[idx], 10);
+  if (!isFinite(oldPrimary) || !isFinite(oldTrigger)) return oldHandId;
+  if (oldPrimary === oldTrigger) return oldHandId;
+
+  var newHandId = String(oldTrigger);
+
+  // 1. Swap in state arrays
+  state.stage3ParticipantTagIds[idx] = oldTrigger;
+  state.stage3ParticipantTriggerTagIds[idx] = oldPrimary;
+
+  // 2. Migrate apriltagActiveToolByHandId entry
+  var toolEntry = apriltagActiveToolByHandId[key];
+  if (toolEntry) {
+    delete apriltagActiveToolByHandId[key];
+    toolEntry.triggerTagId = String(oldPrimary);
+    apriltagActiveToolByHandId[newHandId] = toolEntry;
+  }
+
+  // 3. Migrate pointerStates entry
+  var ps = pointerStates[key];
+  if (ps) {
+    delete pointerStates[key];
+    pointerStates[newHandId] = ps;
+  }
+
+  // 4. Migrate radialMenuByHandId entry
+  var rm = radialMenuByHandId[key];
+  if (rm) {
+    delete radialMenuByHandId[key];
+    rm.handId = newHandId;
+    if (rm.menuEl && rm.menuEl.dataset) rm.menuEl.dataset.handId = newHandId;
+    radialMenuByHandId[newHandId] = rm;
+  }
+
+  return newHandId;
+}
+
 function handleRadialMenuSelection(handId, selectedTool, entry) {
   if (selectedTool === 'draw' || selectedTool === 'dot' || selectedTool === 'note' || selectedTool === 'eraser') {
     var toolEl = findToolElementForTriggerTag(entry.triggerTagId, selectedTool);
+    // For sticker/note: ensure a template exists for cloning
+    if (!toolEl && (selectedTool === 'dot' || selectedTool === 'note')) {
+      toolEl = ensureStickerTemplate(selectedTool, entry.triggerTagId);
+    }
     entry.lastTriggerContactKey = 'radial:' + selectedTool;
     entry.activeLayerNavAction = '';
     clearTriggerHoverVisual(entry);
@@ -1086,19 +1231,12 @@ function handleRadialMenuSelection(handId, selectedTool, entry) {
     return;
   }
 
-  if (selectedTool === 'zoom' || selectedTool === 'pan') {
-    var layerSquareEl = findLayerSquareByNavAction(selectedTool);
-    if (layerSquareEl) {
-      entry.lastTriggerContactKey = getToolContactKey({ toolEl: layerSquareEl, toolType: 'layer-square' });
-      entry.activeLayerNavAction = selectedTool;
-      clearTriggerHoverVisual(entry);
-      setApriltagActiveToolForHand(handId, 'layer-square', layerSquareEl);
-    } else {
-      entry.lastTriggerContactKey = 'radial:' + selectedTool;
-      entry.activeLayerNavAction = selectedTool;
-      entry.toolType = 'layer-square';
-      entry.toolEl = null;
-    }
+  if (selectedTool === 'selection') {
+    var selectionEl = findSelectionToolElement();
+    entry.lastTriggerContactKey = 'radial:selection';
+    entry.activeLayerNavAction = '';
+    clearTriggerHoverVisual(entry);
+    setApriltagActiveToolForHand(handId, 'selection', selectionEl);
     return;
   }
 }
@@ -1127,8 +1265,46 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
     if (normalizeTagId(point.triggerTagId) !== participantTriggerTagId) continue;
     triggerVisibleByHandId[handId] = true;
 
-    // Stage 4: use radial menu instead of overlay tool-button hit-testing
+    // Stage 4: check layer-nav buttons (pan/zoom/next/back) first, then radial menu
     if (state.stage === 4 && mapViewRect) {
+      // Stage 4 never shows the white trigger-fill visual on tool buttons
+      clearTriggerHoverVisual(entry);
+
+      // Check if trigger is hovering over a layer-nav UI button (pan/zoom/next/back)
+      var layerNavMatch = resolveToolElementForTriggerPoint({ x: point.x, y: point.y }, participantTriggerTagId);
+      var layerNavAction = layerNavMatch ? getLayerNavActionForTool(layerNavMatch.toolType, layerNavMatch.toolEl) : '';
+
+      if (layerNavAction) {
+        // Hovering over a layer-nav button — activate with dwell (no fill visual)
+        var contactKey = getToolContactKey(layerNavMatch);
+        contactByHandId[handId] = contactKey;
+
+        if (entry.lastTriggerContactKey === contactKey) {
+          // Already activated this button — keep alive
+          continue;
+        }
+
+        var isNewContact = entry.hoverContactKey !== contactKey || entry.hoverToolEl !== layerNavMatch.toolEl;
+        if (isNewContact) {
+          // First frame hovering this button — start dwell timer (no visual)
+          entry.hoverContactKey = contactKey;
+          entry.hoverToolEl = layerNavMatch.toolEl;
+          entry.hoverStartedMs = nowMs;
+          continue;
+        }
+
+        var layerNavElapsed = Math.max(0, nowMs - (entry.hoverStartedMs || nowMs));
+        var layerNavProgress = Math.min(1, layerNavElapsed / APRILTAG_TRIGGER_ACTIVATION_DELAY_MS);
+        if (layerNavProgress < 1) continue;
+
+        // Dwell complete — activate layer-nav action
+        entry.lastTriggerContactKey = contactKey;
+        entry.activeLayerNavAction = layerNavAction;
+        setApriltagActiveToolForHand(handId, layerNavMatch.toolType, layerNavMatch.toolEl);
+        continue;
+      }
+
+      // Not over a layer-nav button — use radial menu
       var localX = point.x - mapViewRect.left;
       var localY = point.y - mapViewRect.top;
 
@@ -1152,7 +1328,13 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
             rmEntry.selected = true;
             rmEntry.selectedTool = hoveredTool;
             handleRadialMenuSelection(handId, hoveredTool, entry);
-            contactByHandId[handId] = entry.lastTriggerContactKey || ('radial:' + hoveredTool);
+
+            // Swap primary/trigger so user can flip the object and start using
+            // the tool immediately (old trigger becomes new primary).
+            var newHandId = swapParticipantTags(handId);
+            // Update lookup keys for the swapped hand
+            triggerVisibleByHandId[newHandId] = true;
+            contactByHandId[newHandId] = entry.lastTriggerContactKey || ('radial:' + hoveredTool);
 
             // Keep palette visible; show selected slice highlighted, dim others
             updateRadialMenuVisuals(rmEntry, hoveredTool, 1);
@@ -1655,8 +1837,18 @@ function processPointerGesture(handIndex, pointer, handData) {
     ? activeApriltagEntry.lastTriggerContactKey
     : '';
 
-  // Sticker mode: while active, keep one sticker attached to primary-tag position.
+  // Sticker/note mode:
+  // - Touching the surface keeps the live-follow sticker attached to the tag.
+  // - Releasing touch finalizes placement (notes without text are discarded in finalize helper).
   if (isApriltag && (activeToolType === 'dot' || activeToolType === 'note') && activeToolEl) {
+    if (isTouch === false) {
+      finalizeFollowStickerForPointer(ps, pointer);
+      setApriltagActiveToolForHand(handIndex, APRILTAG_TOOL_NONE, null);
+      updatePointerCursor(handIndex, pointer, 0, null);
+      ps.prevPointerTimeMs = nowMs;
+      return;
+    }
+
     ps.followFinalizeRequested = false;
     if (!ps.activeFollowStickerEl || ps.activeFollowStickerContactKey !== activeContactKey) {
       finalizeFollowStickerForPointer(ps);
@@ -1674,6 +1866,13 @@ function processPointerGesture(handIndex, pointer, handData) {
 
   // Selection mode: lock onto the first selected sticker/annotation while active.
   if (isApriltag && activeToolType === 'selection') {
+    if (isTouch === false) {
+      finalizeFollowStickerForPointer(ps, pointer);
+      updatePointerCursor(handIndex, pointer, 0, null);
+      ps.prevPointerTimeMs = nowMs;
+      return;
+    }
+
     ps.followFinalizeRequested = false;
     if (ps.activeFollowStickerEl) {
       updateFollowStickerPosition(ps, pointer);
@@ -1682,8 +1881,8 @@ function processPointerGesture(handIndex, pointer, handData) {
       return;
     }
 
-    var ownerTriggerTagId = normalizeTagId(activeApriltagEntry && activeApriltagEntry.triggerTagId);
-    var selectedSticker = findSelectableStickerNearPointer(pointer, 28, ownerTriggerTagId);
+    var ownerBothTagIds = getParticipantBothTagIds(handIndex);
+    var selectedSticker = findSelectableStickerNearPointer(pointer, 28, ownerBothTagIds);
     if (selectedSticker) {
       startFollowExistingStickerForPointer(ps, selectedSticker, pointer, activeContactKey);
       updatePointerCursor(handIndex, pointer, 0, null);
@@ -1713,8 +1912,8 @@ function processPointerGesture(handIndex, pointer, handData) {
     ps.triggerFired = false;
 
     if (state.stage === 4 && activeToolType === 'eraser' && ps.eraserActive) {
-      var eraserOwnerTagId = normalizeTagId(activeToolEl && activeToolEl.dataset ? activeToolEl.dataset.triggerTagId : '');
-      eraseAtPoint(pointer.x, pointer.y, ERASER_TOUCH_RADIUS_PX, eraserOwnerTagId);
+      var eraserOwnerTagIds = getParticipantBothTagIds(handIndex);
+      eraseAtPoint(pointer.x, pointer.y, ERASER_TOUCH_RADIUS_PX, eraserOwnerTagIds);
       updatePointerCursor(handIndex, pointer, 0, null);
       ps.prevPointerTimeMs = nowMs;
       return;
@@ -1934,7 +2133,11 @@ function updatePointerCursor(handIndex, pointer, progress, mode) {
   var cursorEl = getOrCreateCursorEl(handIndex);
   if (!cursorEl) return;
 
-  var visible = (state.stage === 3 || state.stage === 4) && state.viewMode === 'map' && !!pointer;
+  // In Stage 4, hide cursor for AprilTag pointers (the blue/red dot is sufficient)
+  var ps = pointerStates[handIndex];
+  var isApriltagInStage4 = ps && ps.isApriltag && state.stage === 4;
+
+  var visible = (state.stage === 3 || state.stage === 4) && state.viewMode === 'map' && !!pointer && !isApriltagInStage4;
   if (!visible) {
     cursorEl.classList.add('hidden');
     cursorEl.setAttribute('aria-hidden', 'true');

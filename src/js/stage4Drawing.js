@@ -1415,13 +1415,24 @@ function getCoordsFromRef(ref) {
   } catch (e) { return null; }
 }
 
+/**
+ * ownerTriggerTagId can be a single tag ID string or an array of tag ID strings.
+ * Erases strokes owned by ANY of the provided tag IDs.
+ */
 export function eraseAtPoint(clientX, clientY, radiusPx, ownerTriggerTagId) {
   if (state.stage !== 4 || state.viewMode !== 'map') return;
   if (!state.map || !state.drawGroup || !state.dom) return;
   if (!isFinite(clientX) || !isFinite(clientY)) return;
 
   var radius = Math.max(2, isFinite(radiusPx) ? radiusPx : 16);
-  var ownerTagId = normalizeTagId(ownerTriggerTagId);
+  // Build a set of normalized owner IDs for fast lookup
+  var ownerIds = {};
+  var hasOwnerFilter = false;
+  var rawIds = Array.isArray(ownerTriggerTagId) ? ownerTriggerTagId : [ownerTriggerTagId];
+  for (var oi = 0; oi < rawIds.length; oi++) {
+    var nid = normalizeTagId(rawIds[oi]);
+    if (nid) { ownerIds[nid] = true; hasOwnerFilter = true; }
+  }
   var pointerCoord = clientToLngLat(clientX, clientY);
   if (!pointerCoord) return;
   var pointerPt = state.map.project(pointerCoord);
@@ -1432,9 +1443,9 @@ export function eraseAtPoint(clientX, clientY, radiusPx, ownerTriggerTagId) {
 
   eachInGroup(state.drawGroup, function(ref) {
     if (!ref || !ref.sourceId) return;
-    if (ownerTagId) {
+    if (hasOwnerFilter) {
       var layerOwnerTagId = normalizeTagId(ref.triggerTagId);
-      if (!layerOwnerTagId || layerOwnerTagId !== ownerTagId) return;
+      if (!layerOwnerTagId || !ownerIds[layerOwnerTagId]) return;
     }
     var coords = getCoordsFromRef(ref);
     if (!coords || coords.length < 1) return;
@@ -1489,9 +1500,9 @@ export function eraseAtPoint(clientX, clientY, radiusPx, ownerTriggerTagId) {
   var stickerEls = overlayEl.querySelectorAll('.ui-sticker-instance.ui-dot:not(.ui-layer-square), .ui-sticker-instance.ui-note, .ui-sticker-instance.ui-draw');
   for (var si = 0; si < stickerEls.length; si++) {
     var el = stickerEls[si];
-    if (ownerTagId) {
+    if (hasOwnerFilter) {
       var stickerOwnerTagId = normalizeTagId(el && el.dataset ? el.dataset.triggerTagId : '');
-      if (!stickerOwnerTagId || stickerOwnerTagId !== ownerTagId) continue;
+      if (!stickerOwnerTagId || !ownerIds[stickerOwnerTagId]) continue;
     }
     var rect = el.getBoundingClientRect();
     if (distancePointToRectPx(clientX, clientY, rect) <= radius) {
