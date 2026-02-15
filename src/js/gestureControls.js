@@ -49,9 +49,10 @@ var remoteNoteRuntimeByTriggerTagId = {};
 
 // Radial palette menu state
 var radialMenuByHandId = {};
-var RADIAL_MENU_RADIUS_PX = 58;
-var RADIAL_MENU_ITEM_HALF_SIZE_PX = 22;
-var RADIAL_MENU_MIN_DISTANCE_PX = 20;
+var RADIAL_MENU_INNER_R = 30;
+var RADIAL_MENU_OUTER_R = 85;
+var RADIAL_MENU_GAP_DEG = 4;
+var RADIAL_MENU_MIN_DISTANCE_PX = 30; // same as inner radius
 var RADIAL_MENU_ACTIVATION_DELAY_MS = 1000;
 var RADIAL_MENU_TOOLS = [
   { toolType: 'draw',   label: 'Draw',    icon: '\u270E',       angle: -90  },
@@ -252,7 +253,8 @@ function syncApriltagActiveToolsWithParticipants() {
     if (!entry.toolEl && entry.toolType === 'selection') {
       entry.toolEl = findSelectionToolElement();
     }
-    if (entry.toolType !== 'selection' && entry.toolType !== APRILTAG_TOOL_NONE && !entry.toolEl) {
+    var isRadial = entry.lastTriggerContactKey && String(entry.lastTriggerContactKey).indexOf('radial:') === 0;
+    if (entry.toolType !== 'selection' && entry.toolType !== APRILTAG_TOOL_NONE && !entry.toolEl && !isRadial) {
       entry.toolType = 'selection';
       entry.toolEl = findSelectionToolElement();
     }
@@ -357,9 +359,12 @@ function setApriltagActiveToolForHand(handId, toolType, toolEl) {
   var resolvedType = String(toolType || '');
   var resolvedEl = toolEl && toolEl.isConnected ? toolEl : null;
 
+  // Radial menu selections work without a backing overlay element
+  var isRadialSelection = entry.lastTriggerContactKey && String(entry.lastTriggerContactKey).indexOf('radial:') === 0;
+
   if (!resolvedType) resolvedType = resolvedEl ? getToolTypeFromElement(resolvedEl) : 'selection';
   if (!resolvedType || resolvedType === 'unknown') resolvedType = 'selection';
-  if (resolvedType !== 'selection' && resolvedType !== APRILTAG_TOOL_NONE && !resolvedEl) resolvedType = 'selection';
+  if (resolvedType !== 'selection' && resolvedType !== APRILTAG_TOOL_NONE && !resolvedEl && !isRadialSelection) resolvedType = 'selection';
 
   if (resolvedType === 'selection' && !resolvedEl) {
     resolvedEl = findSelectionToolElement();
@@ -436,6 +441,12 @@ export function applyRemoteApriltagToolOverrides(remoteToolByTriggerTagId) {
   for (var handId in apriltagActiveToolByHandId) {
     var entry = apriltagActiveToolByHandId[handId];
     if (!entry) continue;
+
+    // Skip remote overrides when the tool was set via the radial palette menu.
+    // The radial menu is the authoritative source in Stage 4; phone controller
+    // should not clobber it.
+    var isRadialSelection = entry.lastTriggerContactKey && String(entry.lastTriggerContactKey).indexOf('radial:') === 0;
+    if (isRadialSelection) continue;
 
     var triggerId = normalizeTagId(entry.triggerTagId);
     var wantedRemoteToolType = triggerId ? (remoteByTriggerId[triggerId] || '') : '';
@@ -810,7 +821,10 @@ function syncPointerToolWithApriltagSelection(ps, handId) {
   var toolEl = entry.toolEl && entry.toolEl.isConnected ? entry.toolEl : null;
   var prevToolType = ps.activeToolType;
 
-  if (toolType !== 'selection' && toolType !== APRILTAG_TOOL_NONE && !toolEl) {
+  // Radial menu selections work without a backing overlay element
+  var isRadialSelection = entry.lastTriggerContactKey && String(entry.lastTriggerContactKey).indexOf('radial:') === 0;
+
+  if (toolType !== 'selection' && toolType !== APRILTAG_TOOL_NONE && !toolEl && !isRadialSelection) {
     toolType = 'selection';
     toolEl = findSelectionToolElement();
     entry.toolType = 'selection';
@@ -842,6 +856,7 @@ function syncPointerToolWithApriltagSelection(ps, handId) {
     activateDrawingForPointer(ps.dragPointerId, color, toolEl);
     ps.drawingStarted = true;
   } else if (toolType === 'eraser') {
+    ps.eraserActive = true;
     if (toolEl) activateEraser(ps, toolEl);
   } else if (toolType === 'dot' || toolType === 'note') {
     ps.armedStickerTemplate = toolEl || null;
@@ -859,6 +874,35 @@ function getRadialMenuContainer() {
   return container || null;
 }
 
+/**
+ * Returns SVG path `d` attribute for an annular-ring slice (sector between two concentric circles).
+ * cx, cy: center of the ring. innerR, outerR: radii. startDeg, endDeg: angles in degrees (0=right, CW).
+ */
+function describeAnnularSlice(cx, cy, innerR, outerR, startDeg, endDeg) {
+  var toRad = Math.PI / 180;
+  var s = startDeg * toRad;
+  var e = endDeg * toRad;
+  var largeArc = (endDeg - startDeg > 180) ? 1 : 0;
+
+  var ox1 = cx + outerR * Math.cos(s);
+  var oy1 = cy + outerR * Math.sin(s);
+  var ox2 = cx + outerR * Math.cos(e);
+  var oy2 = cy + outerR * Math.sin(e);
+
+  var ix1 = cx + innerR * Math.cos(e);
+  var iy1 = cy + innerR * Math.sin(e);
+  var ix2 = cx + innerR * Math.cos(s);
+  var iy2 = cy + innerR * Math.sin(s);
+
+  return [
+    'M', ox1, oy1,
+    'A', outerR, outerR, 0, largeArc, 1, ox2, oy2,
+    'L', ix1, iy1,
+    'A', innerR, innerR, 0, largeArc, 0, ix2, iy2,
+    'Z'
+  ].join(' ');
+}
+
 function createRadialMenu(handId, localX, localY) {
   var container = getRadialMenuContainer();
   if (!container) return null;
@@ -871,45 +915,92 @@ function createRadialMenu(handId, localX, localY) {
   menuEl.dataset.handId = String(handId);
   menuEl.style.transform = 'translate(' + localX + 'px, ' + localY + 'px)';
 
-  var bgEl = document.createElement('div');
-  bgEl.className = 'radial-menu__bg';
-  menuEl.appendChild(bgEl);
+  var pad = 10;
+  var svgSize = (RADIAL_MENU_OUTER_R + pad) * 2;
+  var cx = RADIAL_MENU_OUTER_R + pad;
+  var cy = RADIAL_MENU_OUTER_R + pad;
+
+  var svgNS = 'http://www.w3.org/2000/svg';
+  var svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('width', String(svgSize));
+  svg.setAttribute('height', String(svgSize));
+  svg.setAttribute('viewBox', '0 0 ' + svgSize + ' ' + svgSize);
+  svg.style.position = 'absolute';
+  svg.style.left = (-cx) + 'px';
+  svg.style.top = (-cy) + 'px';
+  svg.style.pointerEvents = 'none';
+  svg.style.overflow = 'visible';
+  svg.classList.add('radial-menu__svg');
+
+  var toolCount = RADIAL_MENU_TOOLS.length;
+  var sliceDeg = 360 / toolCount; // 60 degrees per slice
+  var halfGap = RADIAL_MENU_GAP_DEG / 2;
 
   var items = [];
-  for (var i = 0; i < RADIAL_MENU_TOOLS.length; i++) {
+  for (var i = 0; i < toolCount; i++) {
     var tool = RADIAL_MENU_TOOLS[i];
-    var rad = tool.angle * Math.PI / 180;
-    var dx = Math.cos(rad) * RADIAL_MENU_RADIUS_PX;
-    var dy = Math.sin(rad) * RADIAL_MENU_RADIUS_PX;
+    var centerAngle = tool.angle;
+    var startAngle = centerAngle - sliceDeg / 2 + halfGap;
+    var endAngle = centerAngle + sliceDeg / 2 - halfGap;
 
-    var itemEl = document.createElement('div');
-    itemEl.className = 'radial-menu__item radial-menu__item--' + tool.toolType;
-    itemEl.dataset.radialTool = tool.toolType;
-    itemEl.style.left = (dx - RADIAL_MENU_ITEM_HALF_SIZE_PX) + 'px';
-    itemEl.style.top = (dy - RADIAL_MENU_ITEM_HALF_SIZE_PX) + 'px';
+    var g = document.createElementNS(svgNS, 'g');
+    g.setAttribute('class', 'radial-menu__slice radial-menu__slice--' + tool.toolType);
+    g.setAttribute('data-radial-tool', tool.toolType);
 
-    var iconEl = document.createElement('div');
-    iconEl.className = 'radial-menu__item-icon';
-    iconEl.textContent = tool.icon;
-    itemEl.appendChild(iconEl);
+    // Background path (the annular slice shape)
+    var bgPath = document.createElementNS(svgNS, 'path');
+    bgPath.setAttribute('d', describeAnnularSlice(cx, cy, RADIAL_MENU_INNER_R, RADIAL_MENU_OUTER_R, startAngle, endAngle));
+    bgPath.setAttribute('class', 'radial-menu__slice-bg');
+    g.appendChild(bgPath);
 
-    var labelEl = document.createElement('div');
-    labelEl.className = 'radial-menu__item-label';
-    labelEl.textContent = tool.label;
-    itemEl.appendChild(labelEl);
+    // Fill overlay path (same shape, for dwell progress)
+    var fillPath = document.createElementNS(svgNS, 'path');
+    fillPath.setAttribute('d', describeAnnularSlice(cx, cy, RADIAL_MENU_INNER_R, RADIAL_MENU_OUTER_R, startAngle, endAngle));
+    fillPath.setAttribute('class', 'radial-menu__slice-fill');
+    g.appendChild(fillPath);
 
-    var fillEl = document.createElement('div');
-    fillEl.className = 'radial-menu__item-fill';
-    itemEl.appendChild(fillEl);
+    // Icon and label at the midpoint of the slice
+    var midAngle = (startAngle + endAngle) / 2;
+    var midR = (RADIAL_MENU_INNER_R + RADIAL_MENU_OUTER_R) / 2;
+    var midRad = midAngle * Math.PI / 180;
+    var textX = cx + midR * Math.cos(midRad);
+    var textY = cy + midR * Math.sin(midRad);
 
-    menuEl.appendChild(itemEl);
-    items.push({ toolType: tool.toolType, angle: tool.angle, dx: dx, dy: dy, el: itemEl });
+    var iconText = document.createElementNS(svgNS, 'text');
+    iconText.setAttribute('x', String(textX));
+    iconText.setAttribute('y', String(textY - 5));
+    iconText.setAttribute('class', 'radial-menu__slice-icon');
+    iconText.setAttribute('text-anchor', 'middle');
+    iconText.setAttribute('dominant-baseline', 'central');
+    iconText.textContent = tool.icon;
+    g.appendChild(iconText);
+
+    var labelText = document.createElementNS(svgNS, 'text');
+    labelText.setAttribute('x', String(textX));
+    labelText.setAttribute('y', String(textY + 10));
+    labelText.setAttribute('class', 'radial-menu__slice-label');
+    labelText.setAttribute('text-anchor', 'middle');
+    labelText.setAttribute('dominant-baseline', 'central');
+    labelText.textContent = tool.label;
+    g.appendChild(labelText);
+
+    svg.appendChild(g);
+    items.push({
+      toolType: tool.toolType,
+      angle: tool.angle,
+      startAngle: startAngle,
+      endAngle: endAngle,
+      el: g,
+      fillEl: fillPath
+    });
   }
 
+  menuEl.appendChild(svg);
   container.appendChild(menuEl);
 
   var entry = {
     menuEl: menuEl,
+    svgEl: svg,
     centerX: localX,
     centerY: localY,
     handId: String(handId),
@@ -942,34 +1033,32 @@ function resolveRadialMenuHover(triggerLocalX, triggerLocalY, menuEntry) {
   var dx = triggerLocalX - menuEntry.centerX;
   var dy = triggerLocalY - menuEntry.centerY;
   var dist = Math.sqrt(dx * dx + dy * dy);
-  if (dist < RADIAL_MENU_MIN_DISTANCE_PX) return '';
+
+  // Must be within the annular ring band
+  if (dist < RADIAL_MENU_INNER_R || dist > RADIAL_MENU_OUTER_R * 1.3) return '';
 
   var angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
-  var bestTool = '';
-  var bestDiff = Infinity;
+  var halfSlice = (360 / menuEntry.items.length) / 2 - RADIAL_MENU_GAP_DEG / 2;
+
   for (var i = 0; i < menuEntry.items.length; i++) {
     var item = menuEntry.items[i];
     var diff = angleDeg - item.angle;
     while (diff > 180) diff -= 360;
     while (diff < -180) diff += 360;
-    var absDiff = Math.abs(diff);
-    if (absDiff < bestDiff) {
-      bestDiff = absDiff;
-      bestTool = item.toolType;
+    if (Math.abs(diff) <= halfSlice) {
+      return item.toolType;
     }
   }
-  if (bestDiff > 30) return '';
-  return bestTool;
+  return '';
 }
 
 function updateRadialMenuVisuals(menuEntry, hoveredTool, fillProgress) {
   for (var i = 0; i < menuEntry.items.length; i++) {
     var item = menuEntry.items[i];
     var isHovered = item.toolType === hoveredTool;
-    item.el.classList.toggle('radial-menu__item--hovered', isHovered);
-    var fillEl = item.el.querySelector('.radial-menu__item-fill');
-    if (fillEl) {
-      fillEl.style.setProperty('--radial-fill-progress', isHovered ? String(fillProgress) : '0');
+    item.el.classList.toggle('radial-menu__slice--hovered', isHovered);
+    if (item.fillEl) {
+      item.fillEl.style.opacity = isHovered ? String(fillProgress) : '0';
     }
   }
 }
@@ -1061,15 +1150,13 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
           if (fillProgress >= 1) {
             // Selection complete — apply the tool
             rmEntry.selected = true;
-            updateRadialMenuVisuals(rmEntry, hoveredTool, 1);
+            rmEntry.selectedTool = hoveredTool;
             handleRadialMenuSelection(handId, hoveredTool, entry);
             contactByHandId[handId] = entry.lastTriggerContactKey || ('radial:' + hoveredTool);
 
-            // Animate out and schedule destruction
-            if (rmEntry.menuEl) rmEntry.menuEl.classList.add('radial-menu--exiting');
-            (function(hid) {
-              setTimeout(function() { destroyRadialMenu(hid); }, 200);
-            })(handId);
+            // Keep palette visible; show selected slice highlighted, dim others
+            updateRadialMenuVisuals(rmEntry, hoveredTool, 1);
+            if (rmEntry.menuEl) rmEntry.menuEl.classList.add('radial-menu--selected');
           }
         } else {
           // Hover changed — reset dwell timer
@@ -1078,8 +1165,9 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
           updateRadialMenuVisuals(rmEntry, hoveredTool || '', 0);
         }
       } else if (rmEntry && rmEntry.selected) {
-        // Already selected, keep the contact key alive
+        // Already selected — keep palette visible, keep the contact key alive
         contactByHandId[handId] = entry.lastTriggerContactKey || '';
+        updateRadialMenuVisuals(rmEntry, rmEntry.selectedTool || '', 1);
       }
       continue;
     }
