@@ -1,0 +1,48 @@
+{
+  "workshopId": "workshop-ea1cad38",
+  "createdAtEpochMs": 1771227219546,
+  "setupDefinition": {
+    "participantCount": 1,
+    "participantPrimaryTagIds": [
+      12
+    ],
+    "participantTriggerTagIds": [
+      10
+    ],
+    "setupItems": [
+      {
+        "type": "draw",
+        "x": 0,
+        "y": 0,
+        "rotationDeg": 0,
+        "color": "#2bb8ff",
+        "triggerTagId": "12",
+        "layerName": "",
+        "text": "",
+        "noteText": ""
+      },
+      {
+        "type": "label",
+        "x": 1022.16,
+        "y": 207.375,
+        "rotationDeg": 0,
+        "color": null,
+        "triggerTagId": "",
+        "layerName": "",
+        "text": "aaa",
+        "noteText": ""
+      },
+      {
+        "type": "label",
+        "x": 429.412,
+        "y": 309.375,
+        "rotationDeg": 0,
+        "color": null,
+        "triggerTagId": "",
+        "layerName": "",
+        "text": "bbb",
+        "noteText": ""
+      }
+    ]
+  }
+}

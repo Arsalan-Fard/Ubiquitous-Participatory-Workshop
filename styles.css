@@ -2219,26 +2219,49 @@ body.vga-mode-active #leafletMap {
     stroke-width: 2.5;
 }
 
-/* Tool-specific slice colors (default) */
-.radial-menu__slice--draw .radial-menu__slice-bg      { stroke: rgba(43, 184, 255, 0.4); }
-.radial-menu__slice--dot .radial-menu__slice-bg        { stroke: rgba(255, 107, 107, 0.4); }
-.radial-menu__slice--note .radial-menu__slice-bg       { stroke: rgba(255, 200, 87, 0.4); }
-.radial-menu__slice--eraser .radial-menu__slice-bg     { stroke: rgba(180, 180, 180, 0.4); }
-.radial-menu__slice--selection .radial-menu__slice-bg  { stroke: rgba(100, 200, 255, 0.4); }
+/* Inner ring: tool-specific slice colors (default) */
+.radial-menu__slice--draw .radial-menu__slice-bg        { stroke: rgba(43, 184, 255, 0.45); }
+.radial-menu__slice--dot .radial-menu__slice-bg         { stroke: rgba(255, 107, 107, 0.4); }
+.radial-menu__slice--note .radial-menu__slice-bg        { stroke: rgba(255, 200, 87, 0.4); }
+.radial-menu__slice--eraser .radial-menu__slice-bg      { stroke: rgba(180, 180, 180, 0.4); }
+.radial-menu__slice--selection .radial-menu__slice-bg   { stroke: rgba(100, 200, 255, 0.4); }
 
-/* Tool-specific slice colors (hovered — brighter stroke + subtle tinted fill) */
-.radial-menu__slice--hovered.radial-menu__slice--draw .radial-menu__slice-bg      { stroke: rgba(43, 184, 255, 0.95);  fill: rgba(43, 184, 255, 0.14); }
-.radial-menu__slice--hovered.radial-menu__slice--dot .radial-menu__slice-bg        { stroke: rgba(255, 107, 107, 0.95); fill: rgba(255, 107, 107, 0.14); }
-.radial-menu__slice--hovered.radial-menu__slice--note .radial-menu__slice-bg       { stroke: rgba(255, 200, 87, 0.95);  fill: rgba(255, 200, 87, 0.14); }
-.radial-menu__slice--hovered.radial-menu__slice--eraser .radial-menu__slice-bg     { stroke: rgba(180, 180, 180, 0.95); fill: rgba(180, 180, 180, 0.14); }
-.radial-menu__slice--hovered.radial-menu__slice--selection .radial-menu__slice-bg  { stroke: rgba(100, 200, 255, 0.95); fill: rgba(100, 200, 255, 0.14); }
+/* Inner ring: tool-specific slice colors (hovered) */
+.radial-menu__slice--hovered.radial-menu__slice--draw .radial-menu__slice-bg        { stroke: rgba(43, 184, 255, 0.98); fill: rgba(43, 184, 255, 0.16); }
+.radial-menu__slice--hovered.radial-menu__slice--dot .radial-menu__slice-bg         { stroke: rgba(255, 107, 107, 0.95); fill: rgba(255, 107, 107, 0.14); }
+.radial-menu__slice--hovered.radial-menu__slice--note .radial-menu__slice-bg        { stroke: rgba(255, 200, 87, 0.95); fill: rgba(255, 200, 87, 0.14); }
+.radial-menu__slice--hovered.radial-menu__slice--eraser .radial-menu__slice-bg      { stroke: rgba(180, 180, 180, 0.95); fill: rgba(180, 180, 180, 0.14); }
+.radial-menu__slice--hovered.radial-menu__slice--selection .radial-menu__slice-bg   { stroke: rgba(100, 200, 255, 0.95); fill: rgba(100, 200, 255, 0.14); }
 
-/* Tool-specific fill overlay color when hovered */
-.radial-menu__slice--hovered.radial-menu__slice--draw .radial-menu__slice-fill      { fill: rgba(43, 184, 255, 0.45); }
-.radial-menu__slice--hovered.radial-menu__slice--dot .radial-menu__slice-fill        { fill: rgba(255, 107, 107, 0.45); }
-.radial-menu__slice--hovered.radial-menu__slice--note .radial-menu__slice-fill       { fill: rgba(255, 200, 87, 0.45); }
-.radial-menu__slice--hovered.radial-menu__slice--eraser .radial-menu__slice-fill     { fill: rgba(180, 180, 180, 0.45); }
-.radial-menu__slice--hovered.radial-menu__slice--selection .radial-menu__slice-fill  { fill: rgba(100, 200, 255, 0.45); }
+/* Inner ring: fill overlay color when hovered */
+.radial-menu__slice--hovered.radial-menu__slice--draw .radial-menu__slice-fill        { fill: rgba(43, 184, 255, 0.45); }
+.radial-menu__slice--hovered.radial-menu__slice--dot .radial-menu__slice-fill         { fill: rgba(255, 107, 107, 0.45); }
+.radial-menu__slice--hovered.radial-menu__slice--note .radial-menu__slice-fill        { fill: rgba(255, 200, 87, 0.45); }
+.radial-menu__slice--hovered.radial-menu__slice--eraser .radial-menu__slice-fill      { fill: rgba(180, 180, 180, 0.45); }
+.radial-menu__slice--hovered.radial-menu__slice--selection .radial-menu__slice-fill   { fill: rgba(100, 200, 255, 0.45); }
+
+/* ---- Outer color sub-ring (above Draw slice) ---- */
+.radial-menu__color-slice-bg {
+    /* fill is set inline per-slice to the actual color */
+    opacity: 0.6;
+    stroke: rgba(0, 0, 0, 0.35);
+    stroke-width: 1;
+    transition: opacity 100ms ease, stroke 100ms ease;
+}
+.radial-menu__color-slice-fill {
+    fill: rgba(255, 255, 255, 0.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 80ms linear;
+}
+.radial-menu__color-slice--hovered .radial-menu__color-slice-bg {
+    opacity: 1;
+    stroke: rgba(255, 255, 255, 0.9);
+    stroke-width: 2;
+}
+.radial-menu__color-slice--hovered .radial-menu__color-slice-fill {
+    fill: rgba(255, 255, 255, 0.35);
+}
 
 /* Entrance animation — whole SVG ring pops in */
 .radial-menu--entering .radial-menu__svg {
@@ -2257,6 +2280,13 @@ body.vga-mode-active #leafletMap {
     transition: opacity 200ms ease;
 }
 .radial-menu--selected .radial-menu__slice--hovered {
+    opacity: 1;
+}
+.radial-menu--selected .radial-menu__color-slice {
+    opacity: 0.25;
+    transition: opacity 200ms ease;
+}
+.radial-menu--selected .radial-menu__color-slice--hovered {
     opacity: 1;
 }
 

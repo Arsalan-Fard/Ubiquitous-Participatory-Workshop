@@ -49,17 +49,41 @@ var remoteNoteRuntimeByTriggerTagId = {};
 
 // Radial palette menu state
 var radialMenuByHandId = {};
-var RADIAL_MENU_INNER_R = 40;
-var RADIAL_MENU_OUTER_R = 110;
+var RADIAL_MENU_INNER_R = 46;
+var RADIAL_MENU_OUTER_R = 132;
 var RADIAL_MENU_GAP_DEG = 4;
-var RADIAL_MENU_MIN_DISTANCE_PX = 40; // same as inner radius
+var RADIAL_MENU_MIN_DISTANCE_PX = 46; // same as inner radius
 var RADIAL_MENU_ACTIVATION_DELAY_MS = 1000;
+var DEFAULT_DRAW_COLOR = '#2bb8ff';
+var RADIAL_DRAW_COLOR_BY_TOOL = {
+  'draw-blue': '#2bb8ff',
+  'draw-red': '#ff5b5b',
+  'draw-green': '#45d483',
+  'draw-yellow': '#ffd166',
+  'draw-purple': '#b48cff',
+  'draw-white': '#f5f7fa'
+};
+// Main tool ring — 5 items at 72° spacing
 var RADIAL_MENU_TOOLS = [
-  { toolType: 'draw',      label: 'Draw',      icon: '\u270E',       angle: -90  },
-  { toolType: 'dot',       label: 'Sticker',   icon: '\u25CF',       angle: -18  },
-  { toolType: 'note',      label: 'Note',      icon: '\uD83D\uDCDD', angle: 54   },
-  { toolType: 'eraser',    label: 'Eraser',    icon: '\u232B',       angle: 126  },
-  { toolType: 'selection', label: 'Select',    icon: '\u2734',       angle: 198  }
+  { toolType: 'draw',      label: 'Draw',    icon: '\u270E',       angle: -90  },
+  { toolType: 'dot',       label: 'Sticker', icon: '\u25CF',       angle: -18  },
+  { toolType: 'note',      label: 'Note',    icon: '\uD83D\uDCDD', angle: 54   },
+  { toolType: 'eraser',    label: 'Eraser',  icon: '\u232B',       angle: 126  },
+  { toolType: 'selection', label: 'Select',  icon: '\u2734',       angle: 198  }
+];
+// Outer color sub-ring — 6 color slices fanning above the Draw slice
+var COLOR_RING_INNER_R = RADIAL_MENU_OUTER_R + 4;  // 136
+var COLOR_RING_OUTER_R = COLOR_RING_INNER_R + 38;   // 174
+var COLOR_RING_GAP_DEG = 3;
+var COLOR_RING_SLICE_DEG = 14;
+var COLOR_RING_CENTER_ANGLE = -90; // centered on Draw
+var COLOR_RING_TOOLS = [
+  { colorKey: 'draw-blue',   color: '#2bb8ff' },
+  { colorKey: 'draw-red',    color: '#ff5b5b' },
+  { colorKey: 'draw-green',  color: '#45d483' },
+  { colorKey: 'draw-yellow', color: '#ffd166' },
+  { colorKey: 'draw-purple', color: '#b48cff' },
+  { colorKey: 'draw-white',  color: '#f5f7fa' }
 ];
 
 // Get all visible finger dot positions in viewport coordinates
@@ -255,6 +279,7 @@ function syncApriltagActiveToolsWithParticipants() {
         toolType: 'selection',
         toolEl: findSelectionToolElement(),
         triggerTagId: triggerTagId,
+        lastDrawColor: DEFAULT_DRAW_COLOR,
         lastTriggerContactKey: '',
         activeLayerNavAction: '',
         remoteOverrideTool: '',
@@ -266,6 +291,7 @@ function syncApriltagActiveToolsWithParticipants() {
     }
     entry.triggerTagId = triggerTagId;
     if (typeof entry.lastTriggerContactKey !== 'string') entry.lastTriggerContactKey = '';
+    if (typeof entry.lastDrawColor !== 'string' || !entry.lastDrawColor) entry.lastDrawColor = DEFAULT_DRAW_COLOR;
     if (typeof entry.activeLayerNavAction !== 'string') entry.activeLayerNavAction = '';
     if (typeof entry.remoteOverrideTool !== 'string') entry.remoteOverrideTool = '';
     if (typeof entry.hoverContactKey !== 'string') entry.hoverContactKey = '';
@@ -300,6 +326,7 @@ function getApriltagActiveToolForHand(handId) {
       toolType: 'selection',
       toolEl: findSelectionToolElement(),
       triggerTagId: triggerTagId,
+      lastDrawColor: DEFAULT_DRAW_COLOR,
       lastTriggerContactKey: '',
       activeLayerNavAction: '',
       remoteOverrideTool: '',
@@ -463,12 +490,6 @@ export function applyRemoteApriltagToolOverrides(remoteToolByTriggerTagId) {
   for (var handId in apriltagActiveToolByHandId) {
     var entry = apriltagActiveToolByHandId[handId];
     if (!entry) continue;
-
-    // Skip remote overrides when the tool was set via the radial palette menu.
-    // The radial menu is the authoritative source in Stage 4; phone controller
-    // should not clobber it.
-    var isRadialSelection = entry.lastTriggerContactKey && String(entry.lastTriggerContactKey).indexOf('radial:') === 0;
-    if (isRadialSelection) continue;
 
     var triggerId = normalizeTagId(entry.triggerTagId);
     var wantedRemoteToolType = triggerId ? (remoteByTriggerId[triggerId] || '') : '';
@@ -870,6 +891,19 @@ function syncPointerToolWithApriltagSelection(ps, handId) {
   }
 
   if (ps.activeToolType === toolType && ps.activeToolElement === toolEl) {
+    if (toolType === 'draw') {
+      var currentDrawColor = String(getDrawColorForPointer(ps.dragPointerId) || '').toLowerCase();
+      var wantedDrawColor = toolEl && toolEl.dataset && toolEl.dataset.color ? String(toolEl.dataset.color) : '';
+      if (!wantedDrawColor) {
+        wantedDrawColor = entry && entry.lastDrawColor ? String(entry.lastDrawColor) : DEFAULT_DRAW_COLOR;
+      }
+      wantedDrawColor = String(wantedDrawColor || DEFAULT_DRAW_COLOR).toLowerCase();
+      if (currentDrawColor !== wantedDrawColor) {
+        activateDrawingForPointer(ps.dragPointerId, wantedDrawColor, toolEl);
+        ps.drawingStarted = true;
+        if (entry) entry.lastDrawColor = wantedDrawColor;
+      }
+    }
     return { toolType: toolType, toolEl: toolEl };
   }
 
@@ -890,9 +924,13 @@ function syncPointerToolWithApriltagSelection(ps, handId) {
   ps.activeToolElement = toolEl;
 
   if (toolType === 'draw') {
-    var color = toolEl && toolEl.dataset && toolEl.dataset.color ? toolEl.dataset.color : '#2bb8ff';
+    var color = toolEl && toolEl.dataset && toolEl.dataset.color ? toolEl.dataset.color : '';
+    if (!color) {
+      color = entry && entry.lastDrawColor ? entry.lastDrawColor : DEFAULT_DRAW_COLOR;
+    }
     activateDrawingForPointer(ps.dragPointerId, color, toolEl);
     ps.drawingStarted = true;
+    if (entry) entry.lastDrawColor = color;
   } else if (toolType === 'eraser') {
     ps.eraserActive = true;
     if (toolEl) activateEraser(ps, toolEl);
@@ -954,9 +992,10 @@ function createRadialMenu(handId, localX, localY) {
   menuEl.style.transform = 'translate(' + localX + 'px, ' + localY + 'px)';
 
   var pad = 10;
-  var svgSize = (RADIAL_MENU_OUTER_R + pad) * 2;
-  var cx = RADIAL_MENU_OUTER_R + pad;
-  var cy = RADIAL_MENU_OUTER_R + pad;
+  var maxR = COLOR_RING_OUTER_R; // outer color ring is the largest
+  var svgSize = (maxR + pad) * 2;
+  var cx = maxR + pad;
+  var cy = maxR + pad;
 
   var svgNS = 'http://www.w3.org/2000/svg';
   var svg = document.createElementNS(svgNS, 'svg');
@@ -970,6 +1009,7 @@ function createRadialMenu(handId, localX, localY) {
   svg.style.overflow = 'visible';
   svg.classList.add('radial-menu__svg');
 
+  // --- Inner ring: 5 main tool slices ---
   var toolCount = RADIAL_MENU_TOOLS.length;
   var sliceDeg = 360 / toolCount;
   var halfGap = RADIAL_MENU_GAP_DEG / 2;
@@ -985,19 +1025,16 @@ function createRadialMenu(handId, localX, localY) {
     g.setAttribute('class', 'radial-menu__slice radial-menu__slice--' + tool.toolType);
     g.setAttribute('data-radial-tool', tool.toolType);
 
-    // Background path (the annular slice shape)
     var bgPath = document.createElementNS(svgNS, 'path');
     bgPath.setAttribute('d', describeAnnularSlice(cx, cy, RADIAL_MENU_INNER_R, RADIAL_MENU_OUTER_R, startAngle, endAngle));
     bgPath.setAttribute('class', 'radial-menu__slice-bg');
     g.appendChild(bgPath);
 
-    // Fill overlay path (same shape, for dwell progress)
     var fillPath = document.createElementNS(svgNS, 'path');
     fillPath.setAttribute('d', describeAnnularSlice(cx, cy, RADIAL_MENU_INNER_R, RADIAL_MENU_OUTER_R, startAngle, endAngle));
     fillPath.setAttribute('class', 'radial-menu__slice-fill');
     g.appendChild(fillPath);
 
-    // Icon and label at the midpoint of the slice
     var midAngle = (startAngle + endAngle) / 2;
     var midR = (RADIAL_MENU_INNER_R + RADIAL_MENU_OUTER_R) / 2;
     var midRad = midAngle * Math.PI / 180;
@@ -1033,6 +1070,45 @@ function createRadialMenu(handId, localX, localY) {
     });
   }
 
+  // --- Outer color sub-ring: 6 color slices fanning above Draw ---
+  var colorCount = COLOR_RING_TOOLS.length;
+  var totalColorArc = colorCount * COLOR_RING_SLICE_DEG + (colorCount - 1) * COLOR_RING_GAP_DEG;
+  var colorStartAngle = COLOR_RING_CENTER_ANGLE - totalColorArc / 2;
+
+  var colorItems = [];
+  for (var ci = 0; ci < colorCount; ci++) {
+    var ct = COLOR_RING_TOOLS[ci];
+    var cStart = colorStartAngle + ci * (COLOR_RING_SLICE_DEG + COLOR_RING_GAP_DEG);
+    var cEnd = cStart + COLOR_RING_SLICE_DEG;
+    var cMidAngle = (cStart + cEnd) / 2;
+
+    var cg = document.createElementNS(svgNS, 'g');
+    cg.setAttribute('class', 'radial-menu__color-slice');
+    cg.setAttribute('data-radial-color', ct.colorKey);
+
+    var cbg = document.createElementNS(svgNS, 'path');
+    cbg.setAttribute('d', describeAnnularSlice(cx, cy, COLOR_RING_INNER_R, COLOR_RING_OUTER_R, cStart, cEnd));
+    cbg.setAttribute('class', 'radial-menu__color-slice-bg');
+    cbg.style.fill = ct.color;
+    cg.appendChild(cbg);
+
+    var cfill = document.createElementNS(svgNS, 'path');
+    cfill.setAttribute('d', describeAnnularSlice(cx, cy, COLOR_RING_INNER_R, COLOR_RING_OUTER_R, cStart, cEnd));
+    cfill.setAttribute('class', 'radial-menu__color-slice-fill');
+    cg.appendChild(cfill);
+
+    svg.appendChild(cg);
+    colorItems.push({
+      colorKey: ct.colorKey,
+      color: ct.color,
+      angle: cMidAngle,
+      startAngle: cStart,
+      endAngle: cEnd,
+      el: cg,
+      fillEl: cfill
+    });
+  }
+
   menuEl.appendChild(svg);
   container.appendChild(menuEl);
 
@@ -1045,7 +1121,8 @@ function createRadialMenu(handId, localX, localY) {
     hoveredTool: '',
     hoverStartedMs: 0,
     selected: false,
-    items: items
+    items: items,
+    colorItems: colorItems
   };
   radialMenuByHandId[String(handId)] = entry;
   return entry;
@@ -1071,13 +1148,26 @@ function resolveRadialMenuHover(triggerLocalX, triggerLocalY, menuEntry) {
   var dx = triggerLocalX - menuEntry.centerX;
   var dy = triggerLocalY - menuEntry.centerY;
   var dist = Math.sqrt(dx * dx + dy * dy);
+  var angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
 
-  // Must be within the annular ring band
+  // 1. Check outer color ring first (has priority when pointer is far enough)
+  if (dist >= COLOR_RING_INNER_R && dist <= COLOR_RING_OUTER_R * 1.3 && menuEntry.colorItems) {
+    var halfColorSlice = COLOR_RING_SLICE_DEG / 2;
+    for (var ci = 0; ci < menuEntry.colorItems.length; ci++) {
+      var cItem = menuEntry.colorItems[ci];
+      var cDiff = angleDeg - cItem.angle;
+      while (cDiff > 180) cDiff -= 360;
+      while (cDiff < -180) cDiff += 360;
+      if (Math.abs(cDiff) <= halfColorSlice) {
+        return cItem.colorKey;
+      }
+    }
+  }
+
+  // 2. Check inner main tool ring
   if (dist < RADIAL_MENU_INNER_R || dist > RADIAL_MENU_OUTER_R * 1.3) return '';
 
-  var angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
   var halfSlice = (360 / menuEntry.items.length) / 2 - RADIAL_MENU_GAP_DEG / 2;
-
   for (var i = 0; i < menuEntry.items.length; i++) {
     var item = menuEntry.items[i];
     var diff = angleDeg - item.angle;
@@ -1091,12 +1181,24 @@ function resolveRadialMenuHover(triggerLocalX, triggerLocalY, menuEntry) {
 }
 
 function updateRadialMenuVisuals(menuEntry, hoveredTool, fillProgress) {
+  // Update inner ring main tool slices
   for (var i = 0; i < menuEntry.items.length; i++) {
     var item = menuEntry.items[i];
     var isHovered = item.toolType === hoveredTool;
     item.el.classList.toggle('radial-menu__slice--hovered', isHovered);
     if (item.fillEl) {
       item.fillEl.style.opacity = isHovered ? String(fillProgress) : '0';
+    }
+  }
+  // Update outer color ring slices
+  if (menuEntry.colorItems) {
+    for (var ci = 0; ci < menuEntry.colorItems.length; ci++) {
+      var cItem = menuEntry.colorItems[ci];
+      var cHovered = cItem.colorKey === hoveredTool;
+      cItem.el.classList.toggle('radial-menu__color-slice--hovered', cHovered);
+      if (cItem.fillEl) {
+        cItem.fillEl.style.opacity = cHovered ? String(fillProgress) : '0';
+      }
     }
   }
 }
@@ -1154,6 +1256,41 @@ function ensureStickerTemplate(stickerType, triggerTagId) {
   el.style.display = 'none';
   overlayEl.appendChild(el);
   return el;
+}
+
+function ensureDrawTemplate(triggerTagId, drawColor) {
+  var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
+  if (!overlayEl) return null;
+  var triggerId = normalizeTagId(triggerTagId);
+  var color = String(drawColor || DEFAULT_DRAW_COLOR);
+
+  var templateEls = overlayEl.querySelectorAll('.ui-draw[data-radial-template="1"]');
+  for (var i = 0; i < templateEls.length; i++) {
+    var existing = templateEls[i];
+    if (!existing || !existing.dataset) continue;
+    var existingTriggerId = normalizeTagId(existing.dataset.triggerTagId);
+    if ((existingTriggerId || '') !== (triggerId || '')) continue;
+    existing.dataset.color = color;
+    return existing;
+  }
+
+  var el = document.createElement('div');
+  el.className = 'ui-draw';
+  el.dataset.uiType = 'draw';
+  el.dataset.color = color;
+  el.dataset.radialTemplate = '1';
+  if (triggerId) el.dataset.triggerTagId = String(triggerId);
+  el.style.position = 'absolute';
+  el.style.left = '0px';
+  el.style.top = '0px';
+  el.style.display = 'none';
+  overlayEl.appendChild(el);
+  return el;
+}
+
+function isRadialDrawColorTool(toolType) {
+  var key = String(toolType || '').trim().toLowerCase();
+  return !!RADIAL_DRAW_COLOR_BY_TOOL[key];
 }
 
 /**
@@ -1218,7 +1355,25 @@ function swapParticipantTags(oldHandId) {
 }
 
 function handleRadialMenuSelection(handId, selectedTool, entry) {
-  if (selectedTool === 'draw' || selectedTool === 'dot' || selectedTool === 'note' || selectedTool === 'eraser') {
+  if (selectedTool === 'draw' || isRadialDrawColorTool(selectedTool)) {
+    var selectedDrawColor = '';
+    if (isRadialDrawColorTool(selectedTool)) {
+      selectedDrawColor = RADIAL_DRAW_COLOR_BY_TOOL[String(selectedTool).trim().toLowerCase()] || '';
+    } else if (entry && entry.lastDrawColor) {
+      selectedDrawColor = entry.lastDrawColor;
+    }
+    if (!selectedDrawColor) selectedDrawColor = DEFAULT_DRAW_COLOR;
+
+    var drawToolEl = ensureDrawTemplate(entry.triggerTagId, selectedDrawColor);
+    entry.lastDrawColor = selectedDrawColor;
+    entry.lastTriggerContactKey = 'radial:' + selectedTool;
+    entry.activeLayerNavAction = '';
+    clearTriggerHoverVisual(entry);
+    setApriltagActiveToolForHand(handId, 'draw', drawToolEl);
+    return;
+  }
+
+  if (selectedTool === 'dot' || selectedTool === 'note' || selectedTool === 'eraser') {
     var toolEl = findToolElementForTriggerTag(entry.triggerTagId, selectedTool);
     // For sticker/note: ensure a template exists for cloning
     if (!toolEl && (selectedTool === 'dot' || selectedTool === 'note')) {
@@ -1310,6 +1465,20 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
 
       var rmEntry = radialMenuByHandId[String(handId)];
       if (!rmEntry) {
+        // Trigger just appeared — deactivate any active interaction on the primary side
+        var ps = pointerStates[String(handId)];
+        if (ps) {
+          if (ps.isDrawing) {
+            ps.isDrawing = false;
+            stopDrawingForPointer(ps.dragPointerId);
+          }
+          deactivateDrawingForPointer(ps.dragPointerId);
+          deactivateEraser(ps);
+          finalizeFollowStickerForPointer(ps);
+          dearmStickerTemplate(ps);
+        }
+        setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
+
         // Create a new radial menu at the trigger's current position
         rmEntry = createRadialMenu(handId, localX, localY);
       }
@@ -1868,6 +2037,7 @@ function processPointerGesture(handIndex, pointer, handData) {
   if (isApriltag && activeToolType === 'selection') {
     if (isTouch === false) {
       finalizeFollowStickerForPointer(ps, pointer);
+      setApriltagActiveToolForHand(handIndex, APRILTAG_TOOL_NONE, null);
       updatePointerCursor(handIndex, pointer, 0, null);
       ps.prevPointerTimeMs = nowMs;
       return;

@@ -1383,6 +1383,259 @@ export function initApp() {
   };
   var zoomGuidesOverlayEl = null;
 
+  // ---- Pinch-zoom via dedicated AprilTag pair (IDs 5 & 6) ----
+  var PINCH_ZOOM_TAG_A = 5;
+  var PINCH_ZOOM_TAG_B = 6;
+  var PINCH_ZOOM_RANGE = 2.0;           // max zoom levels away from baseline (±2)
+  var PINCH_ZOOM_DEADBAND = 0.04;       // ignore distance ratio changes smaller than this
+  var PINCH_ZOOM_MIN_UPDATE_MS = 100;    // throttle zoom updates
+  var PINCH_ZOOM_MISSING_HOLD_MS = 800;  // how long to hold zoom after tags disappear
+  var pinchZoomRuntime = {
+    baselineDistance: 0,   // pixel distance when both tags first seen
+    baselineZoom: 0,       // map zoom level at baseline
+    ready: false,          // true once baseline is captured
+    lastApplyMs: 0,
+    missingSinceMs: 0
+  };
+
+  function resetPinchZoomRuntime() {
+    pinchZoomRuntime.ready = false;
+    pinchZoomRuntime.baselineDistance = 0;
+    pinchZoomRuntime.baselineZoom = 0;
+    pinchZoomRuntime.lastApplyMs = 0;
+    pinchZoomRuntime.missingSinceMs = 0;
+  }
+
+  /**
+   * Process zoom using a dedicated pair of AprilTags (IDs 5 & 6).
+   * Closer together → zoom in, farther apart → zoom out.
+   * The distance change is mapped linearly to ±PINCH_ZOOM_RANGE zoom levels
+   * from the baseline zoom captured on first simultaneous detection.
+   * When tags reach their closest physical distance → +RANGE zoom in,
+   * same distance apart → -RANGE zoom out.
+   */
+  function processPinchZoomTags(detectionById) {
+    if (state.viewMode !== 'map' || (state.stage !== 3 && state.stage !== 4) || !state.map) {
+      resetPinchZoomRuntime();
+      return;
+    }
+
+    var detA = detectionById[PINCH_ZOOM_TAG_A];
+    var detB = detectionById[PINCH_ZOOM_TAG_B];
+    var hasA = detA && detA.center;
+    var hasB = detB && detB.center;
+
+    if (!hasA || !hasB) {
+      // One or both tags missing
+      var nowMs = performance.now();
+      if (pinchZoomRuntime.ready) {
+        if (!pinchZoomRuntime.missingSinceMs) pinchZoomRuntime.missingSinceMs = nowMs;
+        if ((nowMs - pinchZoomRuntime.missingSinceMs) > PINCH_ZOOM_MISSING_HOLD_MS) {
+          resetPinchZoomRuntime();
+        }
+      }
+      return;
+    }
+
+    // Both tags visible — compute pixel distance between centers
+    var dx = detA.center.x - detB.center.x;
+    var dy = detA.center.y - detB.center.y;
+    var currentDist = Math.sqrt(dx * dx + dy * dy);
+    if (currentDist < 1) return; // tags overlapping, ignore
+
+    var nowMs2 = performance.now();
+    pinchZoomRuntime.missingSinceMs = 0;
+
+    // Capture baseline on first simultaneous detection
+    if (!pinchZoomRuntime.ready) {
+      pinchZoomRuntime.baselineDistance = currentDist;
+      var z = state.map.getZoom();
+      pinchZoomRuntime.baselineZoom = isFinite(z) ? z : 0;
+      pinchZoomRuntime.ready = true;
+      pinchZoomRuntime.lastApplyMs = nowMs2;
+      return;
+    }
+
+    // Throttle updates
+    if ((nowMs2 - pinchZoomRuntime.lastApplyMs) < PINCH_ZOOM_MIN_UPDATE_MS) return;
+
+    // Compute distance ratio relative to baseline.
+    // ratio < 1 means tags are closer → zoom IN (positive delta)
+    // ratio > 1 means tags are farther → zoom OUT (negative delta)
+    var ratio = currentDist / pinchZoomRuntime.baselineDistance;
+    var delta = 1 - ratio; // inverted: closer = positive, farther = negative
+    if (Math.abs(delta) < PINCH_ZOOM_DEADBAND) return;
+
+    // Clamp delta to ±1 so zoom change is within ±PINCH_ZOOM_RANGE
+    delta = clamp(delta, -1, 1);
+
+    var targetZoom = pinchZoomRuntime.baselineZoom + delta * PINCH_ZOOM_RANGE;
+
+    // Clamp to map min/max zoom
+    var minZoom = typeof state.map.getMinZoom === 'function' ? state.map.getMinZoom() : -Infinity;
+    var maxZoom = typeof state.map.getMaxZoom === 'function' ? state.map.getMaxZoom() : Infinity;
+    if (!isFinite(minZoom)) minZoom = -Infinity;
+    if (!isFinite(maxZoom)) maxZoom = Infinity;
+    targetZoom = clamp(targetZoom, minZoom, maxZoom);
+
+    var currentZoom = state.map.getZoom();
+    if (Math.abs(targetZoom - currentZoom) < 0.01) return;
+
+    try {
+      state.map.jumpTo({ zoom: targetZoom });
+      pinchZoomRuntime.lastApplyMs = nowMs2;
+    } catch (err) {
+      // Ignore transient zoom errors.
+    }
+  }
+
+  // ---- Dedicated pan tag (ID 7) ----
+  var PAN_TAG_ID = 7;
+  var PAN_TAG_JITTER_PX = 2.5;
+  var PAN_TAG_MIN_UPDATE_MS = 45;
+  var PAN_TAG_MISSING_HOLD_MS = 850;
+  var panTagDedicatedRuntime = {
+    lastPoint: null,   // { x, y } in map-local coords
+    lastApplyMs: 0,
+    missingSinceMs: 0
+  };
+
+  function resetPanTagDedicatedRuntime() {
+    panTagDedicatedRuntime.lastPoint = null;
+    panTagDedicatedRuntime.lastApplyMs = 0;
+    panTagDedicatedRuntime.missingSinceMs = 0;
+  }
+
+  /**
+   * Process pan using a dedicated AprilTag.
+   * When the tag is visible on the projected surface, its movement
+   * is translated into map panning (same behaviour as the existing pan tool).
+   */
+  function processPanTag(detectionById) {
+    if (state.viewMode !== 'map' || (state.stage !== 3 && state.stage !== 4) || !state.map) {
+      resetPanTagDedicatedRuntime();
+      return;
+    }
+
+    var det = detectionById[PAN_TAG_ID];
+    if (!det || !det.center) {
+      var nowMs = performance.now();
+      if (panTagDedicatedRuntime.lastPoint) {
+        if (!panTagDedicatedRuntime.missingSinceMs) panTagDedicatedRuntime.missingSinceMs = nowMs;
+        if ((nowMs - panTagDedicatedRuntime.missingSinceMs) > PAN_TAG_MISSING_HOLD_MS) {
+          resetPanTagDedicatedRuntime();
+        }
+      }
+      return;
+    }
+
+    // Project tag center to map-local coordinates
+    if (!state.surfaceHomography) return;
+    var mapRect = dom.mapWarpEl.getBoundingClientRect();
+    var mapW = dom.mapViewEl.offsetWidth;
+    var mapH = dom.mapViewEl.offsetHeight;
+    if (!mapW || !mapH) return;
+
+    var uv = applyHomography(state.surfaceHomography, det.center.x, det.center.y);
+    if (!uv) return;
+    // Allow slight extrapolation so tags near edges still work
+    if (uv.x < -0.2 || uv.x > 1.2 || uv.y < -0.2 || uv.y > 1.2) return;
+
+    var localX = uv.x * mapW;
+    var localY = uv.y * mapH;
+    var nowMs2 = performance.now();
+    panTagDedicatedRuntime.missingSinceMs = 0;
+
+    if (!panTagDedicatedRuntime.lastPoint) {
+      panTagDedicatedRuntime.lastPoint = { x: localX, y: localY };
+      panTagDedicatedRuntime.lastApplyMs = nowMs2;
+      return;
+    }
+
+    var dx = localX - panTagDedicatedRuntime.lastPoint.x;
+    var dy = localY - panTagDedicatedRuntime.lastPoint.y;
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < PAN_TAG_JITTER_PX) return;
+    if ((nowMs2 - panTagDedicatedRuntime.lastApplyMs) < PAN_TAG_MIN_UPDATE_MS) return;
+
+    try {
+      state.map.panBy([-dx, -dy], { animate: false });
+    } catch (err) {
+      // Ignore transient pan errors.
+    }
+    panTagDedicatedRuntime.lastPoint = { x: localX, y: localY };
+    panTagDedicatedRuntime.lastApplyMs = nowMs2;
+  }
+
+  // ---- Dedicated next/back navigation tags (IDs 8 & 9) ----
+  // Triggered by entering the surface (homography UV in [0,1]).
+  // To trigger again the tag must leave the surface first, then re-enter.
+  // Simply losing detection (disappearing) does NOT count as leaving —
+  // the tag must be explicitly seen outside the surface boundary.
+  var NAV_NEXT_TAG_ID = 8;
+  var NAV_BACK_TAG_ID = 9;
+  var navTagState = {
+    // Each tag tracks: 'outside' | 'inside' | 'unknown'
+    // Transition: unknown→outside (seen outside) → inside (entered) = trigger
+    // After trigger, stays 'inside' until seen outside again.
+    nextTagPhase: 'unknown',  // 'unknown' | 'outside' | 'inside'
+    backTagPhase: 'unknown'
+  };
+
+  function resetNavTagState() {
+    navTagState.nextTagPhase = 'unknown';
+    navTagState.backTagPhase = 'unknown';
+  }
+
+  /**
+   * Check if a detection's center is within the calibrated surface.
+   * Returns: 'inside' if UV is in [0,1], 'outside' if detected but outside, null if not detected.
+   */
+  function getTagSurfaceStatus(det) {
+    if (!det || !det.center || !state.surfaceHomography) return null;
+    var uv = applyHomography(state.surfaceHomography, det.center.x, det.center.y);
+    if (!uv) return null;
+    if (uv.x >= 0 && uv.x <= 1 && uv.y >= 0 && uv.y <= 1) return 'inside';
+    return 'outside';
+  }
+
+  /**
+   * Process navigation tags. A tag entering the surface triggers next/back.
+   * To trigger again, the tag must be seen outside the surface first.
+   * Losing detection (tag not visible at all) does NOT reset the state.
+   */
+  function processNavTags(detectionById) {
+    if (state.viewMode !== 'map' || (state.stage !== 3 && state.stage !== 4)) {
+      resetNavTagState();
+      return;
+    }
+
+    // --- Next tag (ID 8) ---
+    var nextStatus = getTagSurfaceStatus(detectionById[NAV_NEXT_TAG_ID]);
+    if (nextStatus === 'outside') {
+      // Tag is seen outside surface → arm for next trigger
+      navTagState.nextTagPhase = 'outside';
+    } else if (nextStatus === 'inside') {
+      if (navTagState.nextTagPhase === 'outside') {
+        // Transition from outside → inside = trigger next
+        goToNextMapSession();
+      }
+      navTagState.nextTagPhase = 'inside';
+    }
+    // If nextStatus === null (not detected), keep current phase — don't reset
+
+    // --- Back tag (ID 9) ---
+    var backStatus = getTagSurfaceStatus(detectionById[NAV_BACK_TAG_ID]);
+    if (backStatus === 'outside') {
+      navTagState.backTagPhase = 'outside';
+    } else if (backStatus === 'inside') {
+      if (navTagState.backTagPhase === 'outside') {
+        goToPrevMapSession();
+      }
+      navTagState.backTagPhase = 'inside';
+    }
+  }
+
   dom.mapSessionAddBtnEl.addEventListener('click', function(e) {
     e.preventDefault();
     e.stopPropagation();
@@ -2383,10 +2636,22 @@ export function initApp() {
     var session = mapSessions[index];
     if (!session) return;
 
+    // Save current zoom to the outgoing session so it persists per-view
+    if (currentMapSessionIndex >= 0 && currentMapSessionIndex < mapSessions.length && state.map) {
+      var outgoing = mapSessions[currentMapSessionIndex];
+      if (outgoing) {
+        var curZoom = state.map.getZoom();
+        if (isFinite(curZoom)) outgoing.zoom = curZoom;
+      }
+    }
+
     state.currentMapSessionId = session.id;
     currentMapSessionIndex = index;
     resetPanTagRuntime();
     resetZoomTagRuntime();
+    // Re-baseline dedicated zoom tags so they adapt to the new view's zoom
+    // (next frame will capture current tag distance + new view zoom as baseline)
+    resetPinchZoomRuntime();
 
     if (state.map) {
       state.map.jumpTo({ center: [session.lng, session.lat], zoom: session.zoom });
@@ -4829,6 +5094,9 @@ export function initApp() {
       processLayerNavigationVotes(layerNavVoteState);
       processLayerPanVotes(layerNavVoteState, apriltagPoints);
       processLayerZoomVotes(layerNavVoteState, apriltagPoints);
+      processPinchZoomTags(detectionById);
+      processPanTag(detectionById);
+      processNavTags(detectionById);
       applyRemoteApriltagToolOverrides(state.remoteControllerToolByTriggerTagId);
       applyRemoteApriltagNoteStateOverrides(state.remoteControllerNoteStateByTriggerTagId);
       handleStage3Gestures(apriltagPoints);
@@ -4837,6 +5105,9 @@ export function initApp() {
       processLayerNavigationVotes(null);
       processLayerPanVotes(null, null);
       processLayerZoomVotes(null, null);
+      resetPinchZoomRuntime();
+      resetPanTagDedicatedRuntime();
+      resetNavTagState();
       resetStage3Gestures();
     }
 
