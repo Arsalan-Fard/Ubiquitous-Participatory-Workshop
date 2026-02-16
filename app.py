@@ -595,6 +595,55 @@ def api_controller_heartbeat():
   })
 
 
+AUDIO_DIR = ROOT_DIR / "workshops" / "_audio"
+audio_file_lock = threading.Lock()
+
+
+@app.route("/api/controller/audio", methods=["POST"])
+def api_controller_audio():
+  client_id = sanitize_controller_client_id(request.form.get("clientId"))
+  if not client_id:
+    return jsonify({"ok": False, "error": "invalid_client_id"}), 400
+
+  trigger_tag_id = sanitize_controller_trigger_tag_id(request.form.get("triggerTagId"))
+  is_final = request.form.get("isFinal") == "1"
+
+  audio_file = request.files.get("audio")
+
+  try:
+    with audio_file_lock:
+      AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+
+      # Build filename from client id and session timestamp
+      # Each client gets a single file per session (appended to)
+      safe_client = re.sub(r"[^A-Za-z0-9_-]", "_", client_id)[:64]
+      tag_suffix = f"-tag{trigger_tag_id}" if trigger_tag_id is not None else ""
+      base_name = f"{safe_client}{tag_suffix}"
+
+      # Find or create the audio file for this client
+      audio_path = AUDIO_DIR / f"{base_name}.webm"
+
+      if audio_file:
+        # Append audio chunk to file
+        data = audio_file.read()
+        if data:
+          with open(audio_path, "ab") as f:
+            f.write(data)
+
+      if is_final:
+        # Rename to include timestamp so it doesn't get overwritten next session
+        if audio_path.exists() and audio_path.stat().st_size > 0:
+          ts = time.strftime("%Y%m%d-%H%M%S")
+          final_name = f"{base_name}-{ts}.webm"
+          final_path = AUDIO_DIR / final_name
+          audio_path.rename(final_path)
+
+  except Exception as exc:
+    return jsonify({"ok": False, "error": str(exc)}), 500
+
+  return jsonify({"ok": True})
+
+
 def _server_info_port_from_request():
   try:
     port = int(request.environ.get("SERVER_PORT") or 0)

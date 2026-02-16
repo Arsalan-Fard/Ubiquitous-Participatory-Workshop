@@ -408,12 +408,13 @@ function setApriltagActiveToolForHand(handId, toolType, toolEl) {
   var resolvedType = String(toolType || '');
   var resolvedEl = toolEl && toolEl.isConnected ? toolEl : null;
 
-  // Radial menu selections work without a backing overlay element
-  var isRadialSelection = entry.lastTriggerContactKey && String(entry.lastTriggerContactKey).indexOf('radial:') === 0;
+  // Radial menu and remote controller selections work without a backing overlay element
+  var contactKey = entry.lastTriggerContactKey ? String(entry.lastTriggerContactKey) : '';
+  var isNonOverlaySelection = contactKey.indexOf('radial:') === 0 || contactKey.indexOf('remote:') === 0;
 
   if (!resolvedType) resolvedType = resolvedEl ? getToolTypeFromElement(resolvedEl) : 'selection';
   if (!resolvedType || resolvedType === 'unknown') resolvedType = 'selection';
-  if (resolvedType !== 'selection' && resolvedType !== APRILTAG_TOOL_NONE && !resolvedEl && !isRadialSelection) resolvedType = 'selection';
+  if (resolvedType !== 'selection' && resolvedType !== APRILTAG_TOOL_NONE && !resolvedEl && !isNonOverlaySelection) resolvedType = 'selection';
 
   if (resolvedType === 'selection' && !resolvedEl) {
     resolvedEl = findSelectionToolElement();
@@ -495,6 +496,20 @@ export function applyRemoteApriltagToolOverrides(remoteToolByTriggerTagId) {
     var wantedRemoteToolType = triggerId ? (remoteByTriggerId[triggerId] || '') : '';
     if (wantedRemoteToolType) {
       var remoteToolEl = findToolElementForTriggerTag(triggerId, wantedRemoteToolType);
+
+      // If no overlay element found, create hidden templates for tools that need them
+      if (!remoteToolEl) {
+        if (wantedRemoteToolType === 'eraser') {
+          remoteToolEl = ensureEraserTemplate(triggerId);
+        } else if (wantedRemoteToolType === 'dot' || wantedRemoteToolType === 'note') {
+          remoteToolEl = ensureStickerTemplate(wantedRemoteToolType, triggerId);
+        } else if (wantedRemoteToolType === 'selection') {
+          remoteToolEl = findSelectionToolElement();
+        } else if (wantedRemoteToolType === 'draw') {
+          var drawColor = (entry && entry.lastDrawColor) ? entry.lastDrawColor : DEFAULT_DRAW_COLOR;
+          remoteToolEl = ensureDrawTemplate(triggerId, drawColor);
+        }
+      }
       if (!remoteToolEl) {
         if (entry.remoteOverrideTool === wantedRemoteToolType) {
           entry.remoteOverrideTool = '';
@@ -502,7 +517,8 @@ export function applyRemoteApriltagToolOverrides(remoteToolByTriggerTagId) {
         continue;
       }
 
-      entry.lastTriggerContactKey = '';
+      // Set contact key so setApriltagActiveToolForHand doesn't downgrade to selection
+      entry.lastTriggerContactKey = 'remote:' + wantedRemoteToolType;
       entry.activeLayerNavAction = '';
       clearTriggerHoverVisual(entry);
       setApriltagActiveToolForHand(handId, wantedRemoteToolType, remoteToolEl);
@@ -514,7 +530,8 @@ export function applyRemoteApriltagToolOverrides(remoteToolByTriggerTagId) {
     var previousRemoteTool = String(entry.remoteOverrideTool || '');
     entry.remoteOverrideTool = '';
 
-    var hadPhysicalContact = !!entry.lastTriggerContactKey;
+    var prevContactKey = entry.lastTriggerContactKey ? String(entry.lastTriggerContactKey) : '';
+    var hadPhysicalContact = !!prevContactKey && prevContactKey.indexOf('remote:') !== 0;
     entry.lastTriggerContactKey = '';
     entry.activeLayerNavAction = '';
     clearTriggerHoverVisual(entry);
@@ -880,10 +897,11 @@ function syncPointerToolWithApriltagSelection(ps, handId) {
   var toolEl = entry.toolEl && entry.toolEl.isConnected ? entry.toolEl : null;
   var prevToolType = ps.activeToolType;
 
-  // Radial menu selections work without a backing overlay element
-  var isRadialSelection = entry.lastTriggerContactKey && String(entry.lastTriggerContactKey).indexOf('radial:') === 0;
+  // Radial menu and remote controller selections work without a backing overlay element
+  var syncContactKey = entry.lastTriggerContactKey ? String(entry.lastTriggerContactKey) : '';
+  var isNonOverlaySelection = syncContactKey.indexOf('radial:') === 0 || syncContactKey.indexOf('remote:') === 0;
 
-  if (toolType !== 'selection' && toolType !== APRILTAG_TOOL_NONE && !toolEl && !isRadialSelection) {
+  if (toolType !== 'selection' && toolType !== APRILTAG_TOOL_NONE && !toolEl && !isNonOverlaySelection) {
     toolType = 'selection';
     toolEl = findSelectionToolElement();
     entry.toolType = 'selection';
@@ -1278,6 +1296,33 @@ function ensureDrawTemplate(triggerTagId, drawColor) {
   el.className = 'ui-draw';
   el.dataset.uiType = 'draw';
   el.dataset.color = color;
+  el.dataset.radialTemplate = '1';
+  if (triggerId) el.dataset.triggerTagId = String(triggerId);
+  el.style.position = 'absolute';
+  el.style.left = '0px';
+  el.style.top = '0px';
+  el.style.display = 'none';
+  overlayEl.appendChild(el);
+  return el;
+}
+
+function ensureEraserTemplate(triggerTagId) {
+  var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
+  if (!overlayEl) return null;
+  var triggerId = normalizeTagId(triggerTagId);
+
+  var templateEls = overlayEl.querySelectorAll('.ui-eraser[data-radial-template="1"]');
+  for (var i = 0; i < templateEls.length; i++) {
+    var existing = templateEls[i];
+    if (!existing || !existing.dataset) continue;
+    var existingTriggerId = normalizeTagId(existing.dataset.triggerTagId);
+    if ((existingTriggerId || '') !== (triggerId || '')) continue;
+    return existing;
+  }
+
+  var el = document.createElement('div');
+  el.className = 'ui-eraser';
+  el.dataset.uiType = 'eraser';
   el.dataset.radialTemplate = '1';
   if (triggerId) el.dataset.triggerTagId = String(triggerId);
   el.style.position = 'absolute';

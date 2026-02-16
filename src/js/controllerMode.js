@@ -1,6 +1,8 @@
 var CONTROLLER_STORAGE_KEY = 'phoneControllerClientId';
 var CONTROLLER_HEARTBEAT_INTERVAL_MS = 150;
 var CONTROLLER_HEARTBEAT_ENDPOINT = '/api/controller/heartbeat';
+var CONTROLLER_AUDIO_UPLOAD_ENDPOINT = '/api/controller/audio';
+var CONTROLLER_AUDIO_UPLOAD_INTERVAL_MS = 30000; // upload audio chunk every 30s
 var CONTROLLER_NOTE_TEXT_MAX_LEN = 500;
 
 function getOrCreateClientId() {
@@ -41,7 +43,14 @@ function createStyles() {
     '.controller-note-wrap { width: 204px; }',
     '.controller-note-wrap.hidden { display: none; }',
     '.controller-note-input { width: 100%; min-height: 46px; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.22); background: rgba(17,24,39,0.85); color: #f9fafb; font-size: 16px; box-sizing: border-box; }',
-    '.controller-note-input::placeholder { color: rgba(249,250,251,0.65); }'
+    '.controller-note-input::placeholder { color: rgba(249,250,251,0.65); }',
+    // Audio record button
+    '.controller-rec-btn { width: 100%; height: 48px; border-radius: 14px; border: 2px solid rgba(255,255,255,0.85); font-size: 16px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; color: #f9fafb; background: rgba(255,255,255,0.10); transition: transform 120ms ease, background 120ms ease; }',
+    '.controller-rec-btn:active { transform: scale(0.97); }',
+    '.controller-rec-btn--recording { background: rgba(239,68,68,0.28); border-color: rgba(239,68,68,0.85); }',
+    '.controller-rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; flex-shrink: 0; }',
+    '.controller-rec-btn--recording .controller-rec-dot { animation: controller-rec-pulse 1.2s ease-in-out infinite; }',
+    '@keyframes controller-rec-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }'
   ].join('');
   document.head.appendChild(style);
 }
@@ -265,6 +274,131 @@ function clampNoteText(raw) {
   return text;
 }
 
+// ---- Audio Recording ----
+
+var audioRecorder = null;
+var audioChunks = [];
+var audioUploadTimerId = 0;
+var audioClientId = '';
+var audioTriggerTagId = 0;
+var audioRecordingActive = false;
+
+function startAudioRecording(clientId) {
+  if (audioRecordingActive) return Promise.resolve(false);
+  audioClientId = clientId;
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    console.warn('Audio recording not supported in this browser');
+    return Promise.resolve(false);
+  }
+
+  return navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    .then(function(stream) {
+      var mimeType = 'audio/webm;codecs=opus';
+      if (typeof MediaRecorder.isTypeSupported === 'function' && !MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'audio/webm';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = '';
+        }
+      }
+      var options = mimeType ? { mimeType: mimeType } : {};
+      audioRecorder = new MediaRecorder(stream, options);
+      audioChunks = [];
+      audioRecordingActive = true;
+
+      audioRecorder.ondataavailable = function(e) {
+        if (e.data && e.data.size > 0) {
+          audioChunks.push(e.data);
+        }
+      };
+
+      audioRecorder.onerror = function() {
+        console.warn('Audio recorder error');
+      };
+
+      // Request data every 5 seconds so chunks accumulate
+      audioRecorder.start(5000);
+
+      // Periodically upload accumulated chunks to backend
+      audioUploadTimerId = setInterval(function() {
+        uploadAudioChunks(false);
+      }, CONTROLLER_AUDIO_UPLOAD_INTERVAL_MS);
+
+      return true;
+    })
+    .catch(function(err) {
+      console.warn('Microphone access denied:', err);
+      return false;
+    });
+}
+
+function uploadAudioChunks(isFinal) {
+  if (audioChunks.length === 0 && !isFinal) return Promise.resolve();
+
+  var chunksToSend = audioChunks.slice();
+  audioChunks = [];
+
+  if (chunksToSend.length === 0 && isFinal) {
+    // Send empty final marker
+    var formData = new FormData();
+    formData.append('clientId', audioClientId);
+    formData.append('triggerTagId', String(audioTriggerTagId || 0));
+    formData.append('isFinal', '1');
+    return fetch(CONTROLLER_AUDIO_UPLOAD_ENDPOINT, {
+      method: 'POST',
+      body: formData,
+      keepalive: true,
+    }).catch(function() {});
+  }
+
+  var blob = new Blob(chunksToSend, { type: chunksToSend[0].type || 'audio/webm' });
+  var formData = new FormData();
+  formData.append('audio', blob, 'chunk.webm');
+  formData.append('clientId', audioClientId);
+  formData.append('triggerTagId', String(audioTriggerTagId || 0));
+  if (isFinal) formData.append('isFinal', '1');
+
+  return fetch(CONTROLLER_AUDIO_UPLOAD_ENDPOINT, {
+    method: 'POST',
+    body: formData,
+    keepalive: true,
+  }).catch(function(err) {
+    // On failure, put chunks back so next upload retries
+    if (!isFinal) {
+      audioChunks = chunksToSend.concat(audioChunks);
+    }
+  });
+}
+
+function stopAudioRecording() {
+  if (!audioRecordingActive) return Promise.resolve();
+  audioRecordingActive = false;
+
+  if (audioUploadTimerId) {
+    clearInterval(audioUploadTimerId);
+    audioUploadTimerId = 0;
+  }
+
+  return new Promise(function(resolve) {
+    if (!audioRecorder || audioRecorder.state === 'inactive') {
+      uploadAudioChunks(true).then(resolve);
+      return;
+    }
+
+    audioRecorder.onstop = function() {
+      // Stop all mic tracks
+      if (audioRecorder.stream) {
+        var tracks = audioRecorder.stream.getTracks();
+        for (var i = 0; i < tracks.length; i++) tracks[i].stop();
+      }
+      uploadAudioChunks(true).then(resolve);
+    };
+    audioRecorder.stop();
+  });
+}
+
+// ---- Controller UI ----
+
 export function initControllerMode() {
   var clientId = getOrCreateClientId();
   var activePointerId = null;
@@ -333,6 +467,21 @@ export function initControllerMode() {
   noteInputEl.placeholder = 'Type annotation...';
   noteWrapEl.appendChild(noteInputEl);
   root.appendChild(noteWrapEl);
+
+  // Record audio button
+  var recRowEl = document.createElement('div');
+  recRowEl.className = 'controller-tool-row';
+  var recBtnEl = document.createElement('button');
+  recBtnEl.className = 'controller-rec-btn';
+  recBtnEl.type = 'button';
+  var recDotEl = document.createElement('span');
+  recDotEl.className = 'controller-rec-dot';
+  var recLabelEl = document.createElement('span');
+  recLabelEl.textContent = 'Record Audio';
+  recBtnEl.appendChild(recDotEl);
+  recBtnEl.appendChild(recLabelEl);
+  recRowEl.appendChild(recBtnEl);
+  root.appendChild(recRowEl);
 
   document.body.appendChild(root);
 
@@ -500,8 +649,39 @@ export function initControllerMode() {
   });
 
   triggerSelectEl.addEventListener('change', function() {
+    audioTriggerTagId = parseInt(triggerSelectEl.value, 10) || 0;
     if (!holding && !noteSessionActive) return;
     pushHeartbeat(holding, false);
+  });
+
+  // Initialize audio trigger tag ID
+  audioTriggerTagId = parseInt(triggerSelectEl.value, 10) || 0;
+
+  // Record audio toggle button
+  recBtnEl.addEventListener('click', function() {
+    if (!audioRecordingActive) {
+      // Start recording
+      recBtnEl.disabled = true;
+      recLabelEl.textContent = 'Starting...';
+      startAudioRecording(clientId).then(function(started) {
+        recBtnEl.disabled = false;
+        if (started) {
+          recBtnEl.classList.add('controller-rec-btn--recording');
+          recLabelEl.textContent = 'Stop Recording';
+        } else {
+          recLabelEl.textContent = 'Record Audio';
+        }
+      });
+    } else {
+      // Stop recording and save
+      recBtnEl.disabled = true;
+      recLabelEl.textContent = 'Saving...';
+      recBtnEl.classList.remove('controller-rec-btn--recording');
+      stopAudioRecording().then(function() {
+        recBtnEl.disabled = false;
+        recLabelEl.textContent = 'Record Audio';
+      });
+    }
   });
 
   window.addEventListener('blur', function() { stopHolding(false); });
@@ -511,5 +691,8 @@ export function initControllerMode() {
   window.addEventListener('beforeunload', function() {
     stopHolding(true);
     clearPendingNoteSync();
+    if (audioRecordingActive) {
+      stopAudioRecording();
+    }
   });
 }
