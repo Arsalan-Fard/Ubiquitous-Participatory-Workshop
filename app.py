@@ -1,5 +1,6 @@
 import argparse
 import atexit
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 from pathlib import Path
@@ -63,10 +64,16 @@ tag_size = 0.026            # tag size in meters (default 4cm)
 # Surface plane for touch detection (ax + by + cz + d = 0)
 surface_plane_lock = threading.Lock()
 surface_plane = None       # dict: {"normal": [a,b,c], "d": float, "points": [...]}
-TOUCH_DISTANCE_THRESHOLD = 0.015  # 1cm - tag is "touching" if within this distance to plane
+TOUCH_DISTANCE_THRESHOLD = 0.025  # 1cm - tag is "touching" if within this distance to plane
 
 
 def parse_source(value: str):
+  if value is None:
+    return None
+  if isinstance(value, str):
+    value = value.strip()
+    if value == "":
+      return None
   try:
     return int(value)
   except (TypeError, ValueError):
@@ -712,6 +719,78 @@ def _get_ipv4_candidates():
   return out
 
 
+def _iter_auto_source_candidates():
+  seen = set()
+  for local_ip in _get_ipv4_candidates():
+    parts = local_ip.split(".")
+    if len(parts) != 4:
+      continue
+    prefix = ".".join(parts[:3])
+    for host in range(1, 255):
+      candidate = f"{prefix}.{host}"
+      if candidate == local_ip:
+        continue
+      if candidate in seen:
+        continue
+      seen.add(candidate)
+      yield candidate
+
+
+def _is_tcp_port_open(ip: str, port: int, timeout_sec: float) -> bool:
+  sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  try:
+    sock.settimeout(timeout_sec)
+    return sock.connect_ex((ip, port)) == 0
+  except Exception:
+    return False
+  finally:
+    sock.close()
+
+
+def discover_camera_source_on_port(
+  port: int = 8080,
+  path: str = "/video",
+  probe_timeout_sec: float = 0.2,
+  max_workers: int = 64,
+):
+  targets = list(_iter_auto_source_candidates())
+  if not targets:
+    return None
+
+  print(f"[Camera] Auto-discovery: scanning {len(targets)} hosts for tcp/{int(port)}...")
+
+  future_to_ip = {}
+  open_port_ips = []
+  worker_count = max(1, min(int(max_workers), len(targets)))
+
+  with ThreadPoolExecutor(max_workers=worker_count) as pool:
+    for ip in targets:
+      future = pool.submit(_is_tcp_port_open, ip, int(port), float(probe_timeout_sec))
+      future_to_ip[future] = ip
+
+    for future in as_completed(future_to_ip):
+      ip = future_to_ip[future]
+      try:
+        if future.result():
+          open_port_ips.append(ip)
+      except Exception:
+        continue
+
+  for ip in open_port_ips:
+    source = f"http://{ip}:{int(port)}{path}"
+    probe = cv2.VideoCapture(source)
+    try:
+      if not probe.isOpened():
+        continue
+      ok, _ = probe.read()
+      if ok:
+        return source
+    finally:
+      probe.release()
+
+  return None
+
+
 @app.route("/api/server_info")
 def api_server_info():
   scheme = str(request.scheme or "http")
@@ -1022,7 +1101,11 @@ if __name__ == "__main__":
   default_apriltag_threads = max(1, int(round(detected_cores / 2.0)))
 
   parser = argparse.ArgumentParser(description="Flask camera stream server with backend AprilTag detection")
-  parser.add_argument("--source", default="0", help="Camera index or stream URL")
+  parser.add_argument(
+    "--source",
+    default=None,
+    help="Camera index or stream URL. If omitted, auto-discovers http://<ip>:8080/video",
+  )
   parser.add_argument("--host", default="0.0.0.0", help="Host to bind")
   parser.add_argument("--port", type=int, default=5000, help="Port to bind")
   parser.add_argument("--jpeg-quality", type=int, default=100, help="MJPEG quality (1-100)")
@@ -1055,6 +1138,14 @@ if __name__ == "__main__":
       print(f"[6DoF] WARNING: calibration file not found: {calib_path}")
 
   source = parse_source(args.source)
+  if source is None:
+    source = discover_camera_source_on_port(port=8080, path="/video")
+    if source is None:
+      parser.error(
+        "Could not auto-discover an IP camera stream at http://<ip>:8080/video. "
+        "Use --source to set it manually."
+      )
+    print(f"[Camera] Auto-discovered source: {source}")
   init_camera(source)
 
   if Detector is not None:

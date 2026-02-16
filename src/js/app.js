@@ -392,9 +392,30 @@ export function initApp() {
     lastMouseY = e.clientY;
   });
 
-  // Keyboard shortcuts 1-4 to set surface corners.
-  // In Stage 2 camera view, prefer capturing from a visible AprilTag (place a tag at a corner and press 1-4).
-  // Fallback: set corner at the current mouse position within the video.
+  function trySetSurfaceCornerFromClientPoint(cornerIndex, clientX, clientY) {
+    if (typeof cornerIndex !== 'number' || cornerIndex < 0 || cornerIndex > 3) return false;
+    if (!isFinite(clientX) || !isFinite(clientY)) return false;
+
+    var videoEl = state.usingIpCamera && state.ipCameraImg ? state.ipCameraImg : dom.video;
+    if (!videoEl) return false;
+
+    var rect = videoEl.getBoundingClientRect();
+    if (!rect || !rect.width || !rect.height || !dom.overlay.width || !dom.overlay.height) return false;
+    if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return false;
+
+    var scaleX = dom.overlay.width / rect.width;
+    var scaleY = dom.overlay.height / rect.height;
+    var cornerX = (clientX - rect.left) * scaleX;
+    var cornerY = (clientY - rect.top) * scaleY;
+
+    state.surfaceCorners[cornerIndex] = { x: cornerX, y: cornerY };
+    flashCornerButton(cornerIndex);
+    updateSurfaceButtonsUI();
+    recomputeSurfaceHomographyIfReady();
+    return true;
+  }
+
+  // Keyboard shortcuts 1-4 to set surface corners from current mouse position.
   document.addEventListener('keydown', function(e) {
     // Only in stage 2, camera view
     if (state.stage !== 2) return;
@@ -415,75 +436,24 @@ export function initApp() {
     else if (e.key === '4') cornerIndex = 3;
 
     if (cornerIndex === null) return;
-
-    // Prefer a visible calibration tag (by id, falling back to the largest visible tag).
-    var calibDet = null;
-    var detections = Array.isArray(state.lastApriltagDetections) ? state.lastApriltagDetections : [];
-    var preferredId = (typeof state.apriltagTouchCalibTagId === 'number') ? state.apriltagTouchCalibTagId : parseInt(state.apriltagTouchCalibTagId, 10);
-    if (isFinite(preferredId)) {
-      for (var ci = 0; ci < detections.length; ci++) {
-        var d = detections[ci];
-        if (!d) continue;
-        var id = typeof d.id === 'number' ? d.id : parseInt(d.id, 10);
-        if (id === preferredId) { calibDet = d; break; }
-      }
-    }
-    if (!calibDet) {
-      var bestArea = 0;
-      for (var bi = 0; bi < detections.length; bi++) {
-        var bd = detections[bi];
-        if (!bd || !Array.isArray(bd.corners) || bd.corners.length < 4) continue;
-        var area = computeApriltagQuadAreaPx(bd.corners);
-        if (isFinite(area) && area > bestArea) { bestArea = area; calibDet = bd; }
-      }
-    }
-
-    if (calibDet && Array.isArray(calibDet.corners) && calibDet.corners.length >= 4) {
-      var pickedCorner = pickApriltagCornerForSurfaceCorner(calibDet.corners, cornerIndex);
-      var pickedArea = computeApriltagQuadAreaPx(calibDet.corners);
-      if (pickedCorner && isFinite(pickedArea) && pickedArea > 0) {
-        e.preventDefault();
-        state.surfaceCorners[cornerIndex] = { x: pickedCorner.x, y: pickedCorner.y };
-        state.apriltagTouchCalibCornerAreaPx[cornerIndex] = pickedArea;
-        if (state.apriltagTouchCalibCornerSampleCornersPx && state.apriltagTouchCalibCornerSampleCornersPx.length === 4) {
-          state.apriltagTouchCalibCornerSampleCornersPx[cornerIndex] = cloneApriltagCornersPx(calibDet.corners);
-          if (state.apriltagTouchCalibCornerUvSideLen && state.apriltagTouchCalibCornerUvSideLen.length === 4) {
-            state.apriltagTouchCalibCornerUvSideLen[cornerIndex] = null;
-          }
-        }
-        flashCornerButton(cornerIndex);
-        updateSurfaceButtonsUI();
-        recomputeSurfaceHomographyIfReady();
-        return;
-      }
-    }
-
-    // Get video element bounds (fallback: mouse position)
-    var videoEl = state.usingIpCamera && state.ipCameraImg ? state.ipCameraImg : dom.video;
-    var rect = videoEl.getBoundingClientRect();
-
-    // Check if mouse is within the video area
-    if (lastMouseX < rect.left || lastMouseX > rect.right ||
-        lastMouseY < rect.top || lastMouseY > rect.bottom) {
-      return;
-    }
-
-    // Check dimensions are valid
-    if (!rect.width || !rect.height || !dom.overlay.width || !dom.overlay.height) return;
-
     e.preventDefault();
 
-    // Convert mouse position to video/canvas pixel coordinates
-    var scaleX = dom.overlay.width / rect.width;
-    var scaleY = dom.overlay.height / rect.height;
-    var cornerX = (lastMouseX - rect.left) * scaleX;
-    var cornerY = (lastMouseY - rect.top) * scaleY;
+    if (trySetSurfaceCornerFromClientPoint(cornerIndex, lastMouseX, lastMouseY)) return;
 
-    // Set the corner at the current mouse position
-    state.surfaceCorners[cornerIndex] = { x: cornerX, y: cornerY };
-    flashCornerButton(cornerIndex);
-    updateSurfaceButtonsUI();
-    recomputeSurfaceHomographyIfReady();
+    // If mouse is not currently over video, arm this corner for the next click on camera view.
+    armCorner(cornerIndex, setViewMode);
+  });
+
+  // Manual Stage 2 corner capture: click inside camera view while a corner button is armed.
+  document.addEventListener('pointerdown', function(e) {
+    if (state.stage !== 2) return;
+    if (state.viewMode !== 'camera') return;
+    if (!state.armedCornerCaptureRequested || state.armedCornerIndex === null) return;
+    if (trySetSurfaceCornerFromClientPoint(state.armedCornerIndex, e.clientX, e.clientY)) {
+      clearArmedCorner();
+      updateSurfaceButtonsUI();
+      e.preventDefault();
+    }
   });
 
   // Stage 4 sticker dragging
@@ -4102,16 +4072,28 @@ export function initApp() {
 
     state.lastApriltagDetections = payload.detections;
 
-    // Populate touch info from backend 6DoF pose estimation
-    var touchById = null;
+    // Populate touch info from backend 6DoF pose estimation.
+    // Only overwrite when the backend actually provides isTouch data;
+    // otherwise leave state.apriltagTouchById intact so the frontend
+    // homography-based fallback (updateApriltagTouchByIdFromSize) is not clobbered.
+    var has6DoFTouch = false;
     for (var di = 0; di < payload.detections.length; di++) {
       var det = payload.detections[di];
       if (typeof det.isTouch === 'boolean') {
-        if (!touchById) touchById = {};
-        touchById[det.id] = { isTouch: det.isTouch, surfaceDistance: det.surfaceDistance || 0 };
+        has6DoFTouch = true;
+        break;
       }
     }
-    state.apriltagTouchById = touchById;
+    if (has6DoFTouch) {
+      var touchById = {};
+      for (var di2 = 0; di2 < payload.detections.length; di2++) {
+        var det2 = payload.detections[di2];
+        if (typeof det2.isTouch === 'boolean') {
+          touchById[det2.id] = { isTouch: det2.isTouch, surfaceDistance: det2.surfaceDistance || 0 };
+        }
+      }
+      state.apriltagTouchById = touchById;
+    }
 
     var remoteToolByTriggerTagId = {};
     var remoteNoteStateByTriggerTagId = {};
@@ -4549,6 +4531,31 @@ export function initApp() {
     return best ? { x: best.x, y: best.y } : null;
   }
 
+  // Capture on-surface tag corner pixels for touch calibration.
+  // Tags 1-4 are placed on the surface during calibration, so their pixel
+  // corners represent the "touching" reference size.
+  function captureApriltagTouchCalibSamples(detections) {
+    if (!detections) return;
+    var sampleCorners = [null, null, null, null];
+    var sampleAreas = [null, null, null, null];
+    for (var i = 0; i < 4; i++) {
+      var tagId = i + 1; // tags 1-4 correspond to corners 0-3
+      var det = getApriltagDetectionById(detections, tagId);
+      if (!det || !Array.isArray(det.corners) || det.corners.length < 4) continue;
+      var cornersCopy = [];
+      for (var k = 0; k < 4; k++) {
+        var c = det.corners[k];
+        cornersCopy.push(c ? { x: c.x, y: c.y } : null);
+      }
+      sampleCorners[i] = cornersCopy;
+      sampleAreas[i] = computeApriltagQuadAreaPx(det.corners);
+    }
+    state.apriltagTouchCalibCornerSampleCornersPx = sampleCorners;
+    state.apriltagTouchCalibCornerAreaPx = sampleAreas;
+    // Reset derived UV sizes so they are recomputed with the new samples
+    state.apriltagTouchCalibCornerUvSideLen = [null, null, null, null];
+  }
+
   function areApriltagTouchCalibAreasReady() {
     var a = state.apriltagTouchCalibCornerAreaPx;
     if (!a || a.length !== 4) return false;
@@ -4696,8 +4703,8 @@ export function initApp() {
     if (!state.surfaceHomography) return;
     maybeUpdateApriltagTouchCalibUvSizes();
     if (!areApriltagTouchCalibUvSizesReady()) {
-      // Don't block interactions until calibration is complete.
-      state.apriltagTouchById = null;
+      // Don't block interactions until calibration is complete;
+      // leave any existing touch state (e.g. from 6DoF backend) intact.
       return;
     }
 
@@ -4867,6 +4874,9 @@ export function initApp() {
     updateSurfaceButtonsUI();
     recomputeSurfaceHomographyIfReady();
 
+    // Capture tag corner pixels for touch calibration (tags are on surface now)
+    captureApriltagTouchCalibSamples(state.lastApriltagDetections);
+
     // Flash all corner buttons to indicate success
     for (var i = 0; i < 4; i++) {
       flashCornerButton(i);
@@ -4972,20 +4982,8 @@ export function initApp() {
 
     var isSurfaceSetupCameraView = (state.stage === 2 || state.stage === 3) && state.viewMode === 'camera';
 
-    // Surface-corner capture preview (AprilTags only)
+    // Surface-corner capture preview
     var surfacePreviewPoint = null;
-    if (state.stage === 2 && isSurfaceSetupCameraView && state.armedCornerIndex !== null && state.armedCornerCaptureRequested) {
-      surfacePreviewPoint = getSurfaceCornerFromApriltags(state.lastApriltagDetections || [], state.armedCornerIndex, width, height);
-    }
-
-    // Single camera corner capture
-    if (state.stage === 2 && isSurfaceSetupCameraView && state.armedCornerCaptureRequested && state.armedCornerIndex !== null && surfacePreviewPoint) {
-      state.surfaceCorners[state.armedCornerIndex] = { x: surfacePreviewPoint.x, y: surfacePreviewPoint.y };
-      flashCornerButton(state.armedCornerIndex);
-      clearArmedCorner();
-      updateSurfaceButtonsUI();
-      recomputeSurfaceHomographyIfReady();
-    }
 
     // Draw calibration overlays
     if (isSurfaceSetupCameraView) {
@@ -5142,6 +5140,8 @@ export function initApp() {
             state.surfaceCorners = nextCorners;
             updateSurfaceButtonsUI();
             recomputeSurfaceHomographyIfReady();
+            // Capture tag corner pixels for touch calibration (tags are on surface)
+            captureApriltagTouchCalibSamples(detections);
           }
         }
       } else {

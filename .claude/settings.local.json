@@ -8,7 +8,10 @@
       "WebFetch(domain:www.mathworks.com)",
       "Bash(findstr:*)",
       "Bash(python:*)",
-      "Bash(del:*)"
+      "Bash(del:*)",
+      "Bash(git push:*)",
+      "Bash(git stash pop:*)",
+      "Bash(git stash drop:*)"
     ]
   }
 }

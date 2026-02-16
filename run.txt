@@ -1,1 +1,3 @@
-py -3.13 app.py --source http://10.188.133.164:8080/video --camera-calibration camera_calibration.json  --tag-size 0.028
+py -3.13 app.py --camera-calibration camera_calibration.json --tag-size 0.028
+# Optional manual override:
+# py -3.13 app.py --source http://10.188.133.164:8080/video --camera-calibration camera_calibration.json --tag-size 0.028
