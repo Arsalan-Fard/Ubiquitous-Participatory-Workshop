@@ -38,7 +38,7 @@ function createStyles() {
     '.controller-tool-btn:active { transform: scale(0.98); }',
     '.controller-tool-btn.is-active { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.85), 0 14px 30px rgba(0, 0, 0, 0.35); transform: scale(1.08); background: rgba(43, 184, 255, 0.28); }',
     '.controller-tool-btn.is-active::before { opacity: 1; }',
-    '.controller-tool-icon { width: 44px; height: 44px; pointer-events: none; position: relative; z-index: 1; }',
+    '.controller-tool-icon { width: 44px; height: 44px; object-fit: contain; pointer-events: none; position: relative; z-index: 1; }',
     '.controller-tool-label { position: relative; z-index: 1; }',
     '.controller-note-wrap { width: 204px; }',
     '.controller-note-wrap.hidden { display: none; }',
@@ -55,105 +55,12 @@ function createStyles() {
   document.head.appendChild(style);
 }
 
-function roundedRectPath(ctx, x, y, w, h, r) {
-  var radius = Math.max(0, Math.min(r, Math.min(w, h) * 0.5));
-  ctx.beginPath();
-  ctx.moveTo(x + radius, y);
-  ctx.lineTo(x + w - radius, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
-  ctx.lineTo(x + w, y + h - radius);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
-  ctx.lineTo(x + radius, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
-  ctx.lineTo(x, y + radius);
-  ctx.quadraticCurveTo(x, y, x + radius, y);
-  ctx.closePath();
-}
-
-function drawScribble(ctx, color, w, h) {
-  ctx.save();
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.strokeStyle = color;
-  ctx.lineWidth = Math.max(2, Math.floor(Math.min(w, h) * 0.12));
-
-  ctx.beginPath();
-  ctx.moveTo(w * 0.18, h * 0.58);
-  ctx.bezierCurveTo(w * 0.32, h * 0.22, w * 0.48, h * 0.78, w * 0.64, h * 0.42);
-  ctx.bezierCurveTo(w * 0.72, h * 0.26, w * 0.80, h * 0.30, w * 0.86, h * 0.22);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.fillStyle = color;
-  ctx.arc(w * 0.22, h * 0.62, ctx.lineWidth * 0.55, 0, 2 * Math.PI);
-  ctx.fill();
-
-  ctx.restore();
-}
-
-function drawNoteIcon(ctx, color, w, h) {
-  ctx.save();
-  var x = w * 0.2;
-  var y = h * 0.14;
-  var rw = w * 0.6;
-  var rh = h * 0.72;
-  var r = Math.max(4, Math.floor(Math.min(w, h) * 0.1));
-
-  roundedRectPath(ctx, x, y, rw, rh, r);
-  ctx.fillStyle = 'rgba(255,255,255,0.14)';
-  ctx.fill();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = Math.max(2, Math.floor(Math.min(w, h) * 0.08));
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(x + rw * 0.28, y + rh * 0.38);
-  ctx.lineTo(x + rw * 0.72, y + rh * 0.38);
-  ctx.moveTo(x + rw * 0.28, y + rh * 0.62);
-  ctx.lineTo(x + rw * 0.72, y + rh * 0.62);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawEraserIcon(ctx, color, w, h) {
-  ctx.save();
-  ctx.translate(w * 0.5, h * 0.5);
-  ctx.rotate(-0.38);
-  ctx.fillStyle = 'rgba(255,255,255,0.14)';
-  ctx.strokeStyle = color;
-  ctx.lineWidth = Math.max(2, Math.floor(Math.min(w, h) * 0.08));
-
-  var bodyW = w * 0.52;
-  var bodyH = h * 0.34;
-  roundedRectPath(ctx, -bodyW * 0.5, -bodyH * 0.5, bodyW, bodyH, bodyH * 0.24);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(-bodyW * 0.12, bodyH * 0.5);
-  ctx.lineTo(bodyW * 0.36, bodyH * 0.5);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function renderToolIcon(canvasEl, tool) {
-  var ctx = canvasEl.getContext('2d');
-  if (!ctx) return;
-  var w = canvasEl.width;
-  var h = canvasEl.height;
-  ctx.clearRect(0, 0, w, h);
-
-  if (tool === 'draw') {
-    drawScribble(ctx, '#2bb8ff', w, h);
-    return;
-  }
-  if (tool === 'note') {
-    drawNoteIcon(ctx, '#ffd166', w, h);
-    return;
-  }
-  if (tool === 'eraser') {
-    drawEraserIcon(ctx, '#f9fafb', w, h);
-  }
+function getToolIconSrc(tool) {
+  if (tool === 'draw') return '/icons/drawing.png';
+  if (tool === 'note') return '/icons/sticker.png';
+  if (tool === 'eraser') return '/icons/eraser.png';
+  if (tool === 'selection') return '/icons/select.png';
+  return '';
 }
 
 function buildOptionElements(selectEl) {
@@ -200,28 +107,15 @@ function buildCircleToolButton(toolDef) {
   btn.type = 'button';
   btn.dataset.tool = toolDef.tool;
   btn.setAttribute('aria-label', toolDef.ariaLabel);
+  if (toolDef.label) btn.title = String(toolDef.label);
 
-  var iconCanvas = document.createElement('canvas');
-  iconCanvas.className = 'controller-tool-icon';
-  iconCanvas.width = 44;
-  iconCanvas.height = 44;
-  renderToolIcon(iconCanvas, toolDef.tool);
-  btn.appendChild(iconCanvas);
+  var iconEl = document.createElement('img');
+  iconEl.className = 'controller-tool-icon';
+  iconEl.alt = '';
+  iconEl.setAttribute('aria-hidden', 'true');
+  iconEl.src = getToolIconSrc(toolDef.tool);
+  btn.appendChild(iconEl);
 
-  return btn;
-}
-
-function buildSelectionButton() {
-  var btn = document.createElement('button');
-  btn.className = 'controller-tool-btn controller-tool-btn--rect';
-  btn.type = 'button';
-  btn.dataset.tool = 'selection';
-  btn.setAttribute('aria-label', 'Hold edit tool');
-
-  var label = document.createElement('span');
-  label.className = 'controller-tool-label';
-  label.textContent = 'Edit';
-  btn.appendChild(label);
   return btn;
 }
 
@@ -466,9 +360,10 @@ export function initControllerMode() {
   gridEl.className = 'controller-tool-grid';
 
   var circleTools = [
-    { tool: 'draw', ariaLabel: 'Hold draw tool' },
-    { tool: 'note', ariaLabel: 'Hold annotation tool' },
-    { tool: 'eraser', ariaLabel: 'Hold eraser tool' }
+    { tool: 'draw', ariaLabel: 'Hold drawing tool', label: 'Draw' },
+    { tool: 'note', ariaLabel: 'Hold annotation tool', label: 'Annotation' },
+    { tool: 'eraser', ariaLabel: 'Hold eraser tool', label: 'Eraser' },
+    { tool: 'selection', ariaLabel: 'Hold edit tool', label: 'Edit' }
   ];
 
   for (var i = 0; i < circleTools.length; i++) {
@@ -477,13 +372,6 @@ export function initControllerMode() {
     gridEl.appendChild(toolBtn);
   }
   root.appendChild(gridEl);
-
-  var editRowEl = document.createElement('div');
-  editRowEl.className = 'controller-tool-row';
-  var editBtn = buildSelectionButton();
-  toolButtons.push(editBtn);
-  editRowEl.appendChild(editBtn);
-  root.appendChild(editRowEl);
 
   var noteWrapEl = document.createElement('div');
   noteWrapEl.className = 'controller-note-wrap hidden';

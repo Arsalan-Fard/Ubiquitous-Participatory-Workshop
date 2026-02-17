@@ -824,13 +824,8 @@ function finalizeFollowStickerForPointer(ps, anchorPointer) {
     if (textareaEl) typedText = String(textareaEl.value || '').trim();
     if (!typedText && !hasTextarea) typedText = String((el.dataset && el.dataset.noteText) || '').trim();
 
-    if (!typedText) {
-      if (el.parentNode) el.parentNode.removeChild(el);
-      ps.activeFollowStickerEl = null;
-      ps.activeFollowStickerContactKey = '';
-      return;
-    }
-
+    // Even if text is empty, keep the sticker instance so users can
+    // place blank markers and edit them later.
     if (el.dataset) {
       el.dataset.noteText = typedText;
     }

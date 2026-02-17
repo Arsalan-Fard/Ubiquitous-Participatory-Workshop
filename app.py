@@ -61,9 +61,8 @@ controller_state_seq = 0
 # Camera calibration for 6DoF pose estimation
 camera_params = None       # (fx, fy, cx, cy) tuple
 tag_size = 0.026            # tag size in meters (default 4cm)
-PEN_TIP_OFFSET_TAG = np.array([-0.1463, 0.0021, 0.0043], dtype=np.float64)
+PEN_TIP_OFFSET_TAG = np.array([0.0876, 0.0060, -0.0018], dtype=np.float64)
 PEN_TIP_FIT_RMS_MM = 6.19
-
 # Surface plane for touch detection (ax + by + cz + d = 0)
 surface_plane_lock = threading.Lock()
 surface_plane = None       # dict: {"normal": [a,b,c], "d": float, "points": [...]}
@@ -1333,7 +1332,7 @@ if __name__ == "__main__":
       "Defaults to camera_calibration.json in the project root."
     ),
   )
-  parser.add_argument("--tag-size", type=float, default=0.04, help="AprilTag physical size in meters (default 0.04 = 4cm)")
+  parser.add_argument("--tag-size", type=float, default=0.026, help="AprilTag physical size in meters (default 0.04 = 4cm)")
   args = parser.parse_args()
 
   # Load camera calibration for 6DoF pose estimation
