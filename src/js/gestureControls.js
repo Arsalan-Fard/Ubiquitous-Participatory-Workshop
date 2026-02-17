@@ -756,6 +756,15 @@ function startFollowExistingStickerForPointer(ps, stickerEl, pointer, contactKey
   }
   updateFollowStickerPosition(ps, pointer);
 
+  // Show textfield for existing annotations when picked up during selection.
+  if (stickerEl.classList && stickerEl.classList.contains('ui-note') && state.stage === 4) {
+    setTimeout(function() {
+      if (stickerEl && stickerEl.isConnected && ps.activeFollowStickerEl === stickerEl) {
+        try { expandNoteSticker(stickerEl); } catch (e) {}
+      }
+    }, 0);
+  }
+
   return stickerEl;
 }
 

@@ -405,7 +405,6 @@ def apriltag_loop(max_fps: float) -> None:
   interval = 1.0 / max(1.0, float(max_fps))
   last_seq = -1
   pose_estimation_enabled = camera_params is not None
-  pose_warning_printed = False
 
   while not shutdown_event.is_set():
     frame = None
@@ -439,13 +438,8 @@ def apriltag_loop(max_fps: float) -> None:
         except Exception as pose_exc:
           if not _is_apriltag_pose_ambiguity_error(pose_exc):
             raise
-          pose_estimation_enabled = False
-          if not pose_warning_printed:
-            print(
-              "[6DoF] WARNING: AprilTag pose estimation disabled because of an "
-              "ambiguous minima error. Continuing with 2D tag detection only."
-            )
-            pose_warning_printed = True
+          # Transient ambiguity error — fall back to 2D for this frame only.
+          # Pose estimation stays enabled for subsequent frames.
           detections = apriltag_detector.detect(gray, estimate_tag_pose=False)
       else:
         detections = apriltag_detector.detect(gray, estimate_tag_pose=False)
