@@ -530,8 +530,9 @@ export function initUiSetup(options) {
 
     var iconEl = document.createElement('div');
     iconEl.className = 'ui-note__icon';
-    iconEl.textContent = '📝';
+    iconEl.textContent = '';
     noteEl.appendChild(iconEl);
+    noteEl.classList.add('ui-note--sticker', 'ui-note--empty');
 
     overlayEl.appendChild(noteEl);
 
@@ -779,14 +780,22 @@ export function initUiSetup(options) {
     noteEl.classList.remove('ui-note--expanded');
     setExpandedNoteContainerVisual(noteEl, false);
 
-    // Update icon to show it has content
     var iconEl = noteEl.querySelector('.ui-note__icon');
-    if (iconEl && savedText) {
-      iconEl.textContent = '📝✓';
-    }
-
     var hasText = !!String(noteEl.dataset.noteText || '').trim();
-    noteEl.classList.toggle('ui-note--sticker', hasText);
+    if (iconEl) {
+      if (hasText) {
+        iconEl.textContent = '📝✓';
+        noteEl.classList.remove('ui-note--empty');
+      } else {
+        iconEl.textContent = '';
+        noteEl.classList.add('ui-note--empty');
+      }
+    } else if (!hasText) {
+      noteEl.classList.add('ui-note--empty');
+    } else {
+      noteEl.classList.remove('ui-note--empty');
+    }
+    noteEl.classList.add('ui-note--sticker');
   }
 
   function exportToJson() {
@@ -971,8 +980,11 @@ export function initUiSetup(options) {
 
         var iconEl = document.createElement('div');
         iconEl.className = 'ui-note__icon';
-        iconEl.textContent = item.text ? '📝✓' : '📝';
+        var hasText = !!String(item.text || '').trim();
+        iconEl.textContent = hasText ? '📝✓' : '';
         noteEl.appendChild(iconEl);
+        noteEl.classList.add('ui-note--sticker');
+        if (!hasText) noteEl.classList.add('ui-note--empty');
 
         overlayEl.appendChild(noteEl);
 

@@ -2290,8 +2290,14 @@ body.vga-mode-active #leafletMap {
     padding: 0;
 }
 
-.ui-note--sticker .ui-note__icon {
+/* Empty note sticker: no icon, plain square */
+.ui-note--empty .ui-note__icon {
     display: none;
+}
+
+/* Note sticker with text: show checkmark icon */
+.ui-note--sticker:not(.ui-note--empty) .ui-note__icon {
+    display: block;
 }
 
 .ui-note--sticker .ui-note__form {

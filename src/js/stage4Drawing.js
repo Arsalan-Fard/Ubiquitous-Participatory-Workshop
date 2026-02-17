@@ -1652,7 +1652,10 @@ export function cloneSticker(templateEl) {
     if (templateIconEl && templateIconEl.textContent) iconEl.textContent = templateIconEl.textContent;
     noteEl.appendChild(iconEl);
 
-    noteEl.classList.toggle('ui-note--sticker', !!String(noteEl.dataset.noteText || '').trim());
+    var hasInitialText = !!String(noteEl.dataset.noteText || '').trim();
+    noteEl.classList.toggle('ui-note--sticker', true);
+    noteEl.classList.toggle('ui-note--empty', !hasInitialText);
+    if (!hasInitialText && iconEl) iconEl.textContent = '';
     if (templateEl.dataset && templateEl.dataset.noteFormRotationDeg !== undefined) {
       setNoteFormRotation(noteEl, parseFloat(templateEl.dataset.noteFormRotationDeg));
     }
@@ -1783,7 +1786,7 @@ function setupNoteSticker(noteEl) {
   });
 }
 
-function expandNoteSticker(noteEl) {
+export function expandNoteSticker(noteEl) {
   if (noteEl.dataset.expanded === 'true') return;
   noteEl.classList.remove('ui-note--sticker');
   noteEl.dataset.expanded = 'true';
@@ -1835,9 +1838,21 @@ export function collapseNoteSticker(noteEl, savedText) {
   noteEl.classList.remove('ui-note--expanded');
   setExpandedNoteContainerVisual(noteEl, false);
   var iconEl = noteEl.querySelector('.ui-note__icon');
-  if (iconEl && savedText) iconEl.textContent = '📝✓';
   var hasText = !!String(noteEl.dataset.noteText || '').trim();
-  noteEl.classList.toggle('ui-note--sticker', hasText);
+  if (iconEl) {
+    if (hasText) {
+      iconEl.textContent = '📝✓';
+      noteEl.classList.remove('ui-note--empty');
+    } else {
+      iconEl.textContent = '';
+      noteEl.classList.add('ui-note--empty');
+    }
+  } else if (!hasText) {
+    noteEl.classList.add('ui-note--empty');
+  } else {
+    noteEl.classList.remove('ui-note--empty');
+  }
+  noteEl.classList.toggle('ui-note--sticker', true);
 }
 
 // --- Sticker drag ---

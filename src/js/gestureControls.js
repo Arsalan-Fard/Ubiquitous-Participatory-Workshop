@@ -19,6 +19,7 @@ import {
   startStickerDrag,
   eraseAtPoint,
   setNoteFormRotation,
+  expandNoteSticker,
   collapseNoteSticker,
   bindStickerLatLngFromCurrentPosition,
   updateStickerMappingForCurrentView
@@ -659,16 +660,15 @@ function startFollowStickerForPointer(ps, templateEl, pointer, contactKey) {
   ps.followFinalizeRequested = false;
   if (clonedEl.classList && clonedEl.classList.contains('ui-note')) {
     setNoteFormRotation(clonedEl, ps.noteFormRotationDeg);
-  }
-
-  // Annotation follows as a live textfield while active.
-  if (clonedEl.classList && clonedEl.classList.contains('ui-note') && state.stage === 4) {
-    setTimeout(function() {
-      if (!clonedEl || !clonedEl.isConnected) return;
-      try {
-        clonedEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      } catch (e) {}
-    }, 0);
+    // Show textfield during text-adding phase so user can type (e.g. from controller).
+    // On place, finalizeFollowStickerForPointer will collapse and hide the textfield.
+    if (state.stage === 4) {
+      setTimeout(function() {
+        if (clonedEl && clonedEl.isConnected && ps.activeFollowStickerEl === clonedEl) {
+          try { expandNoteSticker(clonedEl); } catch (e) {}
+        }
+      }, 0);
+    }
   }
 
   return clonedEl;
@@ -755,15 +755,6 @@ function startFollowExistingStickerForPointer(ps, stickerEl, pointer, contactKey
     setNoteFormRotation(stickerEl, ps.noteFormRotationDeg);
   }
   updateFollowStickerPosition(ps, pointer);
-
-  if (stickerEl.classList && stickerEl.classList.contains('ui-note') && state.stage === 4) {
-    setTimeout(function() {
-      if (!stickerEl || !stickerEl.isConnected) return;
-      try {
-        stickerEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      } catch (e) {}
-    }, 0);
-  }
 
   return stickerEl;
 }

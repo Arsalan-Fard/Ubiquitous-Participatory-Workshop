@@ -60,9 +60,10 @@ controller_state_seq = 0
 
 # Camera calibration for 6DoF pose estimation
 camera_params = None       # (fx, fy, cx, cy) tuple
-tag_size = 0.026            # tag size in meters (default 4cm)
+tag_size = 0.4            # tag size in meters (default 4cm)
 PEN_TIP_OFFSET_TAG = np.array([0.0876, 0.0060, -0.0018], dtype=np.float64)
-PEN_TIP_FIT_RMS_MM = 6.19
+PEN_TIP_FIT_RMS_MM = 56.32
+
 # Surface plane for touch detection (ax + by + cz + d = 0)
 surface_plane_lock = threading.Lock()
 surface_plane = None       # dict: {"normal": [a,b,c], "d": float, "points": [...]}
