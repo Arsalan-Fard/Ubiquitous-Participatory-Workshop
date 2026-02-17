@@ -124,9 +124,6 @@ export function initApp() {
   if (dom.mapApriltagDotsEl && dom.mapViewEl && dom.mapApriltagDotsEl.parentNode !== dom.mapViewEl) {
     dom.mapViewEl.appendChild(dom.mapApriltagDotsEl);
   }
-  if (dom.mapRadialMenusEl && dom.mapViewEl && dom.mapRadialMenusEl.parentNode !== dom.mapViewEl) {
-    dom.mapViewEl.appendChild(dom.mapRadialMenusEl);
-  }
   if (dom.mapFingerDotsEl && dom.mapViewEl && dom.mapFingerDotsEl.parentNode !== dom.mapViewEl) {
     dom.mapViewEl.appendChild(dom.mapFingerDotsEl);
   }
@@ -4483,6 +4480,16 @@ export function initApp() {
     return { x: cx, y: cy };
   }
 
+  function getApriltagTrackingPoint(det, preferTip) {
+    if (preferTip && det && det.tip && isFinite(det.tip.x) && isFinite(det.tip.y)) {
+      return { x: det.tip.x, y: det.tip.y };
+    }
+    if (det && det.center && isFinite(det.center.x) && isFinite(det.center.y)) {
+      return { x: det.center.x, y: det.center.y };
+    }
+    return getApriltagCenter(det);
+  }
+
   function computeApriltagQuadAreaPx(corners) {
     if (!Array.isArray(corners) || corners.length < 4) return NaN;
     var area2 = 0;
@@ -5027,9 +5034,12 @@ export function initApp() {
       var canProjectToMap = !!state.surfaceHomography && mapW > 0 && mapH > 0;
       var maxExtrapolation = 1.5;
 
-      function projectTagDetectionToMap(detByTag, tagId, offsetMode) {
-        if (!detByTag || !detByTag.center || !canProjectToMap) return null;
-        var uv = applyHomography(state.surfaceHomography, detByTag.center.x, detByTag.center.y);
+      function projectTagDetectionToMap(detByTag, tagId, offsetMode, options) {
+        if (!detByTag || !canProjectToMap) return null;
+        var preferTip = !!(options && options.preferTip);
+        var sourcePoint = getApriltagTrackingPoint(detByTag, preferTip);
+        if (!sourcePoint) return null;
+        var uv = applyHomography(state.surfaceHomography, sourcePoint.x, sourcePoint.y);
         if (!uv || uv.x < -maxExtrapolation || uv.x > 1 + maxExtrapolation || uv.y < -maxExtrapolation || uv.y > 1 + maxExtrapolation) {
           return null;
         }
@@ -5055,13 +5065,13 @@ export function initApp() {
                 isTouch: touchInfo ? !!touchInfo.isTouch : null
               };
 
-              var projectedPrimaryCenter = projectTagDetectionToMap(primaryDet, primaryTagId, null);
+              var projectedPrimaryCenter = projectTagDetectionToMap(primaryDet, primaryTagId, null, { preferTip: false });
               if (projectedPrimaryCenter) {
                 point.primaryCenterX = projectedPrimaryCenter.x;
                 point.primaryCenterY = projectedPrimaryCenter.y;
               }
 
-              var projectedPrimary = projectTagDetectionToMap(primaryDet, primaryTagId, 'primary');
+              var projectedPrimary = projectTagDetectionToMap(primaryDet, primaryTagId, 'primary', { preferTip: true });
               if (projectedPrimary) {
                 point.x = projectedPrimary.x;
                 point.y = projectedPrimary.y;
@@ -5072,7 +5082,7 @@ export function initApp() {
 
           if (isFinite(primaryTagId) && isFinite(triggerTagId)) {
             var triggerDet = detectionById[triggerTagId];
-            var projectedTrigger = projectTagDetectionToMap(triggerDet, triggerTagId, 'trigger');
+            var projectedTrigger = projectTagDetectionToMap(triggerDet, triggerTagId, 'trigger', { preferTip: false });
             if (projectedTrigger) {
               apriltagTriggerPoints.push({
                 handId: String(primaryTagId),
@@ -5238,12 +5248,18 @@ export function initApp() {
 
       dot.className = role === 'trigger' ? 'map-finger-dot map-finger-dot--trigger' : 'map-finger-dot map-finger-dot--primary';
 
-      if (!det || !det.center) {
+      if (!det) {
         dot.classList.add('hidden');
         continue;
       }
 
-      var uv = applyHomography(state.surfaceHomography, det.center.x, det.center.y);
+      var sourcePoint = getApriltagTrackingPoint(det, role === 'primary');
+      if (!sourcePoint) {
+        dot.classList.add('hidden');
+        continue;
+      }
+
+      var uv = applyHomography(state.surfaceHomography, sourcePoint.x, sourcePoint.y);
       if (!uv || uv.x < -maxExtrapolation || uv.x > 1 + maxExtrapolation || uv.y < -maxExtrapolation || uv.y > 1 + maxExtrapolation) {
         dot.classList.add('hidden');
         continue;

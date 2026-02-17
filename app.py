@@ -60,11 +60,13 @@ controller_state_seq = 0
 # Camera calibration for 6DoF pose estimation
 camera_params = None       # (fx, fy, cx, cy) tuple
 tag_size = 0.026            # tag size in meters (default 4cm)
+PEN_TIP_OFFSET_TAG = np.array([-0.1463, 0.0021, 0.0043], dtype=np.float64)
+PEN_TIP_FIT_RMS_MM = 6.19
 
 # Surface plane for touch detection (ax + by + cz + d = 0)
 surface_plane_lock = threading.Lock()
 surface_plane = None       # dict: {"normal": [a,b,c], "d": float, "points": [...]}
-TOUCH_DISTANCE_THRESHOLD = 0.025  # 1cm - tag is "touching" if within this distance to plane
+TOUCH_DISTANCE_THRESHOLD = 0.018  # 1cm - tag is "touching" if within this distance to plane
 
 
 def parse_source(value: str):
@@ -279,27 +281,77 @@ def _map_detection(det):
     "decision_margin": float(det.decision_margin),
   }
 
-  # Add 6DoF pose data if available
-  if hasattr(det, 'pose_t') and det.pose_t is not None:
-    t = det.pose_t.flatten()
+  pose_t = None
+  pose_r = None
+  if hasattr(det, "pose_t") and det.pose_t is not None:
+    try:
+      t_arr = np.asarray(det.pose_t, dtype=np.float64).reshape(3)
+      if np.all(np.isfinite(t_arr)):
+        pose_t = t_arr
+    except Exception:
+      pose_t = None
+  if hasattr(det, "pose_R") and det.pose_R is not None:
+    try:
+      r_arr = np.asarray(det.pose_R, dtype=np.float64).reshape(3, 3)
+      if np.all(np.isfinite(r_arr)):
+        pose_r = r_arr
+    except Exception:
+      pose_r = None
+
+  # Add 6DoF pose data if available.
+  if pose_t is not None:
     result["pose"] = {
-      "x": float(t[0]),
-      "y": float(t[1]),
-      "z": float(t[2]),
+      "x": float(pose_t[0]),
+      "y": float(pose_t[1]),
+      "z": float(pose_t[2]),
     }
 
-    # Compute touch if surface plane is calibrated
+    # Estimate pen tip using fixed calibration offset in tag-local coordinates.
+    tip_cam = None
+    if pose_r is not None:
+      try:
+        tip_cam = pose_r @ PEN_TIP_OFFSET_TAG + pose_t
+        if not np.all(np.isfinite(tip_cam)):
+          tip_cam = None
+      except Exception:
+        tip_cam = None
+
+    if tip_cam is not None:
+      result["tipPose"] = {
+        "x": float(tip_cam[0]),
+        "y": float(tip_cam[1]),
+        "z": float(tip_cam[2]),
+      }
+
+      if camera_params is not None:
+        fx, fy, cx, cy = camera_params
+        z = float(tip_cam[2])
+        if z > 1e-6:
+          tip_x = float((float(fx) * float(tip_cam[0]) / z) + float(cx))
+          tip_y = float((float(fy) * float(tip_cam[1]) / z) + float(cy))
+          if np.isfinite(tip_x) and np.isfinite(tip_y):
+            result["tip"] = {"x": tip_x, "y": tip_y}
+
+    # Compute touch if surface plane is calibrated.
+    pose_for_touch = tip_cam if tip_cam is not None else pose_t
     with surface_plane_lock:
       plane = surface_plane
     if plane is not None:
       n = np.array(plane["normal"])
       d = plane["d"]
-      pos = np.array([t[0], t[1], t[2]])
+      pos = np.array([pose_for_touch[0], pose_for_touch[1], pose_for_touch[2]])
       distance = abs(float(np.dot(n, pos) + d))
       result["surfaceDistance"] = round(distance, 4)
       result["isTouch"] = distance <= TOUCH_DISTANCE_THRESHOLD
 
   return result
+
+
+def _is_apriltag_pose_ambiguity_error(exc: Exception) -> bool:
+  msg = str(exc or "").strip().lower()
+  if not msg:
+    return False
+  return "more than one new minima found" in msg
 
 
 def camera_loop(jpeg_quality: int) -> None:
@@ -351,6 +403,8 @@ def apriltag_loop(max_fps: float) -> None:
 
   interval = 1.0 / max(1.0, float(max_fps))
   last_seq = -1
+  pose_estimation_enabled = camera_params is not None
+  pose_warning_printed = False
 
   while not shutdown_event.is_set():
     frame = None
@@ -373,10 +427,25 @@ def apriltag_loop(max_fps: float) -> None:
 
     try:
       gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-      if camera_params is not None:
-        detections = apriltag_detector.detect(
-          gray, estimate_tag_pose=True,
-          camera_params=camera_params, tag_size=tag_size)
+      if pose_estimation_enabled:
+        try:
+          detections = apriltag_detector.detect(
+            gray,
+            estimate_tag_pose=True,
+            camera_params=camera_params,
+            tag_size=tag_size,
+          )
+        except Exception as pose_exc:
+          if not _is_apriltag_pose_ambiguity_error(pose_exc):
+            raise
+          pose_estimation_enabled = False
+          if not pose_warning_printed:
+            print(
+              "[6DoF] WARNING: AprilTag pose estimation disabled because of an "
+              "ambiguous minima error. Continuing with 2D tag detection only."
+            )
+            pose_warning_printed = True
+          detections = apriltag_detector.detect(gray, estimate_tag_pose=False)
       else:
         detections = apriltag_detector.detect(gray, estimate_tag_pose=False)
       mapped = [_map_detection(det) for det in detections]
@@ -1117,7 +1186,14 @@ if __name__ == "__main__":
   parser.add_argument("--apriltag-refine-edges", dest="apriltag_refine_edges", action="store_true", help="Enable AprilTag edge refinement")
   parser.add_argument("--no-apriltag-refine-edges", dest="apriltag_refine_edges", action="store_false", help="Disable AprilTag edge refinement")
   parser.set_defaults(apriltag_refine_edges=True)
-  parser.add_argument("--camera-calibration", default=None, help="Path to camera_calibration.json (from ChArUco/checkerboard calibration)")
+  parser.add_argument(
+    "--camera-calibration",
+    default="camera_calibration.json",
+    help=(
+      "Path to camera_calibration.json (from ChArUco/checkerboard calibration). "
+      "Defaults to camera_calibration.json in the project root."
+    ),
+  )
   parser.add_argument("--tag-size", type=float, default=0.04, help="AprilTag physical size in meters (default 0.04 = 4cm)")
   args = parser.parse_args()
 
@@ -1125,6 +1201,8 @@ if __name__ == "__main__":
   tag_size = float(args.tag_size)
   if args.camera_calibration:
     calib_path = Path(args.camera_calibration)
+    if not calib_path.is_absolute():
+      calib_path = ROOT_DIR / calib_path
     if calib_path.is_file():
       with open(calib_path) as f:
         calib = json.load(f)
@@ -1134,6 +1212,11 @@ if __name__ == "__main__":
       camera_params = (fx, fy, cx, cy)
       print(f"[6DoF] Camera calibration loaded: fx={fx:.1f} fy={fy:.1f} cx={cx:.1f} cy={cy:.1f}")
       print(f"[6DoF] Tag size: {tag_size*100:.1f}cm")
+      print(
+        "[6DoF] Tip offset loaded: "
+        f"({PEN_TIP_OFFSET_TAG[0]:.4f}, {PEN_TIP_OFFSET_TAG[1]:.4f}, {PEN_TIP_OFFSET_TAG[2]:.4f}) m, "
+        f"rms={PEN_TIP_FIT_RMS_MM:.2f} mm"
+      )
     else:
       print(f"[6DoF] WARNING: calibration file not found: {calib_path}")
 

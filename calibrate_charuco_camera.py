@@ -130,6 +130,20 @@ def draw_status(
         y += 28
 
 
+def fit_preview_frame(frame, max_width: int, max_height: int):
+    if max_width <= 0 or max_height <= 0:
+        return frame
+    h, w = frame.shape[:2]
+    if w <= 0 or h <= 0:
+        return frame
+    scale = min(max_width / float(w), max_height / float(h), 1.0)
+    if scale >= 0.999:
+        return frame
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
+    return cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+
 def calibrate_charuco(
     all_charuco_corners,
     all_charuco_ids,
@@ -203,6 +217,10 @@ def run_capture(args):
     if not cap.isOpened():
         raise RuntimeError(f"Could not open camera source: {args.source}")
 
+    cv2.namedWindow(args.window_name, cv2.WINDOW_NORMAL)
+    if args.preview_max_width > 0 and args.preview_max_height > 0:
+        cv2.resizeWindow(args.window_name, args.preview_max_width, args.preview_max_height)
+
     all_charuco_corners = []
     all_charuco_ids = []
     image_size = (0, 0)
@@ -237,7 +255,8 @@ def run_capture(args):
                 marker_mm=args.marker_mm,
             )
 
-            cv2.imshow(args.window_name, vis)
+            preview = fit_preview_frame(vis, args.preview_max_width, args.preview_max_height)
+            cv2.imshow(args.window_name, preview)
             key = cv2.waitKey(1) & 0xFF
 
             if key in (ord("q"), 27):
@@ -299,6 +318,18 @@ def main():
         help="Minimum detected ChArUco corners for accepting a frame",
     )
     parser.add_argument("--window-name", default="ChArUco Calibration Capture", help="OpenCV preview window title")
+    parser.add_argument(
+        "--preview-max-width",
+        type=int,
+        default=1280,
+        help="Max preview width in pixels (0 disables resizing)",
+    )
+    parser.add_argument(
+        "--preview-max-height",
+        type=int,
+        default=720,
+        help="Max preview height in pixels (0 disables resizing)",
+    )
     args = parser.parse_args()
 
     if args.square_mm <= 0 or args.marker_mm <= 0:
@@ -311,6 +342,8 @@ def main():
         raise ValueError("min-samples should be at least 5.")
     if args.min_charuco_corners < 4:
         raise ValueError("min-charuco-corners should be at least 4.")
+    if args.preview_max_width < 0 or args.preview_max_height < 0:
+        raise ValueError("preview-max-width and preview-max-height must be >= 0.")
 
     reproj_err, camera_matrix, dist_coeffs, sample_count, image_size = run_capture(args)
 

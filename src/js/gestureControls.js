@@ -1444,201 +1444,28 @@ function handleRadialMenuSelection(handId, selectedTool, entry) {
 export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
   syncApriltagActiveToolsWithParticipants();
   var nowMs = performance.now();
+  // Local trigger-tag tool selection (radial/menu hover) is intentionally disabled.
+  // Tool selection is now driven only by remote controller overrides.
+  for (var handId in apriltagActiveToolByHandId) {
+    var entry = apriltagActiveToolByHandId[handId];
+    if (!entry) continue;
 
-  var items = Array.isArray(triggerPoints) ? triggerPoints : [];
-  var triggerVisibleByHandId = {};
-  var contactByHandId = {};
+    var contactKey = entry.lastTriggerContactKey ? String(entry.lastTriggerContactKey) : '';
+    var hasRemoteOverride = !!entry.remoteOverrideTool || contactKey.indexOf('remote:') === 0;
+    if (hasRemoteOverride) continue;
 
-  // Get mapViewEl bounding rect for viewport-to-local coordinate conversion (radial menu)
-  var mapViewEl = state.dom && state.dom.mapViewEl;
-  var mapViewRect = mapViewEl ? mapViewEl.getBoundingClientRect() : null;
-
-  for (var i = 0; i < items.length; i++) {
-    var point = items[i];
-    if (!point) continue;
-    var handId = normalizePrimaryHandId(point.handId);
-    if (!handId) continue;
-
-    var entry = getApriltagActiveToolForHand(handId);
-    var participantTriggerTagId = normalizeTagId(entry.triggerTagId || point.triggerTagId);
-    if (!participantTriggerTagId) continue;
-    if (normalizeTagId(point.triggerTagId) !== participantTriggerTagId) continue;
-    triggerVisibleByHandId[handId] = true;
-
-    // Stage 4: check layer-nav buttons (pan/zoom/next/back) first, then radial menu
-    if (state.stage === 4 && mapViewRect) {
-      // Stage 4 never shows the white trigger-fill visual on tool buttons
-      clearTriggerHoverVisual(entry);
-
-      // Check if trigger is hovering over a layer-nav UI button (pan/zoom/next/back)
-      var layerNavMatch = resolveToolElementForTriggerPoint({ x: point.x, y: point.y }, participantTriggerTagId);
-      var layerNavAction = layerNavMatch ? getLayerNavActionForTool(layerNavMatch.toolType, layerNavMatch.toolEl) : '';
-
-      if (layerNavAction) {
-        // Hovering over a layer-nav button — activate with dwell (no fill visual)
-        var contactKey = getToolContactKey(layerNavMatch);
-        contactByHandId[handId] = contactKey;
-
-        if (entry.lastTriggerContactKey === contactKey) {
-          // Already activated this button — keep alive
-          continue;
-        }
-
-        var isNewContact = entry.hoverContactKey !== contactKey || entry.hoverToolEl !== layerNavMatch.toolEl;
-        if (isNewContact) {
-          // First frame hovering this button — start dwell timer (no visual)
-          entry.hoverContactKey = contactKey;
-          entry.hoverToolEl = layerNavMatch.toolEl;
-          entry.hoverStartedMs = nowMs;
-          continue;
-        }
-
-        var layerNavElapsed = Math.max(0, nowMs - (entry.hoverStartedMs || nowMs));
-        var layerNavProgress = Math.min(1, layerNavElapsed / APRILTAG_TRIGGER_ACTIVATION_DELAY_MS);
-        if (layerNavProgress < 1) continue;
-
-        // Dwell complete — activate layer-nav action
-        entry.lastTriggerContactKey = contactKey;
-        entry.activeLayerNavAction = layerNavAction;
-        setApriltagActiveToolForHand(handId, layerNavMatch.toolType, layerNavMatch.toolEl);
-        continue;
-      }
-
-      // Not over a layer-nav button — use radial menu
-      var localX = point.x - mapViewRect.left;
-      var localY = point.y - mapViewRect.top;
-
-      var rmEntry = radialMenuByHandId[String(handId)];
-      if (!rmEntry) {
-        // Trigger just appeared — deactivate any active interaction on the primary side
-        var ps = pointerStates[String(handId)];
-        if (ps) {
-          if (ps.isDrawing) {
-            ps.isDrawing = false;
-            stopDrawingForPointer(ps.dragPointerId);
-          }
-          deactivateDrawingForPointer(ps.dragPointerId);
-          deactivateEraser(ps);
-          finalizeFollowStickerForPointer(ps);
-          dearmStickerTemplate(ps);
-        }
-        setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
-
-        // Create a new radial menu at the trigger's current position
-        rmEntry = createRadialMenu(handId, localX, localY);
-      }
-
-      if (rmEntry && !rmEntry.selected) {
-        var hoveredTool = resolveRadialMenuHover(localX, localY, rmEntry);
-
-        if (hoveredTool && hoveredTool === rmEntry.hoveredTool) {
-          // Same tool still hovered — advance fill
-          var elapsedMs = Math.max(0, nowMs - (rmEntry.hoverStartedMs || nowMs));
-          var fillProgress = Math.min(1, elapsedMs / RADIAL_MENU_ACTIVATION_DELAY_MS);
-          updateRadialMenuVisuals(rmEntry, hoveredTool, fillProgress);
-
-          if (fillProgress >= 1) {
-            // Selection complete — apply the tool
-            rmEntry.selected = true;
-            rmEntry.selectedTool = hoveredTool;
-            handleRadialMenuSelection(handId, hoveredTool, entry);
-
-            // Swap primary/trigger so user can flip the object and start using
-            // the tool immediately (old trigger becomes new primary).
-            var newHandId = swapParticipantTags(handId);
-            // Update lookup keys for the swapped hand
-            triggerVisibleByHandId[newHandId] = true;
-            contactByHandId[newHandId] = entry.lastTriggerContactKey || ('radial:' + hoveredTool);
-
-            // Keep palette visible; show selected slice highlighted, dim others
-            updateRadialMenuVisuals(rmEntry, hoveredTool, 1);
-            if (rmEntry.menuEl) rmEntry.menuEl.classList.add('radial-menu--selected');
-          }
-        } else {
-          // Hover changed — reset dwell timer
-          rmEntry.hoveredTool = hoveredTool || '';
-          rmEntry.hoverStartedMs = hoveredTool ? nowMs : 0;
-          updateRadialMenuVisuals(rmEntry, hoveredTool || '', 0);
-        }
-      } else if (rmEntry && rmEntry.selected) {
-        // Already selected — keep palette visible, keep the contact key alive
-        contactByHandId[handId] = entry.lastTriggerContactKey || '';
-        updateRadialMenuVisuals(rmEntry, rmEntry.selectedTool || '', 1);
-      }
-      continue;
+    if (entry.toolType === 'dot' || entry.toolType === 'note' || entry.toolType === 'selection') {
+      requestFollowStickerFinalizeForHand(handId);
     }
-
-    // Stage 3 (or non-Stage-4): use overlay tool-button hit-testing
-    var toolMatch = resolveToolElementForTriggerPoint({ x: point.x, y: point.y }, participantTriggerTagId);
-    if (!toolMatch) {
-      // Rearm only when the trigger tag is explicitly seen outside any tool button.
-      if (entry.lastTriggerContactKey) entry.lastTriggerContactKey = '';
-      entry.activeLayerNavAction = '';
-      clearTriggerHoverVisual(entry);
-      // Keep draw mode active; only switch tools on explicit new trigger contact.
-      if (entry.toolType === 'dot' || entry.toolType === 'note' || entry.toolType === 'selection') {
-        requestFollowStickerFinalizeForHand(handId);
-        setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
-      }
-      continue;
-    }
-    var contactKey = getToolContactKey(toolMatch);
-    contactByHandId[handId] = contactKey;
-
-    if (entry.lastTriggerContactKey === contactKey) {
-      setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, 1, nowMs);
-      continue;
-    }
-
-    var isNewContact = entry.hoverContactKey !== contactKey || entry.hoverToolEl !== toolMatch.toolEl;
-    if (isNewContact) {
-      if (entry.lastTriggerContactKey && entry.lastTriggerContactKey !== contactKey) {
-        entry.lastTriggerContactKey = '';
-        entry.activeLayerNavAction = '';
-        if (entry.toolType === 'dot' || entry.toolType === 'note' || entry.toolType === 'selection') {
-          requestFollowStickerFinalizeForHand(handId);
-          setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
-        }
-      }
-      setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, 0, nowMs);
-      continue;
-    }
-
-    var elapsedMs2 = Math.max(0, nowMs - (entry.hoverStartedMs || nowMs));
-    var fillProgress2 = Math.min(1, elapsedMs2 / APRILTAG_TRIGGER_ACTIVATION_DELAY_MS);
-    setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, fillProgress2, nowMs);
-    if (fillProgress2 < 1) continue;
-
-    setTriggerHoverVisual(entry, toolMatch.toolEl, contactKey, 1, nowMs);
-    entry.lastTriggerContactKey = contactKey;
-    entry.activeLayerNavAction = getLayerNavActionForTool(toolMatch.toolType, toolMatch.toolEl);
-
-    if ((toolMatch.toolType === 'dot' || toolMatch.toolType === 'note') && toolMatch.toolEl) {
-      setApriltagActiveToolForHand(handId, toolMatch.toolType, toolMatch.toolEl);
-      continue;
-    }
-
-    setApriltagActiveToolForHand(handId, toolMatch.toolType, toolMatch.toolEl);
+    clearTriggerHoverVisual(entry);
+    entry.lastTriggerContactKey = '';
+    entry.activeLayerNavAction = '';
+    setApriltagActiveToolForHand(handId, APRILTAG_TOOL_NONE, null);
   }
 
-  // Destroy radial menus for any trigger tags that disappeared
+  // Ensure no stale radial menu remains mounted.
   for (var rmKey in radialMenuByHandId) {
-    if (!triggerVisibleByHandId[rmKey]) {
-      destroyRadialMenu(rmKey);
-    }
-  }
-
-  for (var handKey in apriltagActiveToolByHandId) {
-    if (!apriltagActiveToolByHandId[handKey]) continue;
-    if (!triggerVisibleByHandId[handKey]) {
-      // Keep the full glow state while trigger tag is not detected.
-      continue;
-    }
-    var handEntry = apriltagActiveToolByHandId[handKey];
-    if (!contactByHandId[handKey]) {
-      // Losing tracking should not rearm; only clear hover visuals.
-      clearTriggerHoverVisual(handEntry);
-    }
+    destroyRadialMenu(rmKey);
   }
 
   var voteState = {
