@@ -783,7 +783,7 @@ function isStickerDragging(el) {
 export function bindStickerLatLngFromCurrentPosition(el) {
   if (!el || !el.dataset) return null;
   if (el.classList.contains('ui-layer-square')) return null;
-  if (!(el.classList.contains('ui-dot') || el.classList.contains('ui-note'))) return null;
+  if (!el.classList.contains('ui-note')) return null;
   if (!el.classList.contains('ui-sticker-instance')) return null;
 
   var rect = el.getBoundingClientRect();
@@ -801,7 +801,7 @@ function syncMappedStickersNow() {
   if (!shouldSyncStickers()) return;
 
   var overlayEl = state.dom.uiSetupOverlayEl;
-  var els = overlayEl.querySelectorAll('.ui-sticker-instance.ui-dot:not(.ui-layer-square), .ui-sticker-instance.ui-note');
+  var els = overlayEl.querySelectorAll('.ui-sticker-instance.ui-note');
 
   for (var i = 0; i < els.length; i++) {
     var el = els[i];
@@ -1497,7 +1497,7 @@ export function eraseAtPoint(clientX, clientY, radiusPx, ownerTriggerTagId) {
   // Also erase stickers
   var overlayEl = state.dom.uiSetupOverlayEl;
   if (!overlayEl) return;
-  var stickerEls = overlayEl.querySelectorAll('.ui-sticker-instance.ui-dot:not(.ui-layer-square), .ui-sticker-instance.ui-note, .ui-sticker-instance.ui-draw');
+  var stickerEls = overlayEl.querySelectorAll('.ui-sticker-instance.ui-note, .ui-sticker-instance.ui-draw');
   for (var si = 0; si < stickerEls.length; si++) {
     var el = stickerEls[si];
     if (hasOwnerFilter) {
@@ -1626,25 +1626,9 @@ export function initMaptasticIfNeeded() {
 export function cloneSticker(templateEl) {
   if (!templateEl) return null;
   var type = templateEl.dataset && templateEl.dataset.uiType ? templateEl.dataset.uiType : null;
-  if (type !== 'dot' && type !== 'draw' && type !== 'note') return null;
+  if (type !== 'draw' && type !== 'note') return null;
 
   var sessionId = state.currentMapSessionId;
-
-  if (type === 'dot') {
-    var dotEl = document.createElement('div');
-    dotEl.className = 'ui-dot ui-sticker-instance';
-    dotEl.dataset.uiType = 'dot';
-    dotEl.dataset.color = templateEl.dataset && templateEl.dataset.color ? templateEl.dataset.color : (templateEl.style.background || '#2bb8ff');
-    if (templateEl.dataset && templateEl.dataset.triggerTagId) {
-      dotEl.dataset.triggerTagId = String(templateEl.dataset.triggerTagId);
-    }
-    if (sessionId) dotEl.dataset.sessionId = String(sessionId);
-    dotEl.style.background = dotEl.dataset.color;
-    dotEl.style.left = templateEl.style.left || '0px';
-    dotEl.style.top = templateEl.style.top || '0px';
-    templateEl.parentElement.appendChild(dotEl);
-    return dotEl;
-  }
 
   if (type === 'note') {
     var noteEl = document.createElement('div');

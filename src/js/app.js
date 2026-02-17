@@ -70,7 +70,7 @@ var BACKEND_APRILTAG_POLL_BACKOFF_MAX_MS = 5000;
 var BACKEND_APRILTAG_STREAM_RECONNECT_BASE_MS = 500;
 var BACKEND_APRILTAG_STREAM_RECONNECT_MAX_MS = 5000;
 var MAP_TAG_MASK_HOLD_MS = 1000;
-var APRILTAG_BLACKOUT_TOOL_SELECTOR = '.ui-dot, .ui-note, .ui-draw, .ui-eraser, .ui-selection, .ui-layer-square';
+var APRILTAG_BLACKOUT_TOOL_SELECTOR = '.ui-note, .ui-draw, .ui-eraser, .ui-selection, .ui-layer-square';
 var BLACKOUT_PULSE_INTERVAL_MS = 1000;
 var BLACKOUT_PULSE_DURATION_MS = 100;
 var BLACKOUT_PULSE_STORAGE_KEY = 'apriltagBlackoutPulseEnabled';
@@ -471,8 +471,8 @@ export function initApp() {
       return;
     }
 
-    // Handle dot and note stickers
-    var stickerEl = e.target.closest('.ui-dot, .ui-note');
+    // Handle note stickers
+    var stickerEl = e.target.closest('.ui-note');
     if (!stickerEl || !dom.uiSetupOverlayEl.contains(stickerEl)) return;
     if (e.button !== 0) return;
 
@@ -1065,7 +1065,7 @@ export function initApp() {
   function getBlackoutToolType(toolEl) {
     if (!toolEl || !toolEl.classList) return '';
     var uiType = toolEl.dataset && toolEl.dataset.uiType ? String(toolEl.dataset.uiType) : '';
-    if (uiType === 'dot' || uiType === 'draw' || uiType === 'note' || uiType === 'eraser' || uiType === 'selection' || uiType === 'layer-square') {
+    if (uiType === 'draw' || uiType === 'note' || uiType === 'eraser' || uiType === 'selection' || uiType === 'layer-square') {
       return uiType;
     }
     if (toolEl.classList.contains('ui-selection')) return 'selection';
@@ -1073,7 +1073,6 @@ export function initApp() {
     if (toolEl.classList.contains('ui-draw')) return 'draw';
     if (toolEl.classList.contains('ui-note')) return 'note';
     if (toolEl.classList.contains('ui-layer-square')) return 'layer-square';
-    if (toolEl.classList.contains('ui-dot')) return 'dot';
     return '';
   }
 
@@ -1812,7 +1811,7 @@ export function initApp() {
   function collectWorkshopSetupDefinition() {
     var setupItems = [];
     if (dom.uiSetupOverlayEl) {
-      var els = dom.uiSetupOverlayEl.querySelectorAll('.ui-label, .ui-dot, .ui-draw, .ui-note, .ui-eraser, .ui-selection');
+      var els = dom.uiSetupOverlayEl.querySelectorAll('.ui-label, .ui-draw, .ui-note, .ui-eraser, .ui-selection, .ui-layer-square');
       for (var i = 0; i < els.length; i++) {
         var el = els[i];
         if (!el || !el.dataset) continue;
@@ -2231,9 +2230,9 @@ export function initApp() {
         };
       }
 
-      // Export sticker inputs (dot / annotation / draw sticker instances)
+      // Export annotation and drawing sticker instances.
       if (dom.uiSetupOverlayEl) {
-        var stickerEls = dom.uiSetupOverlayEl.querySelectorAll('.ui-sticker-instance.ui-dot:not(.ui-layer-square), .ui-sticker-instance.ui-note, .ui-sticker-instance.ui-draw');
+        var stickerEls = dom.uiSetupOverlayEl.querySelectorAll('.ui-sticker-instance.ui-note, .ui-sticker-instance.ui-draw');
         for (var i = 0; i < stickerEls.length; i++) {
           var el = stickerEls[i];
           var lat = parseFloat(el.dataset.mapLat || '');
@@ -2632,7 +2631,7 @@ export function initApp() {
     if (!dom.uiSetupOverlayEl) return;
 
     // Filter setup elements and sticker instances.
-    var elements = dom.uiSetupOverlayEl.querySelectorAll('.ui-label, .ui-dot, .ui-draw, .ui-note, .ui-eraser, .ui-selection');
+    var elements = dom.uiSetupOverlayEl.querySelectorAll('.ui-label, .ui-draw, .ui-note, .ui-eraser, .ui-selection, .ui-layer-square');
     for (var i = 0; i < elements.length; i++) {
       var el = elements[i];
       var elSessionId = el.dataset.sessionId;
@@ -4100,7 +4099,7 @@ export function initApp() {
         if (!isFinite(parsedTriggerTagId)) continue;
         if (parsedTriggerTagId < 1 || parsedTriggerTagId > 9999) continue;
         var toolType = String(payload.controller.activeToolByTriggerTagId[rawTriggerTagId] || '').trim().toLowerCase();
-        if (!(toolType === 'draw' || toolType === 'dot' || toolType === 'eraser' || toolType === 'selection' || toolType === 'note')) continue;
+        if (!(toolType === 'draw' || toolType === 'eraser' || toolType === 'selection' || toolType === 'note')) continue;
         remoteToolByTriggerTagId[String(parsedTriggerTagId)] = toolType;
       }
     }

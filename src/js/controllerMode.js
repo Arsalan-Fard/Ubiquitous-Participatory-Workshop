@@ -91,19 +91,6 @@ function drawScribble(ctx, color, w, h) {
   ctx.restore();
 }
 
-function drawStickerIcon(ctx, color, w, h) {
-  ctx.save();
-  var radius = Math.max(7, Math.min(w, h) * 0.26);
-  ctx.fillStyle = color;
-  ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-  ctx.lineWidth = Math.max(2, Math.floor(Math.min(w, h) * 0.07));
-  ctx.beginPath();
-  ctx.arc(w * 0.5, h * 0.5, radius, 0, 2 * Math.PI);
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
-}
-
 function drawNoteIcon(ctx, color, w, h) {
   ctx.save();
   var x = w * 0.2;
@@ -158,10 +145,6 @@ function renderToolIcon(canvasEl, tool) {
 
   if (tool === 'draw') {
     drawScribble(ctx, '#2bb8ff', w, h);
-    return;
-  }
-  if (tool === 'dot') {
-    drawStickerIcon(ctx, '#ff4d42', w, h);
     return;
   }
   if (tool === 'note') {
@@ -282,10 +265,23 @@ var audioUploadTimerId = 0;
 var audioClientId = '';
 var audioTriggerTagId = 0;
 var audioRecordingActive = false;
+var audioRecordingId = '';
+var audioRecordingStartedAtMs = 0;
+var audioRecordingParticipantTagId = 0;
+
+function createRecordingId(clientId) {
+  var safeClient = String(clientId || '').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 24) || 'client';
+  var tsPart = Date.now().toString(36);
+  var rndPart = Math.random().toString(36).slice(2, 8);
+  return 'rec-' + safeClient + '-' + tsPart + '-' + rndPart;
+}
 
 function startAudioRecording(clientId) {
   if (audioRecordingActive) return Promise.resolve(false);
   audioClientId = clientId;
+  audioRecordingId = createRecordingId(clientId);
+  audioRecordingStartedAtMs = Date.now();
+  audioRecordingParticipantTagId = parseInt(audioTriggerTagId, 10) || 0;
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     console.warn('Audio recording not supported in this browser');
@@ -321,7 +317,7 @@ function startAudioRecording(clientId) {
 
       // Periodically upload accumulated chunks to backend
       audioUploadTimerId = setInterval(function() {
-        uploadAudioChunks(false);
+        uploadAudioChunks(false, { useKeepalive: false });
       }, CONTROLLER_AUDIO_UPLOAD_INTERVAL_MS);
 
       return true;
@@ -332,7 +328,11 @@ function startAudioRecording(clientId) {
     });
 }
 
-function uploadAudioChunks(isFinal) {
+function uploadAudioChunks(isFinal, options) {
+  var opts = options || {};
+  var useKeepalive = !!opts.useKeepalive;
+  var finalEndMs = isFinal ? (opts.recordingEndedAtMs || Date.now()) : 0;
+
   if (audioChunks.length === 0 && !isFinal) return Promise.resolve();
 
   var chunksToSend = audioChunks.slice();
@@ -342,31 +342,60 @@ function uploadAudioChunks(isFinal) {
     // Send empty final marker
     var formData = new FormData();
     formData.append('clientId', audioClientId);
-    formData.append('triggerTagId', String(audioTriggerTagId || 0));
+    formData.append('triggerTagId', String(audioRecordingParticipantTagId || audioTriggerTagId || 0));
+    formData.append('recordingId', String(audioRecordingId || ''));
+    formData.append('recordingStartMs', String(audioRecordingStartedAtMs || 0));
+    formData.append('recordingEndMs', String(finalEndMs || 0));
     formData.append('isFinal', '1');
     return fetch(CONTROLLER_AUDIO_UPLOAD_ENDPOINT, {
       method: 'POST',
       body: formData,
-      keepalive: true,
-    }).catch(function() {});
+      keepalive: useKeepalive,
+    }).then(function(resp) {
+      return resp.text().then(function(text) {
+        var body = null;
+        try { body = text ? JSON.parse(text) : null; } catch (e) { body = null; }
+        if (!resp.ok || !body || body.ok === false) {
+          throw new Error(body && body.error ? String(body.error) : ('HTTP ' + resp.status));
+        }
+      });
+    });
   }
 
   var blob = new Blob(chunksToSend, { type: chunksToSend[0].type || 'audio/webm' });
   var formData = new FormData();
   formData.append('audio', blob, 'chunk.webm');
   formData.append('clientId', audioClientId);
-  formData.append('triggerTagId', String(audioTriggerTagId || 0));
-  if (isFinal) formData.append('isFinal', '1');
+  formData.append('triggerTagId', String(audioRecordingParticipantTagId || audioTriggerTagId || 0));
+  formData.append('recordingId', String(audioRecordingId || ''));
+  formData.append('recordingStartMs', String(audioRecordingStartedAtMs || 0));
+  if (isFinal) {
+    formData.append('recordingEndMs', String(finalEndMs || 0));
+    formData.append('isFinal', '1');
+  }
 
   return fetch(CONTROLLER_AUDIO_UPLOAD_ENDPOINT, {
     method: 'POST',
     body: formData,
-    keepalive: true,
+    keepalive: useKeepalive,
+  }).then(function(resp) {
+    return resp.text().then(function(text) {
+      var body = null;
+      try { body = text ? JSON.parse(text) : null; } catch (e) { body = null; }
+      if (!resp.ok || !body || body.ok === false) {
+        throw new Error(body && body.error ? String(body.error) : ('HTTP ' + resp.status));
+      }
+      return body;
+    });
   }).catch(function(err) {
     // On failure, put chunks back so next upload retries
     if (!isFinal) {
       audioChunks = chunksToSend.concat(audioChunks);
+    } else if (chunksToSend.length > 0) {
+      // Keep final chunks in memory so caller can retry save.
+      audioChunks = chunksToSend.concat(audioChunks);
     }
+    throw err;
   });
 }
 
@@ -379,9 +408,9 @@ function stopAudioRecording() {
     audioUploadTimerId = 0;
   }
 
-  return new Promise(function(resolve) {
+  return new Promise(function(resolve, reject) {
     if (!audioRecorder || audioRecorder.state === 'inactive') {
-      uploadAudioChunks(true).then(resolve);
+      uploadAudioChunks(true, { useKeepalive: false, recordingEndedAtMs: Date.now() }).then(resolve).catch(reject);
       return;
     }
 
@@ -391,8 +420,10 @@ function stopAudioRecording() {
         var tracks = audioRecorder.stream.getTracks();
         for (var i = 0; i < tracks.length; i++) tracks[i].stop();
       }
-      uploadAudioChunks(true).then(resolve);
+      uploadAudioChunks(true, { useKeepalive: false, recordingEndedAtMs: Date.now() }).then(resolve).catch(reject);
+      audioRecorder = null;
     };
+    try { audioRecorder.requestData(); } catch (e) { }
     audioRecorder.stop();
   });
 }
@@ -436,7 +467,6 @@ export function initControllerMode() {
 
   var circleTools = [
     { tool: 'draw', ariaLabel: 'Hold draw tool' },
-    { tool: 'dot', ariaLabel: 'Hold sticker tool' },
     { tool: 'note', ariaLabel: 'Hold annotation tool' },
     { tool: 'eraser', ariaLabel: 'Hold eraser tool' }
   ];
@@ -680,6 +710,10 @@ export function initControllerMode() {
       stopAudioRecording().then(function() {
         recBtnEl.disabled = false;
         recLabelEl.textContent = 'Record Audio';
+      }).catch(function(err) {
+        recBtnEl.disabled = false;
+        recLabelEl.textContent = 'Save Failed';
+        console.warn('Failed to save audio recording:', err);
       });
     }
   });

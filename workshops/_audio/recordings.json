@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "records": [
+    {
+      "recordingId": "rec-ctrl-19jmxcbz-mligee33-mlqepnvy-miyza0",
+      "participantId": 11,
+      "clientId": "ctrl-19jmxcbz-mligee33",
+      "triggerTagId": 11,
+      "fileName": "p11-cctrl-19jmxcbz-mligee33-rrec-ctrl-19jmxcbz-mligee33-mlqepnvy-miyza0-s20260217T093431726Z-e20260217T093436110Z.webm",
+      "relativePath": "workshops/_audio/p11-cctrl-19jmxcbz-mligee33-rrec-ctrl-19jmxcbz-mligee33-mlqepnvy-miyza0-s20260217T093431726Z-e20260217T093436110Z.webm",
+      "startTimestampMs": 1771320871726,
+      "endTimestampMs": 1771320876110,
+      "startTimestampIso": "2026-02-17T09:34:31.726Z",
+      "endTimestampIso": "2026-02-17T09:34:36.110Z",
+      "savedTimestampMs": 1771320876125,
+      "savedTimestampIso": "2026-02-17T09:34:36.125Z",
+      "sizeBytes": 61985
+    }
+  ],
+  "updatedTimestampMs": 1771320876125,
+  "updatedTimestampIso": "2026-02-17T09:34:36.125Z"
+}

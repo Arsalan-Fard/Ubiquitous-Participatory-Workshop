@@ -16,7 +16,6 @@ export function initUiSetup(options) {
   if (actionsHostEl) actionsHostEl.textContent = '';
 
   var defaultItemColor = '#2bb8ff';
-  var currentColor = defaultItemColor;
   var currentDrawColor = defaultItemColor;
   var currentNoteColor = defaultItemColor;
 
@@ -190,23 +189,6 @@ export function initUiSetup(options) {
   }
   updateParticipantsUi();
 
-  var colorInputEl = document.createElement('input');
-  colorInputEl.type = 'color';
-  colorInputEl.className = 'ui-color-input';
-  colorInputEl.value = currentColor;
-  colorInputEl.setAttribute('aria-label', 'Pick circle color');
-
-  var colorSwatchBtn = document.createElement('div');
-  colorSwatchBtn.className = 'ui-color-swatch';
-  colorSwatchBtn.style.background = currentColor;
-  colorSwatchBtn.appendChild(colorInputEl);
-
-  var addDotBtn = document.createElement('button');
-  addDotBtn.className = 'ui-setup-add-btn';
-  addDotBtn.type = 'button';
-  addDotBtn.textContent = '+';
-  addDotBtn.setAttribute('aria-label', 'Add circle');
-
   addBtn.addEventListener('click', function () {
     createLabelFromInput();
   });
@@ -215,15 +197,6 @@ export function initUiSetup(options) {
     if (e.key !== 'Enter') return;
     e.preventDefault();
     createLabelFromInput();
-  });
-
-  colorInputEl.addEventListener('input', function () {
-    currentColor = colorInputEl.value;
-    colorSwatchBtn.style.background = currentColor;
-  });
-
-  addDotBtn.addEventListener('click', function () {
-    createDot();
   });
 
   var drawColorInputEl = document.createElement('input');
@@ -284,8 +257,6 @@ export function initUiSetup(options) {
 
   var controlsRow = document.createElement('div');
   controlsRow.className = 'ui-setup-row';
-  controlsRow.appendChild(colorSwatchBtn);
-  controlsRow.appendChild(addDotBtn);
   controlsRow.appendChild(drawSwatchEl);
   controlsRow.appendChild(addDrawBtn);
   controlsRow.appendChild(noteSwatchEl);
@@ -498,39 +469,6 @@ export function initUiSetup(options) {
       labelEl.style.left = left + 'px';
       labelEl.style.top = top + 'px';
       labelEl.style.visibility = 'visible';
-    });
-  }
-
-  function createDot() {
-    var dotEl = document.createElement('div');
-    dotEl.className = 'ui-dot';
-    dotEl.style.background = currentColor;
-    dotEl.dataset.uiType = 'dot';
-    dotEl.dataset.color = currentColor;
-    assignCurrentSessionId(dotEl);
-    overlayEl.appendChild(dotEl);
-
-
-    positionDotAboveSwatch(dotEl);
-    makeDraggable(dotEl, { draggingClass: 'ui-dot--dragging' });
-  }
-
-  function positionDotAboveSwatch(dotEl) {
-    var swatchRect = colorSwatchBtn.getBoundingClientRect();
-    var x = swatchRect.left + swatchRect.width / 2;
-    var y = swatchRect.top;
-
-    dotEl.style.left = '0px';
-    dotEl.style.top = '0px';
-    dotEl.style.visibility = 'hidden';
-
-    requestAnimationFrame(function () {
-      var dotRect = dotEl.getBoundingClientRect();
-      var left = Math.max(8, Math.min(window.innerWidth - dotRect.width - 8, x - dotRect.width / 2));
-      var top = Math.max(8, y - 10 - dotRect.height);
-      dotEl.style.left = left + 'px';
-      dotEl.style.top = top + 'px';
-      dotEl.style.visibility = 'visible';
     });
   }
 
@@ -874,15 +812,6 @@ export function initUiSetup(options) {
           rotationDeg: rotationDeg,
           sessionId: normalizeSessionId(el.dataset.sessionId)
         });
-      } else if (type === 'dot') {
-        items.push({
-          type: 'dot',
-          color: el.dataset.color || defaultItemColor,
-          triggerTagId: el.dataset.triggerTagId || '',
-          x: left,
-          y: top,
-          sessionId: normalizeSessionId(el.dataset.sessionId)
-        });
       } else if (type === 'draw') {
         items.push({
           type: 'draw',
@@ -1003,21 +932,6 @@ export function initUiSetup(options) {
         assignImportedSessionId(labelEl, item.sessionId);
         overlayEl.appendChild(labelEl);
         makeDraggable(labelEl);
-        continue;
-      }
-
-      if (item.type === 'dot') {
-        var dotEl = document.createElement('div');
-        dotEl.className = 'ui-dot';
-        dotEl.dataset.uiType = 'dot';
-        dotEl.dataset.color = String(item.color || defaultItemColor);
-        dotEl.style.background = dotEl.dataset.color;
-        dotEl.style.left = String(item.x || 0) + 'px';
-        dotEl.style.top = String(item.y || 0) + 'px';
-        assignImportedSessionId(dotEl, item.sessionId);
-        overlayEl.appendChild(dotEl);
-
-        makeDraggable(dotEl, { draggingClass: 'ui-dot--dragging' });
         continue;
       }
 

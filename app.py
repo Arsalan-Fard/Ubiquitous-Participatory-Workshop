@@ -23,8 +23,9 @@ ROOT_DIR = Path(__file__).resolve().parent
 WORKSHOPS_DIR = ROOT_DIR / "workshops"
 WORKSHOP_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 CONTROLLER_CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+AUDIO_RECORDING_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 CONTROLLER_HEARTBEAT_TTL_SEC = 0.8
-CONTROLLER_SUPPORTED_TOOLS = {"draw", "dot", "note", "eraser", "selection"}
+CONTROLLER_SUPPORTED_TOOLS = {"draw", "note", "eraser", "selection"}
 CONTROLLER_NOTE_TEXT_MAX_LEN = 500
 
 app = Flask(__name__, static_folder=str(ROOT_DIR), static_url_path="")
@@ -672,7 +673,76 @@ def api_controller_heartbeat():
 
 
 AUDIO_DIR = ROOT_DIR / "workshops" / "_audio"
+AUDIO_MANIFEST_PATH = AUDIO_DIR / "recordings.json"
 audio_file_lock = threading.Lock()
+
+
+def sanitize_audio_recording_id(raw):
+  if not isinstance(raw, str):
+    return None
+  candidate = raw.strip()
+  if not candidate:
+    return None
+  if len(candidate) > 128:
+    candidate = candidate[:128]
+  if not AUDIO_RECORDING_ID_RE.fullmatch(candidate):
+    return None
+  return candidate
+
+
+def _parse_timestamp_ms(raw):
+  try:
+    value = int(raw)
+  except (TypeError, ValueError):
+    return 0
+  if value < 0:
+    return 0
+  # Clamp to year 3000 to avoid absurd values.
+  if value > 32503680000000:
+    return 0
+  return value
+
+
+def _format_timestamp_ms_for_filename(timestamp_ms: int):
+  ts = int(timestamp_ms or 0)
+  if ts <= 0:
+    ts = int(time.time() * 1000.0)
+  sec = int(ts // 1000)
+  ms = int(ts % 1000)
+  return time.strftime("%Y%m%dT%H%M%S", time.gmtime(sec)) + f"{ms:03d}Z"
+
+
+def _format_timestamp_ms_iso(timestamp_ms: int):
+  ts = int(timestamp_ms or 0)
+  if ts <= 0:
+    return ""
+  sec = int(ts // 1000)
+  ms = int(ts % 1000)
+  return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(sec)) + f".{ms:03d}Z"
+
+
+def _load_audio_manifest():
+  if not AUDIO_MANIFEST_PATH.exists():
+    return {"version": 1, "records": []}
+  try:
+    with open(AUDIO_MANIFEST_PATH, "r", encoding="utf-8") as f:
+      payload = json.load(f)
+    if not isinstance(payload, dict):
+      return {"version": 1, "records": []}
+    records = payload.get("records")
+    if not isinstance(records, list):
+      records = []
+    payload["records"] = records
+    if "version" not in payload:
+      payload["version"] = 1
+    return payload
+  except Exception:
+    return {"version": 1, "records": []}
+
+
+def _save_audio_manifest(payload):
+  with open(AUDIO_MANIFEST_PATH, "w", encoding="utf-8") as f:
+    json.dump(payload, f, ensure_ascii=True, indent=2)
 
 
 @app.route("/api/controller/audio", methods=["POST"])
@@ -682,6 +752,9 @@ def api_controller_audio():
     return jsonify({"ok": False, "error": "invalid_client_id"}), 400
 
   trigger_tag_id = sanitize_controller_trigger_tag_id(request.form.get("triggerTagId"))
+  recording_id = sanitize_audio_recording_id(request.form.get("recordingId"))
+  recording_start_ms = _parse_timestamp_ms(request.form.get("recordingStartMs"))
+  recording_end_ms = _parse_timestamp_ms(request.form.get("recordingEndMs"))
   is_final = request.form.get("isFinal") == "1"
 
   audio_file = request.files.get("audio")
@@ -690,34 +763,100 @@ def api_controller_audio():
     with audio_file_lock:
       AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
-      # Build filename from client id and session timestamp
-      # Each client gets a single file per session (appended to)
-      safe_client = re.sub(r"[^A-Za-z0-9_-]", "_", client_id)[:64]
-      tag_suffix = f"-tag{trigger_tag_id}" if trigger_tag_id is not None else ""
-      base_name = f"{safe_client}{tag_suffix}"
+      safe_client = re.sub(r"[^A-Za-z0-9_-]", "_", client_id)[:24] or "client"
+      participant_id = int(trigger_tag_id) if trigger_tag_id is not None else None
+      participant_label = str(participant_id) if participant_id is not None else "na"
 
-      # Find or create the audio file for this client
-      audio_path = AUDIO_DIR / f"{base_name}.webm"
+      if recording_id:
+        safe_recording_id = recording_id[:64]
+      else:
+        safe_recording_id = ("legacy-" + safe_client + "-p" + participant_label)[:64]
+
+      temp_base_name = f"p{participant_label}-c{safe_client}-r{safe_recording_id}"
+      temp_audio_path = AUDIO_DIR / f"{temp_base_name}.part.webm"
+
+      # Backward-compatibility with previous uploads that used <client>-tagX.webm.
+      legacy_base_name = safe_client + (f"-tag{participant_label}" if participant_id is not None else "")
+      legacy_audio_path = AUDIO_DIR / f"{legacy_base_name}.webm"
+      write_path = temp_audio_path if recording_id else legacy_audio_path
 
       if audio_file:
-        # Append audio chunk to file
         data = audio_file.read()
         if data:
-          with open(audio_path, "ab") as f:
+          with open(write_path, "ab") as f:
             f.write(data)
 
+      finalized_path = None
       if is_final:
-        # Rename to include timestamp so it doesn't get overwritten next session
-        if audio_path.exists() and audio_path.stat().st_size > 0:
-          ts = time.strftime("%Y%m%d-%H%M%S")
-          final_name = f"{base_name}-{ts}.webm"
+        source_path = None
+        if temp_audio_path.exists():
+          source_path = temp_audio_path
+        elif legacy_audio_path.exists():
+          source_path = legacy_audio_path
+
+        if source_path is not None and source_path.stat().st_size > 0:
+          now_ms = int(time.time() * 1000.0)
+          if recording_end_ms <= 0:
+            recording_end_ms = now_ms
+          if recording_start_ms <= 0:
+            try:
+              recording_start_ms = int(source_path.stat().st_mtime * 1000.0)
+            except Exception:
+              recording_start_ms = recording_end_ms
+          if recording_start_ms > recording_end_ms:
+            recording_start_ms = recording_end_ms
+
+          start_stamp = _format_timestamp_ms_for_filename(recording_start_ms)
+          end_stamp = _format_timestamp_ms_for_filename(recording_end_ms)
+
+          final_base_name = f"p{participant_label}-s{start_stamp}-e{end_stamp}"
+          final_name = final_base_name + ".webm"
           final_path = AUDIO_DIR / final_name
-          audio_path.rename(final_path)
+          suffix = 1
+          while final_path.exists():
+            suffix += 1
+            final_name = f"{final_base_name}-v{suffix}.webm"
+            final_path = AUDIO_DIR / final_name
+
+          source_path.rename(final_path)
+          finalized_path = final_path
+
+          manifest = _load_audio_manifest()
+          records = manifest.get("records")
+          if not isinstance(records, list):
+            records = []
+            manifest["records"] = records
+
+          saved_at_ms = int(time.time() * 1000.0)
+          entry = {
+            "recordingId": safe_recording_id,
+            "participantId": participant_id,
+            "clientId": client_id,
+            "triggerTagId": participant_id,
+            "fileName": final_name,
+            "relativePath": str((Path("workshops") / "_audio" / final_name).as_posix()),
+            "startTimestampMs": int(recording_start_ms),
+            "endTimestampMs": int(recording_end_ms),
+            "startTimestampIso": _format_timestamp_ms_iso(recording_start_ms),
+            "endTimestampIso": _format_timestamp_ms_iso(recording_end_ms),
+            "savedTimestampMs": int(saved_at_ms),
+            "savedTimestampIso": _format_timestamp_ms_iso(saved_at_ms),
+            "sizeBytes": int(final_path.stat().st_size),
+          }
+          records.append(entry)
+          manifest["updatedTimestampMs"] = int(saved_at_ms)
+          manifest["updatedTimestampIso"] = _format_timestamp_ms_iso(saved_at_ms)
+          _save_audio_manifest(manifest)
 
   except Exception as exc:
     return jsonify({"ok": False, "error": str(exc)}), 500
 
-  return jsonify({"ok": True})
+  response = {"ok": True}
+  if is_final and recording_id:
+    response["recordingId"] = recording_id
+  if is_final and finalized_path is not None:
+    response["savedFileName"] = finalized_path.name
+  return jsonify(response)
 
 
 def _server_info_port_from_request():

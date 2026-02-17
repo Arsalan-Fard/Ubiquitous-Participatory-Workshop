@@ -33,13 +33,12 @@ var nextPointerId = 100; // Start at 100 to avoid conflicts with real pointer ID
 var APRILTAG_TRIGGER_DELAY_MS = 1000;
 var APRILTAG_TRIGGER_ACTIVATION_DELAY_MS = 1000;
 var ERASER_TOUCH_RADIUS_PX = 16;
-var APRILTAG_TOOL_SELECTOR = '.ui-dot, .ui-note, .ui-draw, .ui-eraser, .ui-selection, .ui-layer-square';
+var APRILTAG_TOOL_SELECTOR = '.ui-note, .ui-draw, .ui-eraser, .ui-selection, .ui-layer-square';
 var APRILTAG_TOOL_ACTIVE_CLASS = 'ui-trigger-active';
 var APRILTAG_TOOL_HOVER_CLASS = 'ui-trigger-hovering';
 var APRILTAG_TOOL_NONE = 'none';
 var REMOTE_APRILTAG_TOOL_TYPES = {
   draw: true,
-  dot: true,
   eraser: true,
   selection: true,
   note: true
@@ -63,13 +62,12 @@ var RADIAL_DRAW_COLOR_BY_TOOL = {
   'draw-purple': '#b48cff',
   'draw-white': '#f5f7fa'
 };
-// Main tool ring — 5 items at 72° spacing
+// Main tool ring — 4 items at 90-degree spacing
 var RADIAL_MENU_TOOLS = [
-  { toolType: 'draw',      label: 'Draw',    icon: '\u270E',       angle: -90  },
-  { toolType: 'dot',       label: 'Sticker', icon: '\u25CF',       angle: -18  },
-  { toolType: 'note',      label: 'Note',    icon: '\uD83D\uDCDD', angle: 54   },
-  { toolType: 'eraser',    label: 'Eraser',  icon: '\u232B',       angle: 126  },
-  { toolType: 'selection', label: 'Select',  icon: '\u2734',       angle: 198  }
+  { toolType: 'draw',      label: 'Draw',    icon: '\u270E',       angle: -90 },
+  { toolType: 'note',      label: 'Note',    icon: '\uD83D\uDCDD', angle: 0   },
+  { toolType: 'eraser',    label: 'Eraser',  icon: '\u232B',       angle: 90  },
+  { toolType: 'selection', label: 'Select',  icon: '\u2734',       angle: 180 }
 ];
 // Outer color sub-ring — 6 color slices fanning above the Draw slice
 var COLOR_RING_INNER_R = RADIAL_MENU_OUTER_R + 4;  // 136
@@ -145,7 +143,7 @@ function getPointerState(handIndex) {
       isApriltag: false,
       triggerFillStartMs: 0,  // When the disappearance fill animation started
       triggerFired: false,    // Whether the trigger already fired this disappearance
-      armedStickerTemplate: null,  // Template element for dot/note placement (two-step flow)
+      armedStickerTemplate: null,  // Template element for note placement (two-step flow)
       activeFollowStickerEl: null, // Live sticker that follows primary while sticker tool is active
       activeFollowStickerContactKey: '',
       followFinalizeRequested: false,
@@ -164,7 +162,7 @@ function getPointerState(handIndex) {
 // Remove active highlight from armed sticker template and clear the reference
 function dearmStickerTemplate(ps) {
   if (ps.armedStickerTemplate) {
-    ps.armedStickerTemplate.classList.remove('ui-dot--active', 'ui-note--active');
+    ps.armedStickerTemplate.classList.remove('ui-note--active');
     ps.armedStickerTemplate = null;
   }
 }
@@ -191,7 +189,7 @@ function activateEraser(ps, buttonEl) {
 function getToolTypeFromElement(el) {
   if (!el || !el.classList) return '';
   var uiType = el.dataset && el.dataset.uiType ? String(el.dataset.uiType) : '';
-  if (uiType === 'dot' || uiType === 'draw' || uiType === 'note' || uiType === 'eraser' || uiType === 'selection' || uiType === 'layer-square') {
+  if (uiType === 'draw' || uiType === 'note' || uiType === 'eraser' || uiType === 'selection' || uiType === 'layer-square') {
     return uiType;
   }
   if (el.classList.contains('ui-selection')) return 'selection';
@@ -199,7 +197,6 @@ function getToolTypeFromElement(el) {
   if (el.classList.contains('ui-draw')) return 'draw';
   if (el.classList.contains('ui-note')) return 'note';
   if (el.classList.contains('ui-layer-square')) return 'layer-square';
-  if (el.classList.contains('ui-dot')) return 'dot';
   return '';
 }
 
@@ -365,7 +362,7 @@ function setTriggerHoverVisual(entry, toolEl, contactKey, progress01, nowMs) {
 }
 
 function isInputToolType(toolType) {
-  return toolType === 'dot' || toolType === 'draw' || toolType === 'note' || toolType === 'eraser' || toolType === 'selection';
+  return toolType === 'draw' || toolType === 'note' || toolType === 'eraser' || toolType === 'selection';
 }
 
 function getLayerNavActionForTool(toolType, toolEl) {
@@ -453,7 +450,6 @@ function findToolElementForTriggerTag(triggerTagId, toolType) {
 
   var selector = '';
   if (wantedToolType === 'draw') selector = '.ui-draw';
-  else if (wantedToolType === 'dot') selector = '.ui-dot';
   else if (wantedToolType === 'eraser') selector = '.ui-eraser';
   else if (wantedToolType === 'selection') selector = '.ui-selection';
   else if (wantedToolType === 'note') selector = '.ui-note';
@@ -470,7 +466,7 @@ function findToolElementForTriggerTag(triggerTagId, toolType) {
 }
 
 function shouldFinalizeFollowStickerForTool(toolType) {
-  return toolType === 'dot' || toolType === 'selection';
+  return toolType === 'selection';
 }
 
 export function applyRemoteApriltagToolOverrides(remoteToolByTriggerTagId) {
@@ -501,8 +497,8 @@ export function applyRemoteApriltagToolOverrides(remoteToolByTriggerTagId) {
       if (!remoteToolEl) {
         if (wantedRemoteToolType === 'eraser') {
           remoteToolEl = ensureEraserTemplate(triggerId);
-        } else if (wantedRemoteToolType === 'dot' || wantedRemoteToolType === 'note') {
-          remoteToolEl = ensureStickerTemplate(wantedRemoteToolType, triggerId);
+        } else if (wantedRemoteToolType === 'note') {
+          remoteToolEl = ensureStickerTemplate('note', triggerId);
         } else if (wantedRemoteToolType === 'selection') {
           remoteToolEl = findSelectionToolElement();
         } else if (wantedRemoteToolType === 'draw') {
@@ -684,7 +680,7 @@ function startFollowStickerForPointer(ps, templateEl, pointer, contactKey) {
  */
 function getSelectableStickerRoot(target, ownerTagIds) {
   if (!target || !target.closest) return null;
-  var stickerEl = target.closest('.ui-sticker-instance.ui-dot, .ui-sticker-instance.ui-note');
+  var stickerEl = target.closest('.ui-sticker-instance.ui-note');
   if (!stickerEl || !stickerEl.classList) return null;
   if (stickerEl.classList.contains('ui-layer-square')) return null;
   var stickerOwnerId = normalizeTagId(stickerEl.dataset && stickerEl.dataset.triggerTagId);
@@ -952,7 +948,7 @@ function syncPointerToolWithApriltagSelection(ps, handId) {
   } else if (toolType === 'eraser') {
     ps.eraserActive = true;
     if (toolEl) activateEraser(ps, toolEl);
-  } else if (toolType === 'dot' || toolType === 'note') {
+  } else if (toolType === 'note') {
     ps.armedStickerTemplate = toolEl || null;
   }
 
@@ -1235,7 +1231,7 @@ function findLayerSquareByNavAction(action) {
 }
 
 /**
- * Ensures a hidden template element exists on the overlay for sticker/note cloning.
+ * Ensures a hidden template element exists on the overlay for note cloning.
  * Used by the radial menu when no explicit overlay button was placed in Stage 3.
  */
 function ensureStickerTemplate(stickerType, triggerTagId) {
@@ -1248,12 +1244,7 @@ function ensureStickerTemplate(stickerType, triggerTagId) {
 
   // Create a hidden template element
   var el = document.createElement('div');
-  if (stickerType === 'dot') {
-    el.className = 'ui-dot';
-    el.dataset.uiType = 'dot';
-    el.dataset.color = '#2bb8ff';
-    el.style.background = '#2bb8ff';
-  } else if (stickerType === 'note') {
+  if (stickerType === 'note') {
     el.className = 'ui-note';
     el.dataset.uiType = 'note';
     el.dataset.color = '#ffc857';
@@ -1262,9 +1253,7 @@ function ensureStickerTemplate(stickerType, triggerTagId) {
     iconEl.className = 'ui-note__icon';
     iconEl.textContent = '\uD83D\uDCDD';
     el.appendChild(iconEl);
-  } else {
-    return null;
-  }
+  } else return null;
 
   if (triggerTagId) el.dataset.triggerTagId = String(triggerTagId);
   el.dataset.radialTemplate = '1';
@@ -1418,10 +1407,9 @@ function handleRadialMenuSelection(handId, selectedTool, entry) {
     return;
   }
 
-  if (selectedTool === 'dot' || selectedTool === 'note' || selectedTool === 'eraser') {
+  if (selectedTool === 'note' || selectedTool === 'eraser') {
     var toolEl = findToolElementForTriggerTag(entry.triggerTagId, selectedTool);
-    // For sticker/note: ensure a template exists for cloning
-    if (!toolEl && (selectedTool === 'dot' || selectedTool === 'note')) {
+    if (!toolEl && selectedTool === 'note') {
       toolEl = ensureStickerTemplate(selectedTool, entry.triggerTagId);
     }
     entry.lastTriggerContactKey = 'radial:' + selectedTool;
@@ -1454,7 +1442,7 @@ export function updateApriltagTriggerSelections(triggerPoints, primaryPoints) {
     var hasRemoteOverride = !!entry.remoteOverrideTool || contactKey.indexOf('remote:') === 0;
     if (hasRemoteOverride) continue;
 
-    if (entry.toolType === 'dot' || entry.toolType === 'note' || entry.toolType === 'selection') {
+    if (entry.toolType === 'note' || entry.toolType === 'selection') {
       requestFollowStickerFinalizeForHand(handId);
     }
     clearTriggerHoverVisual(entry);
@@ -1528,10 +1516,6 @@ function getDraggableRoot(target) {
     var drawButton = target.closest('.ui-draw');
     if (drawButton && !drawButton.classList.contains('ui-sticker-instance')) return null;
 
-    // Dot sticker instances are draggable
-    var dotInstance = target.closest('.ui-sticker-instance.ui-dot');
-    if (dotInstance) return dotInstance;
-
     // Note sticker instances: saved notes (with text) are clickable, unsaved are draggable
     var noteInstance = target.closest('.ui-sticker-instance.ui-note');
     if (noteInstance) {
@@ -1542,8 +1526,8 @@ function getDraggableRoot(target) {
       return noteInstance;
     }
 
-    // Template buttons (dots/notes in setup panel) are also draggable to clone them
-    var templateEl = target.closest('.ui-dot, .ui-note');
+    // Note template buttons in setup are draggable to clone them.
+    var templateEl = target.closest('.ui-note');
     if (templateEl && !templateEl.classList.contains('ui-sticker-instance')) {
       // Check if it's in the setup overlay (template area)
       var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
@@ -1556,7 +1540,7 @@ function getDraggableRoot(target) {
   }
 
   // Stage 3: templates are draggable during UI setup
-  var setupEl = target.closest('.ui-dot, .ui-note, .ui-draw, .ui-eraser, .ui-selection, .ui-layer-square');
+  var setupEl = target.closest('.ui-note, .ui-draw, .ui-eraser, .ui-selection, .ui-layer-square');
   return setupEl || null;
 }
 
@@ -1665,7 +1649,7 @@ export function handleStage3Gestures(usableIndexTipPoints) {
       if (ps.isApriltag && ps.lastPointer) {
         var activeTool = syncPointerToolWithApriltagSelection(ps, handId);
         var activeToolType = activeTool.toolType;
-        if (ps.activeFollowStickerEl && activeToolType !== 'dot' && activeToolType !== 'note' && ps.followFinalizeRequested) {
+        if (ps.activeFollowStickerEl && activeToolType !== 'note' && ps.followFinalizeRequested) {
           finalizeFollowStickerForPointer(ps);
         }
 
@@ -1693,7 +1677,7 @@ export function handleStage3Gestures(usableIndexTipPoints) {
         }
 
         // Keep active sticker following session alive while sticker button remains active.
-        if (activeToolType === 'dot' || activeToolType === 'note') {
+        if (activeToolType === 'note') {
           ps.triggerFillStartMs = 0;
           ps.triggerFired = false;
           updatePointerCursor(handId, ps.lastPointer, 0, null);
@@ -1868,7 +1852,7 @@ function processPointerGesture(handIndex, pointer, handData) {
     ps.activeFollowStickerContactKey = '';
   }
   // Finalize a live-follow sticker only when trigger-tag deactivation explicitly requested it.
-  if (ps.activeFollowStickerEl && !(isApriltag && (activeToolType === 'dot' || activeToolType === 'note'))) {
+  if (ps.activeFollowStickerEl && !(isApriltag && activeToolType === 'note')) {
     if (ps.followFinalizeRequested || !isApriltag) {
       finalizeFollowStickerForPointer(ps, pointer);
     }
@@ -1881,7 +1865,7 @@ function processPointerGesture(handIndex, pointer, handData) {
   // Sticker/note mode:
   // - Touching the surface keeps the live-follow sticker attached to the tag.
   // - Releasing touch finalizes placement (notes without text are discarded in finalize helper).
-  if (isApriltag && (activeToolType === 'dot' || activeToolType === 'note') && activeToolEl) {
+  if (isApriltag && activeToolType === 'note' && activeToolEl) {
     if (isTouch === false) {
       finalizeFollowStickerForPointer(ps, pointer);
       setApriltagActiveToolForHand(handIndex, APRILTAG_TOOL_NONE, null);
@@ -2072,8 +2056,7 @@ function startDragForPointer(ps, pointer, forcedTarget) {
   // Stage 4: Handle sticker template cloning and direct drag
   if (state.stage === 4) {
     var isNoteTemplate = target.classList.contains('ui-note') && !target.classList.contains('ui-sticker-instance');
-    var isDotTemplate = target.classList.contains('ui-dot') && !target.classList.contains('ui-sticker-instance');
-    var isTemplate = isNoteTemplate || isDotTemplate;
+    var isTemplate = isNoteTemplate;
     var isInstance = target.classList.contains('ui-sticker-instance');
 
     if (isTemplate || isInstance) {
