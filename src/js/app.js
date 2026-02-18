@@ -75,8 +75,14 @@ var BLACKOUT_PULSE_INTERVAL_MS = 1000;
 var BLACKOUT_PULSE_DURATION_MS = 100;
 var BLACKOUT_PULSE_STORAGE_KEY = 'apriltagBlackoutPulseEnabled';
 var MAP_MONO_STYLE_STORAGE_KEY = 'mapMonochromeStyleEnabled';
+var PRIMARY_OFFSET_GRID_STORAGE_KEY = 'apriltagPrimaryOffsetGridV1';
 var PHONE_CONNECT_DEFAULT_PATH = '/?mode=controller';
 var PHONE_CONNECT_QR_ENDPOINT = 'https://api.qrserver.com/v1/create-qr-code/';
+var PRIMARY_OFFSET_GRID_POINTS_UV = [
+  { u: 0.0, v: 0.0 }, { u: 0.5, v: 0.0 }, { u: 1.0, v: 0.0 },
+  { u: 0.0, v: 0.5 }, { u: 0.5, v: 0.5 }, { u: 1.0, v: 0.5 },
+  { u: 0.0, v: 1.0 }, { u: 0.5, v: 1.0 }, { u: 1.0, v: 1.0 }
+];
 var apriltagPollInFlight = false;
 var apriltagLastPollMs = 0;
 var apriltagPollBackoffMs = 0;
@@ -112,8 +118,64 @@ export function initApp() {
   var apriltagSurfaceLastCorners = null;
   var apriltagSurfaceSmoothedCorners = null;
   var mapTagMaskCacheById = {};
+  var primaryOffsetCalibPointEls = [];
 
   var videoContainer = document.getElementById('videoContainer1');
+
+  function hasCompletePrimaryOffsetGrid(grid) {
+    if (!Array.isArray(grid) || grid.length !== 9) return false;
+    for (var i = 0; i < grid.length; i++) {
+      var p = grid[i];
+      if (!p || !isFinite(p.ox) || !isFinite(p.oy)) return false;
+    }
+    return true;
+  }
+
+  function loadPrimaryOffsetGridFromStorage() {
+    var raw = localStorage.getItem(PRIMARY_OFFSET_GRID_STORAGE_KEY);
+    if (!raw) return null;
+    var parsed = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      return null;
+    }
+    return hasCompletePrimaryOffsetGrid(parsed) ? parsed : null;
+  }
+
+  function savePrimaryOffsetGridToStorage(grid) {
+    if (!hasCompletePrimaryOffsetGrid(grid)) {
+      localStorage.removeItem(PRIMARY_OFFSET_GRID_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(PRIMARY_OFFSET_GRID_STORAGE_KEY, JSON.stringify(grid));
+  }
+
+  function clearPrimaryOffsetGridFromStorage() {
+    localStorage.removeItem(PRIMARY_OFFSET_GRID_STORAGE_KEY);
+  }
+
+  function updatePrimaryOffsetCalibrationStatus() {
+    if (!dom.trackingOffset9ptStatusEl) return;
+    if (state.apriltagPrimaryOffsetCalibActive) {
+      dom.trackingOffset9ptStatusEl.textContent = 'Point ' + String(state.apriltagPrimaryOffsetCalibIndex + 1) + '/9';
+      return;
+    }
+    dom.trackingOffset9ptStatusEl.textContent = hasCompletePrimaryOffsetGrid(state.apriltagPrimaryOffsetGrid)
+      ? 'Calibrated (9/9)'
+      : 'Not calibrated';
+  }
+
+  function setPrimaryOffsetCalibUiEnabled(active) {
+    if (!dom.trackingOffset9ptBtnEl || !dom.trackingOffset9ptCaptureBtnEl) return;
+    dom.trackingOffset9ptBtnEl.textContent = active ? 'Stop 9pt' : 'Start 9pt';
+    dom.trackingOffset9ptCaptureBtnEl.disabled = !active;
+    dom.trackingOffset9ptBtnEl.classList.toggle('tracking-offset-controls__action-btn--active', !!active);
+  }
+
+  state.apriltagPrimaryOffsetGrid = loadPrimaryOffsetGridFromStorage();
+  state.apriltagPrimaryOffsetCalibActive = false;
+  state.apriltagPrimaryOffsetCalibIndex = 0;
 
   // Dots and masks use screen-space coordinates from the surface homography.
   // They must live in mapView (not mapWarp) so Maptastic doesn't double-warp them.
@@ -2701,7 +2763,10 @@ export function initApp() {
         y: state.apriltagTrackingOffsetY,
         triggerX: state.apriltagTriggerTrackingOffsetX,
         triggerY: state.apriltagTriggerTrackingOffsetY,
-        compressionPct: state.apriltagOffsetBottomCompressionPct
+        compressionPct: state.apriltagOffsetBottomCompressionPct,
+        primaryOffsetGrid: hasCompletePrimaryOffsetGrid(state.apriltagPrimaryOffsetGrid)
+          ? state.apriltagPrimaryOffsetGrid
+          : null
       },
       mapViews: mapViewEntries,
       activeMapViewId: state.currentMapSessionId || null,
@@ -2771,6 +2836,16 @@ export function initApp() {
       saveNumberSetting('apriltagTriggerTrackingOffsetX', state.apriltagTriggerTrackingOffsetX);
       saveNumberSetting('apriltagTriggerTrackingOffsetY', state.apriltagTriggerTrackingOffsetY);
       saveNumberSetting('apriltagOffsetBottomCompressionPct', state.apriltagOffsetBottomCompressionPct);
+
+      var importedGrid = mapSetup.trackingOffset.primaryOffsetGrid;
+      if (hasCompletePrimaryOffsetGrid(importedGrid)) {
+        state.apriltagPrimaryOffsetGrid = importedGrid;
+        savePrimaryOffsetGridToStorage(importedGrid);
+      } else if (importedGrid === null) {
+        state.apriltagPrimaryOffsetGrid = null;
+        clearPrimaryOffsetGridFromStorage();
+      }
+      updatePrimaryOffsetCalibrationStatus();
     }
 
     clearImportedRoadEntries();
@@ -3626,85 +3701,127 @@ export function initApp() {
     // Layer controls now use draggable sticker buttons in the panel.
   }
 
-  function applyTrackedTagOffset(det, tagId, x, y, mapWidth, mapHeight, offsetMode) {
+  function buildTagAxesMap(det, mapWidth, mapHeight) {
+    if (!det || !Array.isArray(det.corners) || det.corners.length < 4 || !state.surfaceHomography) return null;
+    var mappedCorners = [];
+    for (var ci = 0; ci < 4; ci++) {
+      var corner = det.corners[ci];
+      if (!corner) continue;
+      var mapped = applyHomography(state.surfaceHomography, corner.x, corner.y);
+      mappedCorners[ci] = mapped || null;
+    }
+
+    function buildUnitVector(aIndex, bIndex) {
+      var a = mappedCorners[aIndex];
+      var b = mappedCorners[bIndex];
+      if (!a || !b) return null;
+      var vx = (b.x - a.x) * mapWidth;
+      var vy = (b.y - a.y) * mapHeight;
+      var len = Math.hypot(vx, vy);
+      if (!isFinite(len) || len <= 1e-6) return null;
+      return { x: vx / len, y: vy / len };
+    }
+
+    function mergeAlignedUnitVectors(vectors) {
+      var base = null;
+      var sumX = 0;
+      var sumY = 0;
+      for (var vi = 0; vi < vectors.length; vi++) {
+        var vec = vectors[vi];
+        if (!vec) continue;
+        if (!base) {
+          base = vec;
+        } else {
+          var dot = vec.x * base.x + vec.y * base.y;
+          if (dot < 0) vec = { x: -vec.x, y: -vec.y };
+        }
+        sumX += vec.x;
+        sumY += vec.y;
+      }
+      var mag = Math.hypot(sumX, sumY);
+      if (!isFinite(mag) || mag <= 1e-6) return null;
+      return { x: sumX / mag, y: sumY / mag };
+    }
+
+    var xAxis = mergeAlignedUnitVectors([
+      buildUnitVector(0, 1),
+      buildUnitVector(3, 2)
+    ]);
+    var yAxis = mergeAlignedUnitVectors([
+      buildUnitVector(0, 3),
+      buildUnitVector(1, 2)
+    ]);
+    if (!xAxis || !yAxis) return null;
+    return { xAxis: xAxis, yAxis: yAxis };
+  }
+
+  function getPrimaryOffsetFromGrid(uv) {
+    var grid = state.apriltagPrimaryOffsetGrid;
+    if (!hasCompletePrimaryOffsetGrid(grid) || !uv) return null;
+    var u = clamp(uv.x, 0, 1);
+    var v = clamp(uv.y, 0, 1);
+    var gx = u * 2.0;
+    var gy = v * 2.0;
+    var x0 = Math.floor(gx);
+    var y0 = Math.floor(gy);
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x0 > 1) x0 = 1;
+    if (y0 > 1) y0 = 1;
+    var x1 = x0 + 1;
+    var y1 = y0 + 1;
+    var tx = gx - x0;
+    var ty = gy - y0;
+    function idx(ix, iy) { return iy * 3 + ix; }
+    var p00 = grid[idx(x0, y0)];
+    var p10 = grid[idx(x1, y0)];
+    var p01 = grid[idx(x0, y1)];
+    var p11 = grid[idx(x1, y1)];
+    if (!p00 || !p10 || !p01 || !p11) return null;
+    var oxTop = p00.ox + (p10.ox - p00.ox) * tx;
+    var oxBot = p01.ox + (p11.ox - p01.ox) * tx;
+    var oyTop = p00.oy + (p10.oy - p00.oy) * tx;
+    var oyBot = p01.oy + (p11.oy - p01.oy) * tx;
+    return {
+      ox: oxTop + (oxBot - oxTop) * ty,
+      oy: oyTop + (oyBot - oyTop) * ty
+    };
+  }
+
+  function applyTrackedTagOffset(det, tagId, x, y, mapWidth, mapHeight, offsetMode, uv) {
     if (!offsetMode || !isFinite(tagId) || tagId < 10 || tagId > 30) {
       return { x: x, y: y };
     }
 
     var ox = offsetMode === 'trigger' ? state.apriltagTriggerTrackingOffsetX : state.apriltagTrackingOffsetX;
     var oy = offsetMode === 'trigger' ? state.apriltagTriggerTrackingOffsetY : state.apriltagTrackingOffsetY;
-    if (!ox && !oy) {
-      return { x: x, y: y };
-    }
 
-    var compressionPct = clamp(state.apriltagOffsetBottomCompressionPct, 0, 60);
-    if (compressionPct > 0 && mapHeight > 0) {
-      var yNorm = clamp(y / mapHeight, 0, 1);
-      var compressionAtY = (compressionPct / 100) * yNorm;
-      var scaleAtY = 1 - compressionAtY;
-      ox *= scaleAtY;
-      oy *= scaleAtY;
-    }
-
-    if (det && det.corners && det.corners.length >= 4) {
-      var mappedCorners = [];
-      for (var ci = 0; ci < 4; ci++) {
-        var corner = det.corners[ci];
-        if (!corner) continue;
-        var mapped = applyHomography(state.surfaceHomography, corner.x, corner.y);
-        mappedCorners[ci] = mapped || null;
-      }
-
-      function buildUnitVector(aIndex, bIndex) {
-        var a = mappedCorners[aIndex];
-        var b = mappedCorners[bIndex];
-        if (!a || !b) return null;
-        var vx = (b.x - a.x) * mapWidth;
-        var vy = (b.y - a.y) * mapHeight;
-        var len = Math.hypot(vx, vy);
-        if (!isFinite(len) || len <= 1e-6) return null;
-        return { x: vx / len, y: vy / len };
-      }
-
-      function mergeAlignedUnitVectors(vectors) {
-        var base = null;
-        var sumX = 0;
-        var sumY = 0;
-        for (var vi = 0; vi < vectors.length; vi++) {
-          var vec = vectors[vi];
-          if (!vec) continue;
-          if (!base) {
-            base = vec;
-          } else {
-            var dot = vec.x * base.x + vec.y * base.y;
-            if (dot < 0) {
-              vec = { x: -vec.x, y: -vec.y };
-            }
-          }
-          sumX += vec.x;
-          sumY += vec.y;
+    if (offsetMode === 'primary') {
+      var interp = getPrimaryOffsetFromGrid(uv);
+      if (interp) {
+        ox = interp.ox;
+        oy = interp.oy;
+      } else {
+        var compressionPct = clamp(state.apriltagOffsetBottomCompressionPct, 0, 60);
+        if (compressionPct > 0 && uv && isFinite(uv.y)) {
+          var yNorm = clamp(uv.y, 0, 1);
+          var compressionAtY = (compressionPct / 100) * yNorm;
+          var scaleAtY = 1 - compressionAtY;
+          ox *= scaleAtY;
+          oy *= scaleAtY;
         }
-        var mag = Math.hypot(sumX, sumY);
-        if (!isFinite(mag) || mag <= 1e-6) return null;
-        return { x: sumX / mag, y: sumY / mag };
-      }
-
-      var xAxis = mergeAlignedUnitVectors([
-        buildUnitVector(0, 1),
-        buildUnitVector(3, 2)
-      ]);
-      var yAxis = mergeAlignedUnitVectors([
-        buildUnitVector(0, 3),
-        buildUnitVector(1, 2)
-      ]);
-      if (xAxis && yAxis) {
-        return {
-          x: x + ox * xAxis.x + oy * yAxis.x,
-          y: y + ox * xAxis.y + oy * yAxis.y
-        };
       }
     }
 
+    if (!ox && !oy) return { x: x, y: y };
+
+    var axes = buildTagAxesMap(det, mapWidth, mapHeight);
+    if (axes) {
+      return {
+        x: x + ox * axes.xAxis.x + oy * axes.yAxis.x,
+        y: y + ox * axes.xAxis.y + oy * axes.yAxis.y
+      };
+    }
     return { x: x + ox, y: y + oy };
   }
 
@@ -3758,6 +3875,194 @@ export function initApp() {
     dom.trackingOffsetCompressionValueEl.textContent = String(Math.round(state.apriltagOffsetBottomCompressionPct)) + '%';
     saveNumberSetting('apriltagOffsetBottomCompressionPct', state.apriltagOffsetBottomCompressionPct);
   });
+
+  function clearPrimaryOffsetCalibOverlay() {
+    for (var i = 0; i < primaryOffsetCalibPointEls.length; i++) {
+      var el = primaryOffsetCalibPointEls[i];
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    }
+    primaryOffsetCalibPointEls = [];
+  }
+
+  function renderPrimaryOffsetCalibOverlay() {
+    clearPrimaryOffsetCalibOverlay();
+    if (!state.apriltagPrimaryOffsetCalibActive) return;
+    if (!dom.mapViewEl) return;
+    var w = dom.mapViewEl.offsetWidth;
+    var h = dom.mapViewEl.offsetHeight;
+    if (!w || !h) return;
+    for (var i = 0; i < PRIMARY_OFFSET_GRID_POINTS_UV.length; i++) {
+      var p = PRIMARY_OFFSET_GRID_POINTS_UV[i];
+      var el = document.createElement('div');
+      el.className = 'tracking-offset-calib-point';
+      if (i === state.apriltagPrimaryOffsetCalibIndex) {
+        el.classList.add('tracking-offset-calib-point--active');
+      } else if (Array.isArray(state.apriltagPrimaryOffsetGrid) && state.apriltagPrimaryOffsetGrid[i]) {
+        el.classList.add('tracking-offset-calib-point--done');
+      }
+      el.style.left = String(p.u * w) + 'px';
+      el.style.top = String(p.v * h) + 'px';
+      el.textContent = String(i + 1);
+      dom.mapViewEl.appendChild(el);
+      primaryOffsetCalibPointEls.push(el);
+    }
+  }
+
+  function findPrimaryCalibrationDetection() {
+    var dets = Array.isArray(state.lastApriltagDetections) ? state.lastApriltagDetections : [];
+    if (dets.length < 1) return null;
+    var byId = {};
+    for (var i = 0; i < dets.length; i++) {
+      var d = dets[i];
+      if (!d || !d.center) continue;
+      var id = parseInt(d.id, 10);
+      if (!isFinite(id)) continue;
+      byId[id] = d;
+    }
+    if (Array.isArray(state.stage3ParticipantTagIds)) {
+      for (var j = 0; j < state.stage3ParticipantTagIds.length; j++) {
+        var pid = parseInt(state.stage3ParticipantTagIds[j], 10);
+        if (!isFinite(pid)) continue;
+        if (byId[pid]) return byId[pid];
+      }
+    }
+    for (var k = 0; k < dets.length; k++) {
+      var det = dets[k];
+      var detId = parseInt(det && det.id, 10);
+      if (!isFinite(detId) || detId < 10 || detId > 30) continue;
+      if (det && det.center) return det;
+    }
+    return null;
+  }
+
+  function startPrimaryOffset9PointCalibration() {
+    if (!state.surfaceHomography) {
+      setError('Calibrate surface first (corners/homography) before 9-point offset.');
+      return;
+    }
+    if (state.stage !== 3) {
+      setError('Open Stage 3 map view before starting 9-point offset calibration.');
+      return;
+    }
+    if (state.viewMode !== 'map') {
+      dom.viewToggleEl.checked = true;
+      setViewMode('map');
+    }
+    state.apriltagPrimaryOffsetCalibActive = true;
+    state.apriltagPrimaryOffsetCalibIndex = 0;
+    state.apriltagPrimaryOffsetGrid = new Array(9);
+    setPrimaryOffsetCalibUiEnabled(true);
+    updatePrimaryOffsetCalibrationStatus();
+    renderPrimaryOffsetCalibOverlay();
+    setError('9-point offset started. Put tool TIP on highlighted point and press S (or Capture).');
+  }
+
+  function stopPrimaryOffset9PointCalibration() {
+    state.apriltagPrimaryOffsetCalibActive = false;
+    state.apriltagPrimaryOffsetCalibIndex = 0;
+    setPrimaryOffsetCalibUiEnabled(false);
+    updatePrimaryOffsetCalibrationStatus();
+    clearPrimaryOffsetCalibOverlay();
+  }
+
+  function clearPrimaryOffset9PointCalibration() {
+    stopPrimaryOffset9PointCalibration();
+    state.apriltagPrimaryOffsetGrid = null;
+    clearPrimaryOffsetGridFromStorage();
+    updatePrimaryOffsetCalibrationStatus();
+    setError('Primary 9-point offset cleared.');
+  }
+
+  function capturePrimaryOffset9Point() {
+    if (!state.apriltagPrimaryOffsetCalibActive) return;
+    if (!state.surfaceHomography) {
+      setError('Surface homography missing. Recalibrate surface first.');
+      return;
+    }
+    var det = findPrimaryCalibrationDetection();
+    if (!det || !det.center) {
+      setError('No primary AprilTag detected. Show the primary tag and try again.');
+      return;
+    }
+    var mapW = dom.mapViewEl ? dom.mapViewEl.offsetWidth : 0;
+    var mapH = dom.mapViewEl ? dom.mapViewEl.offsetHeight : 0;
+    if (!mapW || !mapH) {
+      setError('Map view size unavailable. Try again.');
+      return;
+    }
+    var uv = applyHomography(state.surfaceHomography, det.center.x, det.center.y);
+    if (!uv) {
+      setError('Could not project detected tag onto map. Try again.');
+      return;
+    }
+
+    var pointIdx = state.apriltagPrimaryOffsetCalibIndex;
+    var targetUv = PRIMARY_OFFSET_GRID_POINTS_UV[pointIdx];
+    var currentX = uv.x * mapW;
+    var currentY = uv.y * mapH;
+    var targetX = targetUv.u * mapW;
+    var targetY = targetUv.v * mapH;
+    // We calibrate the tag-center correction vector (where the tag center should move),
+    // so the stored local offset must point from target -> current in map space.
+    var dx = currentX - targetX;
+    var dy = currentY - targetY;
+
+    var ox = dx;
+    var oy = dy;
+    var axes = buildTagAxesMap(det, mapW, mapH);
+    if (axes) {
+      ox = dx * axes.xAxis.x + dy * axes.xAxis.y;
+      oy = dx * axes.yAxis.x + dy * axes.yAxis.y;
+    }
+
+    if (!Array.isArray(state.apriltagPrimaryOffsetGrid) || state.apriltagPrimaryOffsetGrid.length !== 9) {
+      state.apriltagPrimaryOffsetGrid = new Array(9);
+    }
+    state.apriltagPrimaryOffsetGrid[pointIdx] = { ox: ox, oy: oy };
+
+    if (pointIdx >= 8) {
+      stopPrimaryOffset9PointCalibration();
+      savePrimaryOffsetGridToStorage(state.apriltagPrimaryOffsetGrid);
+      updatePrimaryOffsetCalibrationStatus();
+      setError('9-point offset calibration complete. Primary offset now adapts across the full map.');
+      return;
+    }
+
+    state.apriltagPrimaryOffsetCalibIndex = pointIdx + 1;
+    updatePrimaryOffsetCalibrationStatus();
+    renderPrimaryOffsetCalibOverlay();
+    setError('Captured point ' + String(pointIdx + 1) + '/9. Move to point ' + String(state.apriltagPrimaryOffsetCalibIndex + 1) + ' and capture.');
+  }
+
+  dom.trackingOffset9ptBtnEl.addEventListener('click', function() {
+    if (state.apriltagPrimaryOffsetCalibActive) stopPrimaryOffset9PointCalibration();
+    else startPrimaryOffset9PointCalibration();
+  });
+
+  dom.trackingOffset9ptCaptureBtnEl.addEventListener('click', function() {
+    capturePrimaryOffset9Point();
+  });
+
+  dom.trackingOffset9ptClearBtnEl.addEventListener('click', function() {
+    clearPrimaryOffset9PointCalibration();
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (!state.apriltagPrimaryOffsetCalibActive) return;
+    if (e.repeat) return;
+    var target = e.target;
+    if (target) {
+      var tag = String(target.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return;
+    }
+    var key = String(e.key || '').toLowerCase();
+    if (key !== 's') return;
+    e.preventDefault();
+    capturePrimaryOffset9Point();
+  });
+
+  setPrimaryOffsetCalibUiEnabled(false);
+  updatePrimaryOffsetCalibrationStatus();
 
   // ============== Helper Functions ==============
 
@@ -3815,6 +4120,9 @@ export function initApp() {
     }
     if (vgaModeActive && newStage !== 3) {
       setVgaMode(false);
+    }
+    if (state.apriltagPrimaryOffsetCalibActive && newStage !== 3) {
+      stopPrimaryOffset9PointCalibration();
     }
     state.stage = newStage;
 
@@ -3915,6 +4223,9 @@ export function initApp() {
       updateStage4MapInteractivity();
       updateStickerMappingForCurrentView();
     } else {
+      if (state.apriltagPrimaryOffsetCalibActive) {
+        stopPrimaryOffset9PointCalibration();
+      }
       document.body.classList.remove('map-view-active');
       setBackendFeedActive(true);
       dom.mapViewEl.classList.add('hidden');
@@ -3971,6 +4282,7 @@ export function initApp() {
     var visible = state.stage === 3 && state.viewMode === 'map' && !vgaModeActive;
     dom.trackingOffsetControlsEl.classList.toggle('hidden', !visible);
     dom.trackingOffsetControlsEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    updatePrimaryOffsetCalibrationStatus();
     updateStage3WorkspaceVisibility();
   }
 
@@ -4491,10 +4803,7 @@ export function initApp() {
     return { x: cx, y: cy };
   }
 
-  function getApriltagTrackingPoint(det, preferTip) {
-    if (preferTip && det && det.tip && isFinite(det.tip.x) && isFinite(det.tip.y)) {
-      return { x: det.tip.x, y: det.tip.y };
-    }
+  function getApriltagTrackingPoint(det) {
     if (det && det.center && isFinite(det.center.x) && isFinite(det.center.y)) {
       return { x: det.center.x, y: det.center.y };
     }
@@ -5045,10 +5354,9 @@ export function initApp() {
       var canProjectToMap = !!state.surfaceHomography && mapW > 0 && mapH > 0;
       var maxExtrapolation = 1.5;
 
-      function projectTagDetectionToMap(detByTag, tagId, offsetMode, options) {
+      function projectTagDetectionToMap(detByTag, tagId, offsetMode) {
         if (!detByTag || !canProjectToMap) return null;
-        var preferTip = !!(options && options.preferTip);
-        var sourcePoint = getApriltagTrackingPoint(detByTag, preferTip);
+        var sourcePoint = getApriltagTrackingPoint(detByTag);
         if (!sourcePoint) return null;
         var uv = applyHomography(state.surfaceHomography, sourcePoint.x, sourcePoint.y);
         if (!uv || uv.x < -maxExtrapolation || uv.x > 1 + maxExtrapolation || uv.y < -maxExtrapolation || uv.y > 1 + maxExtrapolation) {
@@ -5057,7 +5365,7 @@ export function initApp() {
 
         var x = viewRect.left + uv.x * mapW;
         var y = viewRect.top + uv.y * mapH;
-        return applyTrackedTagOffset(detByTag, tagId, x, y, mapW, mapH, offsetMode);
+        return applyTrackedTagOffset(detByTag, tagId, x, y, mapW, mapH, offsetMode, uv);
       }
 
       if (Array.isArray(state.stage3ParticipantTagIds)) {
@@ -5076,13 +5384,13 @@ export function initApp() {
                 isTouch: touchInfo ? !!touchInfo.isTouch : null
               };
 
-              var projectedPrimaryCenter = projectTagDetectionToMap(primaryDet, primaryTagId, null, { preferTip: false });
+              var projectedPrimaryCenter = projectTagDetectionToMap(primaryDet, primaryTagId, null);
               if (projectedPrimaryCenter) {
                 point.primaryCenterX = projectedPrimaryCenter.x;
                 point.primaryCenterY = projectedPrimaryCenter.y;
               }
 
-              var projectedPrimary = projectTagDetectionToMap(primaryDet, primaryTagId, 'primary', { preferTip: true });
+              var projectedPrimary = projectTagDetectionToMap(primaryDet, primaryTagId, 'primary');
               if (projectedPrimary) {
                 point.x = projectedPrimary.x;
                 point.y = projectedPrimary.y;
@@ -5093,7 +5401,7 @@ export function initApp() {
 
           if (isFinite(primaryTagId) && isFinite(triggerTagId)) {
             var triggerDet = detectionById[triggerTagId];
-            var projectedTrigger = projectTagDetectionToMap(triggerDet, triggerTagId, 'trigger', { preferTip: false });
+            var projectedTrigger = projectTagDetectionToMap(triggerDet, triggerTagId, 'trigger');
             if (projectedTrigger) {
               apriltagTriggerPoints.push({
                 handId: String(primaryTagId),
@@ -5181,9 +5489,11 @@ export function initApp() {
 
     // Map AprilTag debug dots for configured participant IDs
     if (isMapViewWithHomography) {
+      if (state.apriltagPrimaryOffsetCalibActive) renderPrimaryOffsetCalibOverlay();
       updateMapApriltagDots(state.lastApriltagDetections || []);
       updateMapTagMasks(state.lastApriltagDetections || []);
     } else {
+      clearPrimaryOffsetCalibOverlay();
       setMapApriltagDotsVisible(false);
       updateMapTagMasks([]);
     }
@@ -5264,7 +5574,7 @@ export function initApp() {
         continue;
       }
 
-      var sourcePoint = getApriltagTrackingPoint(det, role === 'primary');
+      var sourcePoint = getApriltagTrackingPoint(det);
       if (!sourcePoint) {
         dot.classList.add('hidden');
         continue;
@@ -5278,7 +5588,7 @@ export function initApp() {
 
       var x = uv.x * w;
       var y = uv.y * h;
-      var projected = applyTrackedTagOffset(det, tagId, x, y, w, h, role === 'trigger' ? 'trigger' : 'primary');
+      var projected = applyTrackedTagOffset(det, tagId, x, y, w, h, role === 'trigger' ? 'trigger' : 'primary', uv);
       x = projected.x;
       y = projected.y;
       dot.style.transform = 'translate(' + (x - 7) + 'px, ' + (y - 7) + 'px)';

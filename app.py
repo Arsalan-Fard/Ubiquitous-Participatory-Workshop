@@ -63,8 +63,6 @@ latest_frame_width = 0
 # Camera calibration for 6DoF pose estimation
 camera_params = None       # (fx, fy, cx, cy) tuple
 tag_size = 0.4            # tag size in meters (default 4cm)
-PEN_TIP_OFFSET_TAG = np.array([-0.1463, 0.0021, 0.0043], dtype=np.float64)
-PEN_TIP_FIT_RMS_MM = 8.25
 
 # Surface plane for touch detection (ax + by + cz + d = 0)
 surface_plane_lock = threading.Lock()
@@ -329,34 +327,8 @@ def _map_detection(det):
       "z": float(pose_t[2]),
     }
 
-    # Estimate pen tip using fixed calibration offset in tag-local coordinates.
-    tip_cam = None
-    if pose_r is not None:
-      try:
-        tip_cam = pose_r @ PEN_TIP_OFFSET_TAG + pose_t
-        if not np.all(np.isfinite(tip_cam)):
-          tip_cam = None
-      except Exception:
-        tip_cam = None
-
-    if tip_cam is not None:
-      result["tipPose"] = {
-        "x": float(tip_cam[0]),
-        "y": float(tip_cam[1]),
-        "z": float(tip_cam[2]),
-      }
-
-      if camera_params is not None:
-        fx, fy, cx, cy = camera_params
-        z = float(tip_cam[2])
-        if z > 1e-6:
-          tip_x = float((float(fx) * float(tip_cam[0]) / z) + float(cx))
-          tip_y = float((float(fy) * float(tip_cam[1]) / z) + float(cy))
-          if np.isfinite(tip_x) and np.isfinite(tip_y):
-            result["tip"] = {"x": tip_x, "y": tip_y}
-
-    # Compute touch if surface plane is calibrated.
-    pose_for_touch = tip_cam if tip_cam is not None else pose_t
+    # Compute touch if surface plane is calibrated (use tag center pose).
+    pose_for_touch = pose_t
     with surface_plane_lock:
       plane = surface_plane
     if plane is not None:
@@ -1370,11 +1342,6 @@ if __name__ == "__main__":
       camera_params = (fx, fy, cx, cy)
       print(f"[6DoF] Camera calibration loaded: fx={fx:.1f} fy={fy:.1f} cx={cx:.1f} cy={cy:.1f}")
       print(f"[6DoF] Tag size: {tag_size*100:.1f}cm")
-      print(
-        "[6DoF] Tip offset loaded: "
-        f"({PEN_TIP_OFFSET_TAG[0]:.4f}, {PEN_TIP_OFFSET_TAG[1]:.4f}, {PEN_TIP_OFFSET_TAG[2]:.4f}) m, "
-        f"rms={PEN_TIP_FIT_RMS_MM:.2f} mm"
-      )
     else:
       print(f"[6DoF] WARNING: calibration file not found: {calib_path}")
 

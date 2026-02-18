@@ -160,6 +160,17 @@
                             </div>
                             <input id="trackingOffsetCompressionSlider" class="tracking-offset-controls__slider" type="range" min="0" max="60" step="1" value="0" aria-label="Linear bottom compression for AprilTag offsets in percent" />
                         </div>
+                        <div class="tracking-offset-controls__item tracking-offset-controls__item--wide">
+                            <div class="tracking-offset-controls__header">
+                                <span class="tracking-offset-controls__label">Primary 9-Point Offset</span>
+                                <span id="trackingOffset9ptStatus" class="tracking-offset-controls__value">Not calibrated</span>
+                            </div>
+                            <div class="tracking-offset-controls__actions">
+                                <button id="trackingOffset9ptBtn" class="btn btn-secondary tracking-offset-controls__action-btn" type="button">Start 9pt</button>
+                                <button id="trackingOffset9ptCaptureBtn" class="btn btn-secondary tracking-offset-controls__action-btn" type="button" disabled>Capture (S)</button>
+                                <button id="trackingOffset9ptClearBtn" class="btn btn-secondary tracking-offset-controls__action-btn" type="button">Clear</button>
+                            </div>
+                        </div>
                     </div>
                     <div id="uiSetupPanel" class="ui-setup-panel hidden" aria-hidden="true"></div>
                 </section>
