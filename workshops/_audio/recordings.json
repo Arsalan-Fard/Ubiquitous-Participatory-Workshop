@@ -15,8 +15,23 @@
       "savedTimestampMs": 1771320876125,
       "savedTimestampIso": "2026-02-17T09:34:36.125Z",
       "sizeBytes": 61985
+    },
+    {
+      "recordingId": "rec-ctrl-19jmxcbz-mligee33-mls9siot-khnbb3",
+      "participantId": 13,
+      "clientId": "ctrl-19jmxcbz-mligee33",
+      "triggerTagId": 13,
+      "fileName": "p13-s20260218T165219229Z-e20260218T165224993Z.webm",
+      "relativePath": "workshops/_audio/p13-s20260218T165219229Z-e20260218T165224993Z.webm",
+      "startTimestampMs": 1771433539229,
+      "endTimestampMs": 1771433544993,
+      "startTimestampIso": "2026-02-18T16:52:19.229Z",
+      "endTimestampIso": "2026-02-18T16:52:24.993Z",
+      "savedTimestampMs": 1771433545010,
+      "savedTimestampIso": "2026-02-18T16:52:25.010Z",
+      "sizeBytes": 81305
     }
   ],
-  "updatedTimestampMs": 1771320876125,
-  "updatedTimestampIso": "2026-02-17T09:34:36.125Z"
+  "updatedTimestampMs": 1771433545010,
+  "updatedTimestampIso": "2026-02-18T16:52:25.010Z"
 }

@@ -501,7 +501,7 @@ export function applyRemoteApriltagToolOverrides(remoteToolByTriggerTagId) {
         } else if (wantedRemoteToolType === 'note') {
           remoteToolEl = ensureStickerTemplate('note', triggerId);
         } else if (wantedRemoteToolType === 'selection') {
-          remoteToolEl = findSelectionToolElement();
+          remoteToolEl = ensureSelectionTemplate(triggerId);
         } else if (wantedRemoteToolType === 'draw') {
           var drawColor = (entry && entry.lastDrawColor) ? entry.lastDrawColor : DEFAULT_DRAW_COLOR;
           remoteToolEl = ensureDrawTemplate(triggerId, drawColor);
@@ -1318,6 +1318,33 @@ function ensureEraserTemplate(triggerTagId) {
   var el = document.createElement('div');
   el.className = 'ui-eraser';
   el.dataset.uiType = 'eraser';
+  el.dataset.radialTemplate = '1';
+  if (triggerId) el.dataset.triggerTagId = String(triggerId);
+  el.style.position = 'absolute';
+  el.style.left = '0px';
+  el.style.top = '0px';
+  el.style.display = 'none';
+  overlayEl.appendChild(el);
+  return el;
+}
+
+function ensureSelectionTemplate(triggerTagId) {
+  var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
+  if (!overlayEl) return null;
+  var triggerId = normalizeTagId(triggerTagId);
+
+  var templateEls = overlayEl.querySelectorAll('.ui-selection[data-radial-template="1"]');
+  for (var i = 0; i < templateEls.length; i++) {
+    var existing = templateEls[i];
+    if (!existing || !existing.dataset) continue;
+    var existingTriggerId = normalizeTagId(existing.dataset.triggerTagId);
+    if ((existingTriggerId || '') !== (triggerId || '')) continue;
+    return existing;
+  }
+
+  var el = document.createElement('div');
+  el.className = 'ui-selection';
+  el.dataset.uiType = 'selection';
   el.dataset.radialTemplate = '1';
   if (triggerId) el.dataset.triggerTagId = String(triggerId);
   el.style.position = 'absolute';

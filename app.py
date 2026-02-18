@@ -39,7 +39,7 @@ controller_state_seq = 0
 CONTROLLER_NOTE_TEXT_MAX_LEN = 5000
 CONTROLLER_VALID_COLORS = frozenset({"red", "green", "blue", "yellow", "orange", "purple", "black", "white"})
 CONTROLLER_HEARTBEAT_TTL_SEC = 15.0
-CONTROLLER_SUPPORTED_TOOLS = frozenset({"draw", "erase", "note"})
+CONTROLLER_SUPPORTED_TOOLS = frozenset({"draw", "eraser", "selection", "note"})
 
 # Flask app and shutdown
 app = Flask(__name__)
@@ -179,6 +179,18 @@ def sanitize_controller_color(raw):
   return ""
 
 
+def sanitize_controller_tool(raw):
+  tool = str(raw or "draw").strip().lower()
+  # Backward compatibility aliases
+  if tool == "erase":
+    tool = "eraser"
+  if tool == "select":
+    tool = "selection"
+  if tool not in CONTROLLER_SUPPORTED_TOOLS:
+    return None
+  return tool
+
+
 def get_controller_state_snapshot(now_ts=None):
   global controller_state_seq
   now = float(now_ts if now_ts is not None else time.time())
@@ -228,8 +240,8 @@ def get_controller_state_snapshot(now_ts=None):
       if not client_state.get("active"):
         continue
 
-      tool = str(client_state.get("tool") or "draw").strip().lower()
-      if tool not in CONTROLLER_SUPPORTED_TOOLS:
+      tool = sanitize_controller_tool(client_state.get("tool"))
+      if tool is None:
         continue
 
       previous = active_tool_by_trigger.get(trigger_tag_id)
@@ -247,8 +259,8 @@ def get_controller_state_snapshot(now_ts=None):
     active_tool_by_trigger_tag_id = {}
     for trigger_tag_id in sorted(active_tool_by_trigger.keys()):
       trigger_key = str(int(trigger_tag_id))
-      tool = str(active_tool_by_trigger[trigger_tag_id].get("tool") or "").strip().lower()
-      if tool not in CONTROLLER_SUPPORTED_TOOLS:
+      tool = sanitize_controller_tool(active_tool_by_trigger[trigger_tag_id].get("tool"))
+      if tool is None:
         continue
       active_tool_by_trigger_tag_id[trigger_key] = tool
       if tool == "draw":
@@ -618,8 +630,8 @@ def api_controller_heartbeat():
   if not client_id:
     return jsonify({"ok": False, "error": "invalid_client_id"}), 400
 
-  tool = str(payload.get("tool") or "draw").strip().lower()
-  if tool not in CONTROLLER_SUPPORTED_TOOLS:
+  tool = sanitize_controller_tool(payload.get("tool"))
+  if tool is None:
     return jsonify({"ok": False, "error": "invalid_tool"}), 400
 
   active = bool(payload.get("active"))
