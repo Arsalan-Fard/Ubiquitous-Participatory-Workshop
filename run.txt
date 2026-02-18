@@ -1,3 +1,6 @@
 py -3.13 app.py --camera-calibration camera_calibration.json --tag-size 0.028
 # Optional manual override:
 # py -3.13 app.py --source http://10.188.133.164:8080/video --camera-calibration camera_calibration.json --tag-size 0.028
+
+cloudflared tunnel --url http://localhost:5000 --protocol http2
+py -3.13 app.py --source 0 --host 0.0.0.0 --port 5000

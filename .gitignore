@@ -1,2 +1,6 @@
 # Windows reserved device name - do not track (causes git add errors)
 nul
+
+# Auto-generated self-signed TLS cert
+cert.pem
+key.pem

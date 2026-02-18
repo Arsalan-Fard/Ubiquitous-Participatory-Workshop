@@ -190,6 +190,7 @@ var audioRecordingActive = false;
 var audioRecordingId = '';
 var audioRecordingStartedAtMs = 0;
 var audioRecordingParticipantTagId = 0;
+var audioRecordingLastErrorReason = '';
 
 function createRecordingId(clientId) {
   var safeClient = String(clientId || '').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 24) || 'client';
@@ -200,12 +201,20 @@ function createRecordingId(clientId) {
 
 function startAudioRecording(clientId) {
   if (audioRecordingActive) return Promise.resolve(false);
+  audioRecordingLastErrorReason = '';
   audioClientId = clientId;
   audioRecordingId = createRecordingId(clientId);
   audioRecordingStartedAtMs = Date.now();
   audioRecordingParticipantTagId = parseInt(audioTriggerTagId, 10) || 0;
 
+  if (!window.isSecureContext) {
+    audioRecordingLastErrorReason = 'insecure_context';
+    console.warn('Audio recording requires HTTPS (or localhost).');
+    return Promise.resolve(false);
+  }
+
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    audioRecordingLastErrorReason = 'unsupported_browser';
     console.warn('Audio recording not supported in this browser');
     return Promise.resolve(false);
   }
@@ -216,6 +225,7 @@ function startAudioRecording(clientId) {
       if (typeof MediaRecorder.isTypeSupported === 'function' && !MediaRecorder.isTypeSupported(mimeType)) {
         mimeType = 'audio/webm';
         if (!MediaRecorder.isTypeSupported(mimeType)) {
+          audioRecordingLastErrorReason = 'unsupported_mime';
           mimeType = '';
         }
       }
@@ -245,6 +255,9 @@ function startAudioRecording(clientId) {
       return true;
     })
     .catch(function(err) {
+      if (err && err.name === 'NotAllowedError') audioRecordingLastErrorReason = 'permission_denied';
+      else if (err && err.name === 'NotFoundError') audioRecordingLastErrorReason = 'mic_not_found';
+      else audioRecordingLastErrorReason = 'mic_error';
       console.warn('Microphone access denied:', err);
       return false;
     });
@@ -672,8 +685,22 @@ export function initControllerMode() {
   // Initialize audio trigger tag ID
   audioTriggerTagId = parseInt(triggerSelectEl.value, 10) || 0;
 
+  var canLiveRecord = !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  if (!canLiveRecord) {
+    recLabelEl.textContent = 'Need HTTPS';
+    recDotEl.style.display = 'none';
+    recBtnEl.title = 'Microphone recording requires HTTPS (or localhost)';
+  }
+
   // Record audio toggle button
   recBtnEl.addEventListener('click', function() {
+    if (!canLiveRecord) {
+      recLabelEl.textContent = 'Need HTTPS';
+      setTimeout(function() {
+        if (!audioRecordingActive) recLabelEl.textContent = 'Need HTTPS';
+      }, 1200);
+      return;
+    }
     if (!audioRecordingActive) {
       // Start recording
       recBtnEl.disabled = true;
@@ -684,7 +711,13 @@ export function initControllerMode() {
           recBtnEl.classList.add('controller-rec-btn--recording');
           recLabelEl.textContent = 'Stop';
         } else {
-          recLabelEl.textContent = 'Record';
+          if (audioRecordingLastErrorReason === 'insecure_context') recLabelEl.textContent = 'Need HTTPS';
+          else if (audioRecordingLastErrorReason === 'permission_denied') recLabelEl.textContent = 'Mic Blocked';
+          else if (audioRecordingLastErrorReason === 'mic_not_found') recLabelEl.textContent = 'No Mic';
+          else recLabelEl.textContent = 'Record Failed';
+          setTimeout(function() {
+            if (!audioRecordingActive) recLabelEl.textContent = 'Record';
+          }, 1800);
         }
       });
     } else {

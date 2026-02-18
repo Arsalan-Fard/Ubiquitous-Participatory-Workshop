@@ -1,6 +1,7 @@
 import argparse
 import atexit
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -1340,6 +1341,7 @@ if __name__ == "__main__":
     ),
   )
   parser.add_argument("--tag-size", type=float, default=0.026, help="AprilTag physical size in meters (default 0.04 = 4cm)")
+  parser.add_argument("--https", action="store_true", help="Serve over HTTPS (auto-generates self-signed cert if needed)")
   args = parser.parse_args()
 
   # Load camera calibration for 6DoF pose estimation
@@ -1386,4 +1388,48 @@ if __name__ == "__main__":
 
   start_workers(jpeg_quality=max(1, min(100, int(args.jpeg_quality))), apriltag_fps=max(1.0, float(args.apriltag_fps)))
 
-  app.run(host=args.host, port=args.port, debug=False, threaded=True)
+  ssl_ctx = None
+  if args.https:
+    cert_file = ROOT_DIR / "cert.pem"
+    key_file = ROOT_DIR / "key.pem"
+    if not cert_file.is_file() or not key_file.is_file():
+      print("[HTTPS] Generating self-signed certificate ...")
+      from cryptography import x509
+      from cryptography.x509.oid import NameOID
+      from cryptography.hazmat.primitives import hashes, serialization
+      from cryptography.hazmat.primitives.asymmetric import rsa
+      import datetime
+      private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+      subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "workshop-local")])
+      san_entries = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.IPv4Address("127.0.0.1"))]
+      try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+          addr = info[4][0]
+          if addr != "127.0.0.1":
+            san_entries.append(x509.IPAddress(ipaddress.IPv4Address(addr)))
+      except Exception:
+        pass
+      cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.utcnow())
+        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=365))
+        .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
+        .sign(private_key, hashes.SHA256())
+      )
+      key_file.write_bytes(private_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption(),
+      ))
+      cert_file.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+      print(f"[HTTPS] Saved {cert_file} and {key_file}")
+    import ssl as _ssl
+    ssl_ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+    ssl_ctx.load_cert_chain(str(cert_file), str(key_file))
+    print(f"[HTTPS] Serving on https://{args.host}:{args.port}")
+
+  app.run(host=args.host, port=args.port, debug=False, threaded=True, ssl_context=ssl_ctx)
