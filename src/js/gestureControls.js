@@ -514,6 +514,17 @@ export function applyRemoteApriltagToolOverrides(remoteToolByTriggerTagId) {
         continue;
       }
 
+      // Apply controller-selected color to draw color and sticker template
+      var remoteColorMap = state.remoteControllerColorByTriggerTagId;
+      var remoteColor = (remoteColorMap && triggerId) ? (remoteColorMap[triggerId] || '') : '';
+      if (remoteColor) {
+        entry.lastDrawColor = remoteColor;
+        if (remoteToolEl && remoteToolEl.dataset) {
+          remoteToolEl.dataset.color = remoteColor;
+          if (remoteToolEl.style) remoteToolEl.style.background = remoteColor;
+        }
+      }
+
       // Set contact key so setApriltagActiveToolForHand doesn't downgrade to selection
       entry.lastTriggerContactKey = 'remote:' + wantedRemoteToolType;
       entry.activeLayerNavAction = '';
@@ -1242,8 +1253,8 @@ function ensureStickerTemplate(stickerType, triggerTagId) {
   if (stickerType === 'note') {
     el.className = 'ui-note';
     el.dataset.uiType = 'note';
-    el.dataset.color = '#ffc857';
-    el.style.background = '#ffc857';
+    el.dataset.color = '#2bb8ff';
+    el.style.background = '#2bb8ff';
     var iconEl = document.createElement('div');
     iconEl.className = 'ui-note__icon';
     iconEl.textContent = '\uD83D\uDCDD';

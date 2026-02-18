@@ -24,30 +24,6 @@ WORKSHOPS_DIR = ROOT_DIR / "workshops"
 WORKSHOP_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 CONTROLLER_CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 AUDIO_RECORDING_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-CONTROLLER_HEARTBEAT_TTL_SEC = 0.8
-CONTROLLER_SUPPORTED_TOOLS = {"draw", "note", "eraser", "selection"}
-CONTROLLER_NOTE_TEXT_MAX_LEN = 500
-
-app = Flask(__name__, static_folder=str(ROOT_DIR), static_url_path="")
-
-camera_lock = threading.Lock()
-frame_lock = threading.Lock()
-apriltag_lock = threading.Lock()
-stream_clients_lock = threading.Lock()
-controller_lock = threading.Lock()
-shutdown_event = threading.Event()
-
-camera = None
-camera_source = None
-camera_thread = None
-apriltag_thread = None
-apriltag_detector = None
-
-latest_frame = None
-latest_jpeg = None
-latest_frame_seq = 0
-latest_frame_updated_at = 0.0
-latest_frame_width = 0
 latest_frame_height = 0
 
 latest_apriltags = []
@@ -58,11 +34,37 @@ stream_clients = 0
 controller_clients = {}
 controller_state_seq = 0
 
+# Controller constants
+CONTROLLER_NOTE_TEXT_MAX_LEN = 5000
+CONTROLLER_VALID_COLORS = frozenset({"red", "green", "blue", "yellow", "orange", "purple", "black", "white"})
+CONTROLLER_HEARTBEAT_TTL_SEC = 15.0
+CONTROLLER_SUPPORTED_TOOLS = frozenset({"draw", "erase", "note"})
+
+# Flask app and shutdown
+app = Flask(__name__)
+shutdown_event = threading.Event()
+
+# Camera and frame state (protected by locks)
+camera = None
+camera_source = None
+camera_lock = threading.Lock()
+frame_lock = threading.Lock()
+controller_lock = threading.Lock()
+stream_clients_lock = threading.Lock()
+apriltag_lock = threading.Lock()
+camera_thread = None
+apriltag_thread = None
+latest_frame = None
+latest_jpeg = None
+latest_frame_seq = 0
+latest_frame_updated_at = 0.0
+latest_frame_width = 0
+
 # Camera calibration for 6DoF pose estimation
 camera_params = None       # (fx, fy, cx, cy) tuple
 tag_size = 0.4            # tag size in meters (default 4cm)
-PEN_TIP_OFFSET_TAG = np.array([0.0876, 0.0060, -0.0018], dtype=np.float64)
-PEN_TIP_FIT_RMS_MM = 56.32
+PEN_TIP_OFFSET_TAG = np.array([-0.1463, 0.0021, 0.0043], dtype=np.float64)
+PEN_TIP_FIT_RMS_MM = 8.25
 
 # Surface plane for touch detection (ax + by + cz + d = 0)
 surface_plane_lock = threading.Lock()
@@ -169,6 +171,13 @@ def sanitize_controller_note_finalize_tick(raw):
   return tick
 
 
+def sanitize_controller_color(raw):
+  val = str(raw or "").strip().lower()
+  if val in CONTROLLER_VALID_COLORS:
+    return val
+  return ""
+
+
 def get_controller_state_snapshot(now_ts=None):
   global controller_state_seq
   now = float(now_ts if now_ts is not None else time.time())
@@ -178,6 +187,7 @@ def get_controller_state_snapshot(now_ts=None):
     active_draw_triggers = set()
     active_tool_by_trigger = {}
     remote_note_state_by_trigger = {}
+    color_by_trigger = {}
     active_clients = 0
     last_updated_at = 0.0
 
@@ -194,6 +204,12 @@ def get_controller_state_snapshot(now_ts=None):
       trigger_tag_id = sanitize_controller_trigger_tag_id(client_state.get("triggerTagId"))
       if trigger_tag_id is None:
         continue
+
+      client_color = sanitize_controller_color(client_state.get("color"))
+      if client_color:
+        prev_color = color_by_trigger.get(trigger_tag_id)
+        if prev_color is None or updated_at >= float(prev_color.get("updatedAt", 0.0) or 0.0):
+          color_by_trigger[trigger_tag_id] = {"color": client_color, "updatedAt": float(updated_at)}
 
       note_text = sanitize_controller_note_text(client_state.get("noteText"))
       note_session_active = bool(client_state.get("noteSessionActive"))
@@ -247,6 +263,11 @@ def get_controller_state_snapshot(now_ts=None):
         "finalizeTick": int(note_state.get("finalizeTick") or 0),
       }
 
+    color_by_trigger_tag_id = {}
+    for trigger_tag_id in sorted(color_by_trigger.keys()):
+      trigger_key = str(int(trigger_tag_id))
+      color_by_trigger_tag_id[trigger_key] = str(color_by_trigger[trigger_tag_id].get("color") or "")
+
     return {
       "seq": int(controller_state_seq),
       "updatedAt": float(last_updated_at),
@@ -254,6 +275,7 @@ def get_controller_state_snapshot(now_ts=None):
       "activeToolByTriggerTagId": active_tool_by_trigger_tag_id,
       "remoteNoteStateByTriggerTagId": remote_note_state_by_trigger_tag_id,
       "activeDrawTriggerTagIds": sorted(active_draw_triggers),
+      "colorByTriggerTagId": color_by_trigger_tag_id,
     }
 
 
@@ -632,6 +654,7 @@ def api_controller_heartbeat():
   note_text = sanitize_controller_note_text(payload.get("noteText"))
   note_session_active = bool(payload.get("noteSessionActive"))
   note_finalize_tick = sanitize_controller_note_finalize_tick(payload.get("noteFinalizeTick"))
+  color = sanitize_controller_color(payload.get("color"))
 
   now = time.time()
   changed = False
@@ -645,6 +668,7 @@ def api_controller_heartbeat():
       "noteText": note_text,
       "noteSessionActive": bool(note_session_active),
       "noteFinalizeTick": int(note_finalize_tick),
+      "color": color,
       "updatedAt": float(now),
     }
     if (
@@ -654,6 +678,7 @@ def api_controller_heartbeat():
       or sanitize_controller_note_text(previous.get("noteText")) != next_state["noteText"]
       or bool(previous.get("noteSessionActive")) != next_state["noteSessionActive"]
       or sanitize_controller_note_finalize_tick(previous.get("noteFinalizeTick")) != next_state["noteFinalizeTick"]
+      or str(previous.get("color") or "") != (next_state["color"] or "")
     ):
       changed = True
     controller_clients[client_id] = next_state

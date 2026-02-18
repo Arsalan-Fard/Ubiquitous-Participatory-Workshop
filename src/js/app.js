@@ -4140,6 +4140,18 @@ export function initApp() {
       remoteDrawTriggerTagIds.push(parseInt(remoteTriggerTagId, 10));
     }
     state.remoteControllerDrawTriggerTagIds = remoteDrawTriggerTagIds;
+
+    // Extract per-trigger color from controller
+    var remoteColorByTriggerTagId = {};
+    if (payload.controller && payload.controller.colorByTriggerTagId && typeof payload.controller.colorByTriggerTagId === 'object') {
+      for (var rawColorTriggerTagId in payload.controller.colorByTriggerTagId) {
+        var parsedColorTriggerTagId = parseInt(rawColorTriggerTagId, 10);
+        if (!isFinite(parsedColorTriggerTagId) || parsedColorTriggerTagId < 1 || parsedColorTriggerTagId > 9999) continue;
+        var remoteColorVal = String(payload.controller.colorByTriggerTagId[rawColorTriggerTagId] || '').trim().toLowerCase();
+        if (remoteColorVal) remoteColorByTriggerTagId[String(parsedColorTriggerTagId)] = remoteColorVal;
+      }
+    }
+    state.remoteControllerColorByTriggerTagId = remoteColorByTriggerTagId;
     apriltagPollBackoffMs = 0;
     apriltagPollBlockedUntilMs = 0;
     apriltagBackoffNotified = false;

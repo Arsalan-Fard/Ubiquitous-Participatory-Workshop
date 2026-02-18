@@ -1,0 +1,2 @@
+# Windows reserved device name - do not track (causes git add errors)
+nul

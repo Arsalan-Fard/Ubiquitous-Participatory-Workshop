@@ -5,6 +5,14 @@ var CONTROLLER_AUDIO_UPLOAD_ENDPOINT = '/api/controller/audio';
 var CONTROLLER_AUDIO_UPLOAD_INTERVAL_MS = 30000; // upload audio chunk every 30s
 var CONTROLLER_NOTE_TEXT_MAX_LEN = 500;
 
+var CONTROLLER_COLORS = [
+  { color: '#000000', label: 'Black' },
+  { color: '#2bb8ff', label: 'Blue' },
+  { color: '#45d483', label: 'Green' },
+  { color: '#ff5b5b', label: 'Red' }
+];
+var CONTROLLER_DEFAULT_COLOR = '#2bb8ff';
+
 function getOrCreateClientId() {
   var existing = '';
   try {
@@ -28,19 +36,33 @@ function createStyles() {
     'body.controller-mode { margin: 0; min-height: 100vh; font-family: "Segoe UI", Tahoma, sans-serif; background: linear-gradient(160deg, #111827 0%, #1f2937 60%, #0b1220 100%); color: #f3f4f6; }',
     '.controller-root { max-width: 420px; min-height: 100vh; margin: 0 auto; padding: 28px 16px; display: grid; align-content: start; gap: 16px; justify-items: center; box-sizing: border-box; }',
     '.controller-title { font-size: 22px; font-weight: 700; letter-spacing: 0.2px; }',
+    '.controller-top-row { display: flex; gap: 12px; align-items: center; justify-content: center; width: 100%; max-width: 300px; }',
     '.controller-select { width: 120px; font-size: 24px; font-weight: 700; text-align: center; text-align-last: center; padding: 10px 8px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.24); background: rgba(17,24,39,0.8); color: #f9fafb; }',
-    '.controller-tool-grid { width: 204px; display: grid; grid-template-columns: repeat(2, 96px); gap: 12px; }',
-    '.controller-tool-row { width: 204px; }',
-    '.controller-tool-btn { border: 2px solid rgba(255, 255, 255, 0.85); background: rgba(255, 255, 255, 0.10); box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35); touch-action: none; user-select: none; -webkit-user-select: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; position: relative; overflow: hidden; color: #f9fafb; transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease; }',
-    '.controller-tool-btn--circle { width: 96px; height: 96px; border-radius: 50%; }',
-    '.controller-tool-btn--rect { width: 100%; height: 56px; border-radius: 14px; font-size: 22px; font-weight: 700; letter-spacing: 0.2px; }',
+    // Color row
+    '.controller-color-row { display: flex; gap: 10px; justify-content: center; }',
+    '.controller-color-btn { width: 48px; height: 48px; border-radius: 8px; border: 3px solid transparent; cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; transition: border-color 100ms ease, transform 100ms ease; padding: 0; }',
+    '.controller-color-btn:active { transform: scale(0.93); }',
+    '.controller-color-btn.is-selected { border-color: #ffffff; }',
+    // Tool grid
+    '.controller-tool-grid { width: 100%; max-width: 300px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }',
+    '.controller-tool-row { width: 100%; max-width: 300px; }',
+    // Tool button base
+    '.controller-tool-btn { border: 2px solid rgba(255, 255, 255, 0.85); background: rgba(255, 255, 255, 0.10); box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35); touch-action: none; user-select: none; -webkit-user-select: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 8px 0; position: relative; overflow: hidden; color: #f9fafb; transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease; border-radius: 16px; }',
     '.controller-tool-btn::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: radial-gradient(circle at center, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.58) 40%, rgba(255, 255, 255, 0.22) 68%, rgba(255, 255, 255, 0.02) 100%); opacity: 0; transition: opacity 80ms linear; }',
     '.controller-tool-btn:active { transform: scale(0.98); }',
-    '.controller-tool-btn.is-active { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.85), 0 14px 30px rgba(0, 0, 0, 0.35); transform: scale(1.08); background: rgba(43, 184, 255, 0.28); }',
+    '.controller-tool-btn.is-active { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.85), 0 14px 30px rgba(0, 0, 0, 0.35); transform: scale(1.05); background: rgba(43, 184, 255, 0.28); }',
     '.controller-tool-btn.is-active::before { opacity: 1; }',
-    '.controller-tool-icon { width: 44px; height: 44px; object-fit: contain; pointer-events: none; position: relative; z-index: 1; }',
-    '.controller-tool-label { position: relative; z-index: 1; }',
-    '.controller-note-wrap { width: 204px; }',
+    // Small tools (eraser, select)
+    '.controller-tool-btn--small { height: 72px; }',
+    '.controller-tool-btn--small .controller-tool-icon { width: 32px; height: 32px; }',
+    // Large tools (sticker, draw)
+    '.controller-tool-btn--large { height: 110px; }',
+    '.controller-tool-btn--large .controller-tool-icon { width: 48px; height: 48px; }',
+    // Icon & label
+    '.controller-tool-icon { object-fit: contain; pointer-events: none; position: relative; z-index: 1; }',
+    '.controller-tool-label { font-size: 13px; font-weight: 600; position: relative; z-index: 1; pointer-events: none; }',
+    // Note input
+    '.controller-note-wrap { width: 100%; max-width: 300px; }',
     '.controller-note-wrap.hidden { display: none; }',
     '.controller-note-input { width: 100%; min-height: 46px; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.22); background: rgba(17,24,39,0.85); color: #f9fafb; font-size: 16px; box-sizing: border-box; }',
     '.controller-note-input::placeholder { color: rgba(249,250,251,0.65); }',
@@ -61,6 +83,30 @@ function getToolIconSrc(tool) {
   if (tool === 'eraser') return '/icons/eraser.png';
   if (tool === 'selection') return '/icons/select.png';
   return '';
+}
+
+function buildToolButton(toolDef) {
+  var btn = document.createElement('button');
+  var sizeClass = toolDef.size === 'large' ? 'controller-tool-btn--large' : 'controller-tool-btn--small';
+  btn.className = 'controller-tool-btn ' + sizeClass;
+  btn.type = 'button';
+  btn.dataset.tool = toolDef.tool;
+  btn.setAttribute('aria-label', toolDef.ariaLabel);
+
+  var iconEl = document.createElement('img');
+  iconEl.className = 'controller-tool-icon';
+  iconEl.alt = '';
+  iconEl.setAttribute('aria-hidden', 'true');
+  iconEl.src = getToolIconSrc(toolDef.tool);
+  btn.appendChild(iconEl);
+
+  var labelEl = document.createElement('span');
+  labelEl.className = 'controller-tool-label';
+  labelEl.textContent = toolDef.label || '';
+  btn.appendChild(labelEl);
+
+  btn._labelEl = labelEl;
+  return btn;
 }
 
 function buildOptionElements(selectEl) {
@@ -99,24 +145,6 @@ function sendHeartbeat(payload, useBeacon) {
       return body;
     });
   });
-}
-
-function buildCircleToolButton(toolDef) {
-  var btn = document.createElement('button');
-  btn.className = 'controller-tool-btn controller-tool-btn--circle';
-  btn.type = 'button';
-  btn.dataset.tool = toolDef.tool;
-  btn.setAttribute('aria-label', toolDef.ariaLabel);
-  if (toolDef.label) btn.title = String(toolDef.label);
-
-  var iconEl = document.createElement('img');
-  iconEl.className = 'controller-tool-icon';
-  iconEl.alt = '';
-  iconEl.setAttribute('aria-hidden', 'true');
-  iconEl.src = getToolIconSrc(toolDef.tool);
-  btn.appendChild(iconEl);
-
-  return btn;
 }
 
 function bindHoldEvents(buttonEl, onStart, onStop, getActivePointerId) {
@@ -336,6 +364,8 @@ export function initControllerMode() {
   var noteSessionActive = false;
   var noteDraftText = '';
   var noteFinalizeTick = 0;
+  var selectedColor = CONTROLLER_DEFAULT_COLOR;
+  var colorButtons = [];
 
   document.body.className = '';
   document.body.classList.add('controller-mode');
@@ -345,34 +375,88 @@ export function initControllerMode() {
   var root = document.createElement('main');
   root.className = 'controller-root';
 
+  // ---- Title ----
   var title = document.createElement('div');
   title.className = 'controller-title';
   title.textContent = 'Phone Controller';
   root.appendChild(title);
 
+  // ---- Top row: participant selector + record ----
+  var topRowEl = document.createElement('div');
+  topRowEl.className = 'controller-top-row';
+
   var triggerSelectEl = document.createElement('select');
   triggerSelectEl.className = 'controller-select';
   triggerSelectEl.setAttribute('aria-label', 'Participant ID');
   buildOptionElements(triggerSelectEl);
-  root.appendChild(triggerSelectEl);
+  topRowEl.appendChild(triggerSelectEl);
 
-  var gridEl = document.createElement('div');
-  gridEl.className = 'controller-tool-grid';
+  var recBtnEl = document.createElement('button');
+  recBtnEl.className = 'controller-rec-btn';
+  recBtnEl.type = 'button';
+  recBtnEl.style.width = 'auto';
+  recBtnEl.style.flex = '1';
+  var recDotEl = document.createElement('span');
+  recDotEl.className = 'controller-rec-dot';
+  var recLabelEl = document.createElement('span');
+  recLabelEl.textContent = 'Record';
+  recBtnEl.appendChild(recDotEl);
+  recBtnEl.appendChild(recLabelEl);
+  topRowEl.appendChild(recBtnEl);
 
-  var circleTools = [
-    { tool: 'draw', ariaLabel: 'Hold drawing tool', label: 'Draw' },
-    { tool: 'note', ariaLabel: 'Hold annotation tool', label: 'Annotation' },
-    { tool: 'eraser', ariaLabel: 'Hold eraser tool', label: 'Eraser' },
-    { tool: 'selection', ariaLabel: 'Hold edit tool', label: 'Edit' }
-  ];
+  root.appendChild(topRowEl);
 
-  for (var i = 0; i < circleTools.length; i++) {
-    var toolBtn = buildCircleToolButton(circleTools[i]);
-    toolButtons.push(toolBtn);
-    gridEl.appendChild(toolBtn);
+  // ---- Color row ----
+  var colorRowEl = document.createElement('div');
+  colorRowEl.className = 'controller-color-row';
+
+  for (var ci = 0; ci < CONTROLLER_COLORS.length; ci++) {
+    var colorDef = CONTROLLER_COLORS[ci];
+    var colorBtn = document.createElement('button');
+    colorBtn.className = 'controller-color-btn';
+    colorBtn.type = 'button';
+    colorBtn.style.background = colorDef.color;
+    colorBtn.dataset.color = colorDef.color;
+    colorBtn.setAttribute('aria-label', colorDef.label);
+    if (colorDef.color === selectedColor) {
+      colorBtn.classList.add('is-selected');
+    }
+    colorButtons.push(colorBtn);
+    colorRowEl.appendChild(colorBtn);
   }
-  root.appendChild(gridEl);
+  root.appendChild(colorRowEl);
 
+  // ---- Tool buttons: top row (small) — eraser, select ----
+  var smallGridEl = document.createElement('div');
+  smallGridEl.className = 'controller-tool-grid';
+
+  var smallTools = [
+    { tool: 'eraser', ariaLabel: 'Hold eraser tool', label: 'Eraser', size: 'small' },
+    { tool: 'selection', ariaLabel: 'Hold edit tool', label: 'Select', size: 'small' }
+  ];
+  for (var si = 0; si < smallTools.length; si++) {
+    var smallBtn = buildToolButton(smallTools[si]);
+    toolButtons.push(smallBtn);
+    smallGridEl.appendChild(smallBtn);
+  }
+  root.appendChild(smallGridEl);
+
+  // ---- Tool buttons: bottom row (large) — sticker, draw ----
+  var largeGridEl = document.createElement('div');
+  largeGridEl.className = 'controller-tool-grid';
+
+  var largeTools = [
+    { tool: 'note', ariaLabel: 'Annotation tool', label: 'Sticker', size: 'large' },
+    { tool: 'draw', ariaLabel: 'Hold drawing tool', label: 'Draw', size: 'large' }
+  ];
+  for (var li = 0; li < largeTools.length; li++) {
+    var largeBtn = buildToolButton(largeTools[li]);
+    toolButtons.push(largeBtn);
+    largeGridEl.appendChild(largeBtn);
+  }
+  root.appendChild(largeGridEl);
+
+  // ---- Note text input (hidden by default) ----
   var noteWrapEl = document.createElement('div');
   noteWrapEl.className = 'controller-note-wrap hidden';
   var noteInputEl = document.createElement('input');
@@ -386,22 +470,27 @@ export function initControllerMode() {
   noteWrapEl.appendChild(noteInputEl);
   root.appendChild(noteWrapEl);
 
-  // Record audio button
-  var recRowEl = document.createElement('div');
-  recRowEl.className = 'controller-tool-row';
-  var recBtnEl = document.createElement('button');
-  recBtnEl.className = 'controller-rec-btn';
-  recBtnEl.type = 'button';
-  var recDotEl = document.createElement('span');
-  recDotEl.className = 'controller-rec-dot';
-  var recLabelEl = document.createElement('span');
-  recLabelEl.textContent = 'Record Audio';
-  recBtnEl.appendChild(recDotEl);
-  recBtnEl.appendChild(recLabelEl);
-  recRowEl.appendChild(recBtnEl);
-  root.appendChild(recRowEl);
-
   document.body.appendChild(root);
+
+  // ---- Color selection handler ----
+  function updateColorSelection(newColor) {
+    selectedColor = newColor;
+    for (var k = 0; k < colorButtons.length; k++) {
+      colorButtons[k].classList.toggle('is-selected', colorButtons[k].dataset.color === selectedColor);
+    }
+  }
+
+  for (var cbi = 0; cbi < colorButtons.length; cbi++) {
+    colorButtons[cbi].addEventListener('pointerdown', function(e) {
+      e.preventDefault();
+      var color = this.dataset.color;
+      if (color) updateColorSelection(color);
+      // Send a heartbeat with the new color
+      pushHeartbeat(holding, false);
+    });
+  }
+
+  // ---- Heartbeat & tool state ----
 
   function buildPayload(isActive) {
     return {
@@ -411,7 +500,8 @@ export function initControllerMode() {
       active: !!(holding || noteSessionActive),
       noteText: noteDraftText,
       noteSessionActive: !!noteSessionActive,
-      noteFinalizeTick: noteFinalizeTick
+      noteFinalizeTick: noteFinalizeTick,
+      color: selectedColor
     };
   }
 
@@ -483,6 +573,8 @@ export function initControllerMode() {
     noteInputEl.value = '';
     setNoteInputVisible(false, false);
     clearPendingNoteSync();
+    // Restore sticker label
+    if (noteBtnEl && noteBtnEl._labelEl) noteBtnEl._labelEl.textContent = 'Sticker';
   }
 
   function startHolding(pointerId, toolId, buttonEl) {
@@ -517,6 +609,7 @@ export function initControllerMode() {
     return activePointerId;
   }
 
+  // ---- Bind tool button events ----
   var noteBtnEl = null;
   for (var bi = 0; bi < toolButtons.length; bi++) {
     if (String(toolButtons[bi].dataset.tool || '') === 'note') {
@@ -538,6 +631,8 @@ export function initControllerMode() {
         activeButtonEl = noteBtnEl;
         setNoteInputVisible(true, true);
         setUiActive(true);
+        // Change label to "Apply"
+        if (noteBtnEl._labelEl) noteBtnEl._labelEl.textContent = 'Apply';
         pushHeartbeat(true, false);
         syncHeartbeatLoop();
         return;
@@ -549,6 +644,8 @@ export function initControllerMode() {
       setNoteInputVisible(false, false);
       setUiActive(false);
       activeButtonEl = null;
+      // Restore label to "Sticker"
+      if (noteBtnEl._labelEl) noteBtnEl._labelEl.textContent = 'Sticker';
       pushHeartbeat(false, false);
       noteDraftText = '';
       noteInputEl.value = '';
@@ -585,9 +682,9 @@ export function initControllerMode() {
         recBtnEl.disabled = false;
         if (started) {
           recBtnEl.classList.add('controller-rec-btn--recording');
-          recLabelEl.textContent = 'Stop Recording';
+          recLabelEl.textContent = 'Stop';
         } else {
-          recLabelEl.textContent = 'Record Audio';
+          recLabelEl.textContent = 'Record';
         }
       });
     } else {
@@ -597,7 +694,7 @@ export function initControllerMode() {
       recBtnEl.classList.remove('controller-rec-btn--recording');
       stopAudioRecording().then(function() {
         recBtnEl.disabled = false;
-        recLabelEl.textContent = 'Record Audio';
+        recLabelEl.textContent = 'Record';
       }).catch(function(err) {
         recBtnEl.disabled = false;
         recLabelEl.textContent = 'Save Failed';
