@@ -24,6 +24,7 @@ WORKSHOPS_DIR = ROOT_DIR / "workshops"
 WORKSHOP_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 CONTROLLER_CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 AUDIO_RECORDING_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 latest_frame_height = 0
 
 latest_apriltags = []
@@ -172,6 +173,8 @@ def sanitize_controller_note_finalize_tick(raw):
 def sanitize_controller_color(raw):
   val = str(raw or "").strip().lower()
   if val in CONTROLLER_VALID_COLORS:
+    return val
+  if HEX_COLOR_RE.fullmatch(val):
     return val
   return ""
 
