@@ -1802,6 +1802,9 @@ export function expandNoteSticker(noteEl) {
     textareaEl.className = 'ui-note__textarea';
     textareaEl.placeholder = 'Enter your note...';
     textareaEl.rows = 3;
+    textareaEl.value = (noteEl.dataset && typeof noteEl.dataset.noteText === 'string')
+      ? noteEl.dataset.noteText
+      : '';
     applyNoteTextareaStyle(noteEl, textareaEl);
 
     textareaEl.addEventListener('click', function (e) { e.stopPropagation(); });

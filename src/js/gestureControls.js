@@ -617,7 +617,10 @@ export function applyRemoteApriltagNoteStateOverrides(remoteNoteStateByTriggerTa
 
     if (ps) {
       ps.remoteNoteSessionActive = !!noteState.sessionActive;
-      if (ps.activeFollowStickerEl && ps.activeFollowStickerEl.classList && ps.activeFollowStickerEl.classList.contains('ui-note')) {
+      if (noteState.sessionActive &&
+          ps.activeFollowStickerEl &&
+          ps.activeFollowStickerEl.classList &&
+          ps.activeFollowStickerEl.classList.contains('ui-note')) {
         setRemoteNoteDraftTextOnElement(ps.activeFollowStickerEl, noteState.text);
       }
     }
