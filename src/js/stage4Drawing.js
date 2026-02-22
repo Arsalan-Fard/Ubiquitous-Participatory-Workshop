@@ -593,6 +593,7 @@ function createStrokeRef(coord, color, sessionId, triggerTagId) {
     layerId: mainLayerId,
     fillLayerId: glowLayerId,
     glowLayerId: glowLayerId,
+    color: color || '#2bb8ff',
     sessionId: sessionId || '',
     triggerTagId: triggerTagId || '',
     strokeId: strokeId,
@@ -1415,6 +1416,175 @@ function getCoordsFromRef(ref) {
   } catch (e) { return null; }
 }
 
+function getStrokeColorFromRef(ref) {
+  if (ref && typeof ref.color === 'string' && ref.color) return ref.color;
+  if (!ref || !ref.layerId || !state.map) return '#2bb8ff';
+  try {
+    var color = state.map.getPaintProperty(ref.layerId, 'line-color');
+    return (typeof color === 'string' && color) ? color : '#2bb8ff';
+  } catch (e) {
+    return '#2bb8ff';
+  }
+}
+
+function isStrokeRefActive(ref) {
+  if (!ref) return false;
+  for (var pid in handDrawStates) {
+    var hs = handDrawStates[pid];
+    if (!hs || !hs.activeStroke || !hs.activeStroke.ref) continue;
+    var activeRef = hs.activeStroke.ref;
+    if (activeRef === ref) return true;
+    if (activeRef.sourceId && ref.sourceId && activeRef.sourceId === ref.sourceId) return true;
+  }
+  return false;
+}
+
+function interpolateMapPoint(a, b, t) {
+  return {
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t
+  };
+}
+
+function unprojectMapPoint(pt) {
+  if (!pt || !state.map) return null;
+  try {
+    var ll = state.map.unproject([pt.x, pt.y]);
+    if (!ll || !isFinite(ll.lng) || !isFinite(ll.lat)) return null;
+    return [ll.lng, ll.lat];
+  } catch (e) {
+    return null;
+  }
+}
+
+function coordAtSegmentT(coordA, coordB, ptA, ptB, t) {
+  if (t <= 1e-6) return [coordA[0], coordA[1]];
+  if (t >= 1 - 1e-6) return [coordB[0], coordB[1]];
+  return unprojectMapPoint(interpolateMapPoint(ptA, ptB, t));
+}
+
+function coordsEqualish(a, b) {
+  if (!a || !b) return false;
+  return Math.abs(a[0] - b[0]) < 1e-12 && Math.abs(a[1] - b[1]) < 1e-12;
+}
+
+function addCoordToPolyline(polyline, coord) {
+  if (!polyline || !coord) return;
+  if (polyline.length > 0 && coordsEqualish(polyline[polyline.length - 1], coord)) return;
+  polyline.push(coord);
+}
+
+function solveSegmentCircleIntersections(a, b, center, radius) {
+  var dx = b.x - a.x;
+  var dy = b.y - a.y;
+  var fx = a.x - center.x;
+  var fy = a.y - center.y;
+  var A = dx * dx + dy * dy;
+  if (A < 1e-9) return [];
+  var B = 2 * (fx * dx + fy * dy);
+  var C = fx * fx + fy * fy - radius * radius;
+  var disc = B * B - 4 * A * C;
+  if (disc < 1e-9) {
+    if (Math.abs(disc) < 1e-9) {
+      var tangentT = -B / (2 * A);
+      if (tangentT > 1e-6 && tangentT < 1 - 1e-6) return [tangentT];
+    }
+    return [];
+  }
+  var sqrtDisc = Math.sqrt(disc);
+  var t1 = (-B - sqrtDisc) / (2 * A);
+  var t2 = (-B + sqrtDisc) / (2 * A);
+  var out = [];
+  if (t1 > 1e-6 && t1 < 1 - 1e-6) out.push(t1);
+  if (t2 > 1e-6 && t2 < 1 - 1e-6) out.push(t2);
+  if (out.length === 2 && Math.abs(out[0] - out[1]) < 1e-6) out.pop();
+  if (out.length === 2 && out[0] > out[1]) {
+    var tmp = out[0];
+    out[0] = out[1];
+    out[1] = tmp;
+  }
+  return out;
+}
+
+function clipStrokeCoordsByCircle(coords, pts, centerPt, radiusPx) {
+  if (!Array.isArray(coords) || coords.length < 1) return { changed: false, segments: [] };
+  if (!Array.isArray(pts) || pts.length !== coords.length) return { changed: false, segments: [] };
+  if (coords.length === 1) {
+    var onlyDistSq = distanceSqPoints(pts[0], centerPt);
+    if (onlyDistSq <= radiusPx * radiusPx) return { changed: true, segments: [] };
+    return { changed: false, segments: [coords.slice()] };
+  }
+
+  var radiusSq = radiusPx * radiusPx;
+  var pieces = [];
+  var changed = false;
+
+  for (var i = 1; i < coords.length; i++) {
+    var coordA = coords[i - 1];
+    var coordB = coords[i];
+    var ptA = pts[i - 1];
+    var ptB = pts[i];
+    if (!ptA || !ptB) continue;
+
+    var ts = solveSegmentCircleIntersections(ptA, ptB, centerPt, radiusPx);
+    var bounds = [0];
+    for (var ti = 0; ti < ts.length; ti++) bounds.push(ts[ti]);
+    bounds.push(1);
+
+    var keptIntervals = [];
+    for (var bi = 0; bi < bounds.length - 1; bi++) {
+      var tStart = bounds[bi];
+      var tEnd = bounds[bi + 1];
+      if ((tEnd - tStart) <= 1e-6) continue;
+      var mid = (tStart + tEnd) * 0.5;
+      var midPt = interpolateMapPoint(ptA, ptB, mid);
+      var mdx = midPt.x - centerPt.x;
+      var mdy = midPt.y - centerPt.y;
+      var outside = (mdx * mdx + mdy * mdy) > radiusSq;
+      if (outside) {
+        keptIntervals.push({ start: tStart, end: tEnd });
+      } else {
+        changed = true;
+      }
+    }
+
+    for (var ki = 0; ki < keptIntervals.length; ki++) {
+      var iv = keptIntervals[ki];
+      var cStart = coordAtSegmentT(coordA, coordB, ptA, ptB, iv.start);
+      var cEnd = coordAtSegmentT(coordA, coordB, ptA, ptB, iv.end);
+      if (!cStart || !cEnd) continue;
+      pieces.push([cStart, cEnd]);
+    }
+  }
+
+  if (!changed) {
+    return { changed: false, segments: [coords.slice()] };
+  }
+
+  var merged = [];
+  for (var pi = 0; pi < pieces.length; pi++) {
+    var piece = pieces[pi];
+    if (!piece || piece.length < 2) continue;
+    var p0 = piece[0];
+    var p1 = piece[1];
+    if (!p0 || !p1) continue;
+    if (coordsEqualish(p0, p1)) continue;
+
+    var last = merged.length > 0 ? merged[merged.length - 1] : null;
+    if (last && coordsEqualish(last[last.length - 1], p0)) {
+      addCoordToPolyline(last, p1);
+      continue;
+    }
+
+    var poly = [];
+    addCoordToPolyline(poly, p0);
+    addCoordToPolyline(poly, p1);
+    if (poly.length >= 2) merged.push(poly);
+  }
+
+  return { changed: true, segments: merged };
+}
+
 /**
  * ownerTriggerTagId can be a single tag ID string or an array of tag ID strings.
  * Erases strokes owned by ANY of the provided tag IDs.
@@ -1439,10 +1609,13 @@ export function eraseAtPoint(clientX, clientY, radiusPx, ownerTriggerTagId) {
   if (!pointerPt) return;
 
   var refsToRemove = [];
+  var refsToAdd = [];
+  var refsToUpdate = [];
   var removeStrokeIds = {};
 
   eachInGroup(state.drawGroup, function(ref) {
     if (!ref || !ref.sourceId) return;
+    if (isStrokeRefActive(ref)) return;
     if (hasOwnerFilter) {
       var layerOwnerTagId = normalizeTagId(ref.triggerTagId);
       if (!layerOwnerTagId || !ownerIds[layerOwnerTagId]) return;
@@ -1469,8 +1642,42 @@ export function eraseAtPoint(clientX, clientY, radiusPx, ownerTriggerTagId) {
     }
 
     if (minDist <= radius) {
-      refsToRemove.push(ref);
-      if (ref.strokeId) removeStrokeIds[String(ref.strokeId)] = true;
+      // Keep legacy single-visual refs on old sessions on whole-stroke delete path.
+      if (!ref.glowLayerId) {
+        refsToRemove.push(ref);
+        if (ref.strokeId) removeStrokeIds[String(ref.strokeId)] = true;
+        return;
+      }
+
+      var pts = projectCoordsToMapPoints(coords, state.map);
+      if (!pts || pts.length !== coords.length) {
+        refsToRemove.push(ref);
+        if (ref.strokeId) removeStrokeIds[String(ref.strokeId)] = true;
+        return;
+      }
+
+      var clipped = clipStrokeCoordsByCircle(coords, pts, { x: pointerPt.x, y: pointerPt.y }, radius);
+      if (!clipped || !clipped.changed) return;
+
+      if (!clipped.segments || clipped.segments.length < 1) {
+        refsToRemove.push(ref);
+        if (ref.strokeId) removeStrokeIds[String(ref.strokeId)] = true;
+        return;
+      }
+
+      refsToUpdate.push({ ref: ref, coords: clipped.segments[0] });
+
+      if (clipped.segments.length > 1) {
+        var strokeColor = getStrokeColorFromRef(ref);
+        for (var cs = 1; cs < clipped.segments.length; cs++) {
+          refsToAdd.push({
+            coords: clipped.segments[cs],
+            color: strokeColor,
+            sessionId: ref.sessionId || '',
+            triggerTagId: ref.triggerTagId || ''
+          });
+        }
+      }
     }
   });
 
@@ -1492,6 +1699,20 @@ export function eraseAtPoint(clientX, clientY, radiusPx, ownerTriggerTagId) {
     if (!r || seen[r.layerId]) continue;
     seen[r.layerId] = true;
     removeFromGroup(state.map, state.drawGroup, r);
+  }
+
+  for (var uu = 0; uu < refsToUpdate.length; uu++) {
+    var update = refsToUpdate[uu];
+    if (!update || !update.ref || !update.ref.sourceId || !Array.isArray(update.coords) || update.coords.length < 2) continue;
+    if (!update.ref.layerId || seen[update.ref.layerId]) continue;
+    updateLineCoords(state.map, update.ref.sourceId, update.coords);
+  }
+
+  for (var aa = 0; aa < refsToAdd.length; aa++) {
+    var add = refsToAdd[aa];
+    if (!add || !Array.isArray(add.coords) || add.coords.length < 2) continue;
+    var newRef = createStrokeRef(add.coords[0], add.color, add.sessionId, add.triggerTagId);
+    updateLineCoords(state.map, newRef.sourceId, add.coords);
   }
 
   // Also erase stickers
