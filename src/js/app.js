@@ -424,7 +424,8 @@ export function initApp() {
     });
   }
 
-  // Global shortcut: press H to recapture the surface from AprilTags 1-4 in any stage.
+  // Global shortcut: press H to recapture the surface from AprilTags 1-4.
+  // In Stage 3 VGA mode, H toggles red highlight on the hovered building instead.
   document.addEventListener('keydown', function(e) {
     if (resultsModeActive) return;
     if (e.repeat) return;
@@ -438,6 +439,12 @@ export function initApp() {
       if (target.closest && target.closest('.ui-note__form')) return;
     }
 
+    if (state.stage === 3 && state.viewMode === 'map' && vgaModeActive) {
+      e.preventDefault();
+      toggleVgaHoveredBuildingHighlight();
+      return;
+    }
+
     e.preventDefault();
     triggerApriltagCalibration();
   });
@@ -449,6 +456,7 @@ export function initApp() {
   document.addEventListener('mousemove', function(e) {
     lastMouseX = e.clientX;
     lastMouseY = e.clientY;
+    updateVgaHoverClientPointFromMouseEvent(e);
   });
 
   function trySetSurfaceCornerFromClientPoint(cornerIndex, clientX, clientY) {
@@ -1221,6 +1229,9 @@ export function initApp() {
 
   function applyMapBaseModeFromToggle() {
     setMapBaseMode(mapMonochromeStyleEnabled ? 'mono' : 'default');
+    if (vgaModeActive || hasAnyVgaBuildingHighlights()) {
+      applyVgaBuildingHighlightPaintOverrides();
+    }
   }
 
   function initMapStyleToggle() {
@@ -1359,6 +1370,11 @@ export function initApp() {
   var vgaSelectionLayer = null;
   var vgaHeatmapLayer = null;
   var vgaHeatPointRadiusPx = 10;
+  var vgaHoverClientPoint = null;
+  var vgaBuildingLayerIds = [];
+  var vgaHighlightedBuildingStateByKey = {};
+  var VGA_BUILDING_HIGHLIGHT_STATE_KEY = 'manualBuildingHighlight';
+  var VGA_BUILDING_HIGHLIGHT_COLOR = '#ff2d2d';
   updateVgaPanelMeta();
 
   // Tool tag detection state (for edge-triggered actions)
@@ -2977,9 +2993,10 @@ export function initApp() {
       vgaApplyRunId++;
       clearVgaSelection();
       clearVgaHeatmap();
+      applyVgaBuildingHighlightPaintOverrides();
       document.body.classList.add('vga-mode-active');
       setVgaPanelVisible(true);
-      setVgaStatus('Ctrl+click four corners on the map.');
+      setVgaStatus('Ctrl+click four corners on the map. Hover a building and press H to toggle red highlight.');
       updateVgaPanelMeta();
       resetStage3Gestures();
       updateUiSetupPanelVisibility();
@@ -2996,12 +3013,235 @@ export function initApp() {
     setVgaPanelVisible(false);
     clearVgaSelection();
     clearVgaHeatmap();
+    clearAllVgaBuildingHighlights();
+    vgaHoverClientPoint = null;
     updateUiSetupPanelVisibility();
     updateEdgeGuidesVisibility();
     updateGestureControlsVisibility();
     updateTrackingOffsetControlsVisibility();
     updateToolTagControlsVisibility();
     updateHamburgerMenuVisibility();
+  }
+
+  function hasAnyVgaBuildingHighlights() {
+    for (var key in vgaHighlightedBuildingStateByKey) {
+      if (vgaHighlightedBuildingStateByKey[key]) return true;
+    }
+    return false;
+  }
+
+  function updateVgaHoverClientPointFromMouseEvent(e) {
+    if (!e || !isFinite(e.clientX) || !isFinite(e.clientY)) return;
+    if (state.stage !== 3 || state.viewMode !== 'map' || !state.map) return;
+    vgaHoverClientPoint = { x: e.clientX, y: e.clientY };
+  }
+
+  function vgaClientToMapContainerPoint(clientX, clientY) {
+    if (!state.map || !dom.mapViewEl || !dom.mapWarpEl) return null;
+    if (!isFinite(clientX) || !isFinite(clientY)) return null;
+
+    var mapViewRect = dom.mapViewEl.getBoundingClientRect();
+    if (!mapViewRect || !mapViewRect.width || !mapViewRect.height) return null;
+
+    var x = clientX - mapViewRect.left;
+    var y = clientY - mapViewRect.top;
+    if (x < 0 || x > mapViewRect.width || y < 0 || y > mapViewRect.height) return null;
+
+    try {
+      var transform = window.getComputedStyle(dom.mapWarpEl).transform;
+      if (transform && transform !== 'none') {
+        var m = new DOMMatrixReadOnly(transform);
+        var inv = m.inverse();
+        var local = new DOMPoint(x, y, 0, 1).matrixTransform(inv);
+        if (local && typeof local.w === 'number' && local.w && local.w !== 1) {
+          local = new DOMPoint(local.x / local.w, local.y / local.w, local.z / local.w, 1);
+        }
+        x = local.x;
+        y = local.y;
+      }
+    } catch (err) { /* use unwarped coordinates as fallback */ }
+
+    var mapContainer = state.map.getContainer();
+    var w = mapContainer ? mapContainer.offsetWidth : 0;
+    var h = mapContainer ? mapContainer.offsetHeight : 0;
+    if (w > 0 && h > 0) {
+      if (x < 0 || x > w || y < 0 || y > h) return null;
+    }
+
+    if (!isFinite(x) || !isFinite(y)) return null;
+    return { x: x, y: y };
+  }
+
+  function isVgaBuildingLayer(layer) {
+    if (!layer) return false;
+    var type = String(layer.type || '').toLowerCase();
+    if (type !== 'fill' && type !== 'fill-extrusion') return false;
+    var sourceLayer = String((layer['source-layer'] || '')).toLowerCase();
+    if (sourceLayer.indexOf('building') !== -1) return true;
+    var id = String(layer.id || '').toLowerCase();
+    return id.indexOf('building') !== -1;
+  }
+
+  function refreshVgaBuildingLayerIds() {
+    vgaBuildingLayerIds = [];
+    if (!state.map || !state.mapReady) return;
+    var style = null;
+    try {
+      style = state.map.getStyle();
+    } catch (e) {
+      style = null;
+    }
+    var layers = style && Array.isArray(style.layers) ? style.layers : [];
+    for (var i = 0; i < layers.length; i++) {
+      var layer = layers[i];
+      if (!isVgaBuildingLayer(layer)) continue;
+      vgaBuildingLayerIds.push(layer.id);
+    }
+  }
+
+  function unwrapVgaBuildingHighlightExpression(value) {
+    if (!Array.isArray(value) || value.length < 4) return value;
+    if (value[0] !== 'case') return value;
+    var cond = value[1];
+    if (!Array.isArray(cond) || cond.length < 3) return value;
+    if (cond[0] !== 'boolean') return value;
+    if (cond[2] !== false) return value;
+    var featureStateExpr = cond[1];
+    if (!Array.isArray(featureStateExpr) || featureStateExpr.length < 2) return value;
+    if (featureStateExpr[0] !== 'feature-state') return value;
+    if (featureStateExpr[1] !== VGA_BUILDING_HIGHLIGHT_STATE_KEY) return value;
+    return value[3];
+  }
+
+  function applyVgaBuildingHighlightPaintOverrides() {
+    if (!state.map || !state.mapReady) return;
+    refreshVgaBuildingLayerIds();
+    for (var i = 0; i < vgaBuildingLayerIds.length; i++) {
+      var layerId = vgaBuildingLayerIds[i];
+      var layer = null;
+      try {
+        layer = state.map.getLayer(layerId);
+      } catch (e1) {
+        layer = null;
+      }
+      if (!layer) continue;
+
+      var type = String(layer.type || '').toLowerCase();
+      var paintProp = '';
+      if (type === 'fill-extrusion') paintProp = 'fill-extrusion-color';
+      else if (type === 'fill') paintProp = 'fill-color';
+      else continue;
+
+      var currentValue;
+      try {
+        currentValue = state.map.getPaintProperty(layerId, paintProp);
+      } catch (e2) {
+        continue;
+      }
+      if (currentValue === undefined) continue;
+      var baseValue = unwrapVgaBuildingHighlightExpression(currentValue);
+      var nextValue = ['case', ['boolean', ['feature-state', VGA_BUILDING_HIGHLIGHT_STATE_KEY], false], VGA_BUILDING_HIGHLIGHT_COLOR, baseValue];
+      try {
+        state.map.setPaintProperty(layerId, paintProp, nextValue);
+      } catch (e3) { /* ignore */ }
+    }
+  }
+
+  function getVgaFeatureStateTarget(feature) {
+    if (!feature) return null;
+    var source = feature.source ? String(feature.source) : '';
+    if (!source) return null;
+    if (feature.id === null || feature.id === undefined || feature.id === '') return null;
+
+    var target = {
+      source: source,
+      id: feature.id
+    };
+    var sourceLayer = '';
+    if (feature.sourceLayer !== null && feature.sourceLayer !== undefined) {
+      sourceLayer = String(feature.sourceLayer);
+    } else if (feature.layer && feature.layer['source-layer'] !== null && feature.layer['source-layer'] !== undefined) {
+      sourceLayer = String(feature.layer['source-layer']);
+    }
+    if (sourceLayer) target.sourceLayer = sourceLayer;
+    return target;
+  }
+
+  function getVgaFeatureStateKey(target) {
+    if (!target || !target.source) return '';
+    if (target.id === null || target.id === undefined || target.id === '') return '';
+    var sourceLayer = target.sourceLayer ? String(target.sourceLayer) : '';
+    return String(target.source) + '|' + sourceLayer + '|' + String(target.id);
+  }
+
+  function setVgaBuildingFeatureState(target, highlighted) {
+    if (!state.map || !target) return;
+    try {
+      var statePatch = {};
+      statePatch[VGA_BUILDING_HIGHLIGHT_STATE_KEY] = !!highlighted;
+      state.map.setFeatureState(target, statePatch);
+    } catch (e) { /* ignore */ }
+  }
+
+  function clearAllVgaBuildingHighlights() {
+    for (var key in vgaHighlightedBuildingStateByKey) {
+      var target = vgaHighlightedBuildingStateByKey[key];
+      if (!target) continue;
+      setVgaBuildingFeatureState(target, false);
+    }
+    vgaHighlightedBuildingStateByKey = {};
+  }
+
+  function findVgaBuildingFeatureAtHoverPoint() {
+    if (!state.map || !state.mapReady || !vgaHoverClientPoint) return null;
+    var pt = vgaClientToMapContainerPoint(vgaHoverClientPoint.x, vgaHoverClientPoint.y);
+    if (!pt) return null;
+
+    refreshVgaBuildingLayerIds();
+    var queryOptions = vgaBuildingLayerIds.length > 0 ? { layers: vgaBuildingLayerIds } : undefined;
+    var features = [];
+    try {
+      features = queryOptions
+        ? state.map.queryRenderedFeatures([pt.x, pt.y], queryOptions)
+        : state.map.queryRenderedFeatures([pt.x, pt.y]);
+    } catch (e) {
+      features = [];
+    }
+
+    for (var i = 0; i < features.length; i++) {
+      var feature = features[i];
+      if (!feature || !isVgaBuildingLayer(feature.layer)) continue;
+      var target = getVgaFeatureStateTarget(feature);
+      if (!target) continue;
+      return {
+        target: target,
+        key: getVgaFeatureStateKey(target)
+      };
+    }
+    return null;
+  }
+
+  function toggleVgaHoveredBuildingHighlight() {
+    if (!state.map || !state.mapReady) return;
+    if (state.stage !== 3 || state.viewMode !== 'map' || !vgaModeActive) return;
+
+    applyVgaBuildingHighlightPaintOverrides();
+    var hit = findVgaBuildingFeatureAtHoverPoint();
+    if (!hit || !hit.key) {
+      setVgaStatus('No building under cursor. Move cursor over a building and press H.');
+      return;
+    }
+
+    if (vgaHighlightedBuildingStateByKey[hit.key]) {
+      setVgaBuildingFeatureState(hit.target, false);
+      delete vgaHighlightedBuildingStateByKey[hit.key];
+      setVgaStatus('Building highlight removed.');
+      return;
+    }
+
+    setVgaBuildingFeatureState(hit.target, true);
+    vgaHighlightedBuildingStateByKey[hit.key] = hit.target;
+    setVgaStatus('Building highlighted in red.');
   }
 
   function cloneLatLngForVga(latlng) {

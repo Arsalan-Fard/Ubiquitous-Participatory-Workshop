@@ -445,6 +445,7 @@ function getToolContactKey(toolMatch) {
 
 function findToolElementForTriggerTag(triggerTagId, toolType) {
   var wantedToolType = String(toolType || '').trim().toLowerCase();
+  var wantedTriggerId = normalizeTagId(triggerTagId);
   var overlayEl = state.dom && state.dom.uiSetupOverlayEl;
   if (!overlayEl || !wantedToolType) return null;
   if (!REMOTE_APRILTAG_TOOL_TYPES[wantedToolType]) return null;
@@ -457,13 +458,19 @@ function findToolElementForTriggerTag(triggerTagId, toolType) {
   if (!selector) return null;
 
   var toolEls = overlayEl.querySelectorAll(selector);
+  var fallbackEl = null;
   for (var i = 0; i < toolEls.length; i++) {
     var el = toolEls[i];
     if (!el || !isTemplateInteractionElement(el)) continue;
     if (getToolTypeFromElement(el) !== wantedToolType) continue;
-    return el;
+    var elTriggerId = normalizeTagId(el.dataset && el.dataset.triggerTagId);
+    if (wantedTriggerId) {
+      if (elTriggerId && elTriggerId === wantedTriggerId) return el;
+      continue;
+    }
+    if (!fallbackEl) fallbackEl = el;
   }
-  return null;
+  return fallbackEl;
 }
 
 function shouldFinalizeFollowStickerForTool(toolType) {
